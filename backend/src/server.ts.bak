@@ -1,0 +1,27 @@
+import express from 'express';
+import cors from 'cors';
+import authRoutes from './modules/auth/routes';
+import dashRoutes from './modules/dashboard/routes';
+import networkRoutes from './modules/network/routes';
+import securityRoutes from './modules/security/routes';
+import accessRoutes from './modules/access/routes';
+import serverRoutes from './modules/server/routes';
+import controlRoutes from './modules/control/routes';
+import { startMonitor } from './modules/control/monitor'; // Importa a IA
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/dashboard', dashRoutes);
+app.use('/api/network', networkRoutes);
+app.use('/api/security', securityRoutes);
+app.use('/api/access', accessRoutes);
+app.use('/api/server', serverRoutes);
+app.use('/api/control', controlRoutes);
+
+// Inicia a IA de Monitoramento em segundo plano
+startMonitor();
+
+app.listen(6778, '0.0.0.0', () => console.log('BECKER V8 + IA INSIGHT: 6778'));

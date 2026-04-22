@@ -1,0 +1,127 @@
+$ORIGIN rpz.becker.allowed.
+$TTL 300
+@ SOA localhost. root.localhost. 1 3600 900 86400 300
+  NS  localhost.
+
+; === BANCOS ===
+bancodobrasil.com.br          CNAME rpz-passthru.
+*.bancodobrasil.com.br        CNAME rpz-passthru.
+bb.com.br                     CNAME rpz-passthru.
+*.bb.com.br                   CNAME rpz-passthru.
+caixa.gov.br                  CNAME rpz-passthru.
+*.caixa.gov.br                CNAME rpz-passthru.
+itau.com.br                   CNAME rpz-passthru.
+*.itau.com.br                 CNAME rpz-passthru.
+itauunibanco.com.br           CNAME rpz-passthru.
+*.itauunibanco.com.br         CNAME rpz-passthru.
+bradesco.com.br               CNAME rpz-passthru.
+*.bradesco.com.br             CNAME rpz-passthru.
+bradesconetempresa.com.br     CNAME rpz-passthru.
+*.bradesconetempresa.com.br   CNAME rpz-passthru.
+sicoob.com.br                 CNAME rpz-passthru.
+*.sicoob.com.br               CNAME rpz-passthru.
+sicredi.com.br                CNAME rpz-passthru.
+*.sicredi.com.br              CNAME rpz-passthru.
+santander.com.br              CNAME rpz-passthru.
+*.santander.com.br            CNAME rpz-passthru.
+banrisul.com.br               CNAME rpz-passthru.
+*.banrisul.com.br             CNAME rpz-passthru.
+inter.co                      CNAME rpz-passthru.
+*.inter.co                    CNAME rpz-passthru.
+bancointer.com.br             CNAME rpz-passthru.
+*.bancointer.com.br           CNAME rpz-passthru.
+nubank.com.br                 CNAME rpz-passthru.
+*.nubank.com.br               CNAME rpz-passthru.
+nu.com.br                     CNAME rpz-passthru.
+*.nu.com.br                   CNAME rpz-passthru.
+c6bank.com.br                 CNAME rpz-passthru.
+*.c6bank.com.br               CNAME rpz-passthru.
+
+; === CONECTIVIDADE SOCIAL CAIXA ===
+conectividade.caixa.gov.br    CNAME rpz-passthru.
+*.conectividade.caixa.gov.br  CNAME rpz-passthru.
+cnes.caixa.gov.br             CNAME rpz-passthru.
+*.cnes.caixa.gov.br           CNAME rpz-passthru.
+canais.caixa.gov.br           CNAME rpz-passthru.
+*.canais.caixa.gov.br         CNAME rpz-passthru.
+fgts.caixa.gov.br             CNAME rpz-passthru.
+*.fgts.caixa.gov.br           CNAME rpz-passthru.
+
+; === GOV.BR / FEDERAL ===
+gov.br                        CNAME rpz-passthru.
+*.gov.br                      CNAME rpz-passthru.
+fazenda.gov.br                CNAME rpz-passthru.
+*.fazenda.gov.br              CNAME rpz-passthru.
+esocial.gov.br                CNAME rpz-passthru.
+*.esocial.gov.br              CNAME rpz-passthru.
+esocial.com.br                CNAME rpz-passthru.
+*.esocial.com.br              CNAME rpz-passthru.
+nfe.fazenda.gov.br            CNAME rpz-passthru.
+nfce.fazenda.gov.br           CNAME rpz-passthru.
+sped.fazenda.gov.br           CNAME rpz-passthru.
+nfse.gov.br                   CNAME rpz-passthru.
+*.nfse.gov.br                 CNAME rpz-passthru.
+inss.gov.br                   CNAME rpz-passthru.
+*.inss.gov.br                 CNAME rpz-passthru.
+previdencia.gov.br            CNAME rpz-passthru.
+*.previdencia.gov.br          CNAME rpz-passthru.
+dataprev.gov.br               CNAME rpz-passthru.
+*.dataprev.gov.br             CNAME rpz-passthru.
+serpro.gov.br                 CNAME rpz-passthru.
+*.serpro.gov.br               CNAME rpz-passthru.
+trt.jus.br                    CNAME rpz-passthru.
+*.trt.jus.br                  CNAME rpz-passthru.
+tst.jus.br                    CNAME rpz-passthru.
+stf.jus.br                    CNAME rpz-passthru.
+cnj.jus.br                    CNAME rpz-passthru.
+*.cnj.jus.br                  CNAME rpz-passthru.
+
+; === GOV.BR / PARANÁ ===
+pr.gov.br                     CNAME rpz-passthru.
+*.pr.gov.br                   CNAME rpz-passthru.
+tce.pr.gov.br                 CNAME rpz-passthru.
+*.tce.pr.gov.br               CNAME rpz-passthru.
+tjpr.jus.br                   CNAME rpz-passthru.
+*.tjpr.jus.br                 CNAME rpz-passthru.
+
+; === MICROSOFT / OFFICE 365 / TEAMS ===
+microsoft.com                 CNAME rpz-passthru.
+*.microsoft.com               CNAME rpz-passthru.
+microsoftonline.com           CNAME rpz-passthru.
+*.microsoftonline.com         CNAME rpz-passthru.
+office.com                    CNAME rpz-passthru.
+*.office.com                  CNAME rpz-passthru.
+office365.com                 CNAME rpz-passthru.
+*.office365.com               CNAME rpz-passthru.
+live.com                      CNAME rpz-passthru.
+*.live.com                    CNAME rpz-passthru.
+outlook.com                   CNAME rpz-passthru.
+*.outlook.com                 CNAME rpz-passthru.
+hotmail.com                   CNAME rpz-passthru.
+*.hotmail.com                 CNAME rpz-passthru.
+sharepoint.com                CNAME rpz-passthru.
+*.sharepoint.com              CNAME rpz-passthru.
+onedrive.com                  CNAME rpz-passthru.
+*.onedrive.com                CNAME rpz-passthru.
+azure.com                     CNAME rpz-passthru.
+*.azure.com                   CNAME rpz-passthru.
+azureedge.net                 CNAME rpz-passthru.
+*.azureedge.net               CNAME rpz-passthru.
+windowsupdate.com             CNAME rpz-passthru.
+*.windowsupdate.com           CNAME rpz-passthru.
+
+; === GOOGLE WORKSPACE / GMAIL ===
+google.com                    CNAME rpz-passthru.
+*.google.com                  CNAME rpz-passthru.
+google.com.br                 CNAME rpz-passthru.
+*.google.com.br               CNAME rpz-passthru.
+googleapis.com                CNAME rpz-passthru.
+*.googleapis.com              CNAME rpz-passthru.
+googleusercontent.com         CNAME rpz-passthru.
+*.googleusercontent.com       CNAME rpz-passthru.
+gstatic.com                   CNAME rpz-passthru.
+*.gstatic.com                 CNAME rpz-passthru.
+gmail.com                     CNAME rpz-passthru.
+*.gmail.com                   CNAME rpz-passthru.
+googlemail.com                CNAME rpz-passthru.
+*.googlemail.com              CNAME rpz-passthru.
