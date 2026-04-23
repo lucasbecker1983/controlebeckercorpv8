@@ -1,20 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Lock, User, Server, Sun, Moon, Activity, Globe, Database, ShieldAlert } from 'lucide-react';
+import { ArrowRight, Building2, Lock, Moon, Palette, ShieldAlert, ShieldCheck, Sun, User } from 'lucide-react';
 import { api } from '../services/api';
 import { motion } from 'framer-motion';
 
-export default function Login({ onLogin }) {
+const accentChoices = [
+  { value: 'government', label: 'Governamental' },
+  { value: 'navy', label: 'Institucional' },
+  { value: 'copper', label: 'Executivo' },
+];
+
+export default function Login({ onLogin, theme, accent, onThemeChange, onAccentChange }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  const [theme, setTheme] = useState(localStorage.getItem('becker_theme') || 'dark');
-
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('becker_theme', theme);
-  }, [theme]);
 
   const handleLogin = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
@@ -32,81 +31,81 @@ export default function Login({ onLogin }) {
 
   return (
     <div className="flex min-h-screen w-full bg-surface text-on-surface font-sans">
-      
-      {/* LADO ESQUERDO: IMAGEM DATACENTER */}
-      {/* Ajustei a opacidade para 60% e removi mix-blend para garantir que a imagem apareça */}
-      <div className="hidden lg:flex flex-1 relative bg-slate-950 overflow-hidden z-10 w-full h-full min-h-screen">
-        <img 
-          src="https://images.unsplash.com/photo-1558494949-ef010cbdcc48?q=80&w=1200&auto=format&fit=crop" 
-          className="absolute inset-0 w-full h-full object-cover opacity-60 z-10" 
-          alt="Racks Datacenter" 
-          loading="lazy"
-        />
-        {/* O único gradiente necessário: escurece de baixo para cima para o texto */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black via-black/30 to-transparent z-20"></div>
-        
-        {/* Conteúdo do lado esquerdo (sobre a imagem) */}
-        <div className="relative z-30 flex flex-col justify-center p-20 w-full h-full max-w-5xl">
-            <div className="bg-blue-500/20 w-20 h-20 rounded-3xl flex items-center justify-center border border-blue-400/30 shadow-[0_0_30px_rgba(59,130,246,0.3)] mb-8 backdrop-blur-sm">
-                <Server size={40} className="text-blue-400" />
-            </div>
-            
-            <h2 className="text-5xl lg:text-7xl font-black text-white leading-normal mb-6 drop-shadow-lg">
-                Controle <br/>
-                {/* Correção do "8" cortado: Adicionado pr-1 e removido tracking-tighter */}
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-300 italic pr-1">BeckerCorp - V8</span>
-            </h2>
-            
-            <p className="text-slate-200 text-lg mb-12 max-w-2xl font-medium leading-relaxed drop-shadow-md">
-                Plataforma de comando unificada. Potência de nível empresarial para orquestração de rede, telemetria em tempo real e defesa cibernética ativa.
-            </p>
+      <div className="relative hidden min-h-screen flex-1 overflow-hidden border-r border-outline/10 lg:flex">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.22),transparent_26%),linear-gradient(135deg,color-mix(in_srgb,var(--color-primary)_26%,#07111f)_0%,color-mix(in_srgb,var(--color-secondary)_28%,#0f172a)_50%,#08111c_100%)]" />
+        <div className="absolute inset-0 opacity-[0.14]" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.18) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+        <div className="absolute -left-16 top-16 h-72 w-72 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-primary/24 blur-3xl" />
 
-            <div className="grid grid-cols-2 gap-6 max-w-3xl">
-                <div className="bg-black/30 border border-white/10 p-5 rounded-2xl backdrop-blur-md hover:bg-black/50 transition-colors">
-                    <Activity className="text-blue-400 mb-3" size={24} />
-                    <h3 className="text-white font-bold mb-1">Telemetria Real-Time</h3>
-                    <p className="text-slate-300 text-xs">Monitoramento de links WAN/LAN, agregação de VLANs e limites de QoS de alta precisão.</p>
-                </div>
-                <div className="bg-black/30 border border-white/10 p-5 rounded-2xl backdrop-blur-md hover:bg-black/50 transition-colors">
-                    <ShieldAlert className="text-red-400 mb-3" size={24} />
-                    <h3 className="text-white font-bold mb-1">IA Sentinela & Firewall</h3>
-                    <p className="text-slate-300 text-xs">Proteção proativa UFW, mitigação de Brute Force (Fail2Ban) e isolamento de intrusos.</p>
-                </div>
-                <div className="bg-black/30 border border-white/10 p-5 rounded-2xl backdrop-blur-md hover:bg-black/50 transition-colors">
-                    <Globe className="text-emerald-400 mb-3" size={24} />
-                    <h3 className="text-white font-bold mb-1">Roteamento Inteligente</h3>
-                    <p className="text-slate-300 text-xs">Gestão DHCP, DNS Unbound integrado, túneis VPN WireGuard e controle de Proxy Squid.</p>
-                </div>
-                <div className="bg-black/30 border border-white/10 p-5 rounded-2xl backdrop-blur-md hover:bg-black/50 transition-colors">
-                    <Database className="text-purple-400 mb-3" size={24} />
-                    <h3 className="text-white font-bold mb-1">Cofre de Infraestrutura</h3>
-                    <p className="text-slate-300 text-xs">Backups automatizados de banco e configurações, auditoria de acessos e monitor de HDs.</p>
-                </div>
+        <div className="relative z-10 flex w-full max-w-5xl flex-col justify-between p-16 xl:p-20">
+          <div>
+            <img src="/jmb-logo.png" alt="JMB Tecnologia" className="h-14 w-auto" />
+            <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-white/84 backdrop-blur-md">
+              <Building2 size={14} />
+              SGCG
             </div>
+            <h2 className="mt-8 max-w-4xl text-5xl font-black leading-[1.02] tracking-tight text-white xl:text-6xl">
+              Sistema de Governança e Controle Governamental da JMB Tecnologia
+            </h2>
+            <p className="mt-6 max-w-2xl text-base font-medium leading-7 text-white/74 xl:text-lg">
+              Ambiente institucional para operação, auditoria, resiliência e controle centralizado da infraestrutura crítica.
+            </p>
+          </div>
+
+          <div className="grid max-w-4xl grid-cols-1 gap-4 xl:grid-cols-3">
+            <div className="rounded-3xl border border-white/12 bg-white/8 p-6 backdrop-blur-md">
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-white/58">Governança</div>
+              <p className="mt-3 text-sm leading-6 text-white/82">Políticas, supervisão técnica e controle operacional em uma única superfície institucional.</p>
+            </div>
+            <div className="rounded-3xl border border-white/12 bg-white/8 p-6 backdrop-blur-md">
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-white/58">Auditoria</div>
+              <p className="mt-3 text-sm leading-6 text-white/82">Rastreabilidade de acessos, eventos de rede e decisões críticas sobre serviços do ambiente.</p>
+            </div>
+            <div className="rounded-3xl border border-white/12 bg-white/8 p-6 backdrop-blur-md">
+              <div className="text-[11px] font-black uppercase tracking-[0.2em] text-white/58">Continuidade</div>
+              <p className="mt-3 text-sm leading-6 text-white/82">Operação preparada para contingência, recuperação e sustentação de serviços essenciais.</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* LADO DIREITO: FORMULÁRIO DE LOGIN */}
-      <div className="w-full lg:w-[500px] flex flex-col p-8 md:p-16 relative bg-surface z-20 shadow-[-20px_0_50px_rgba(0,0,0,0.1)] transition-colors duration-300 border-l border-outline/10">
-        
-        {/* Botão Tema Sol/Lua */}
-        <div className="absolute top-6 right-6 lg:top-10 lg:right-10">
-            <button 
-                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} 
+      <div className="relative z-20 flex w-full flex-col border-l border-outline/10 bg-surface p-8 shadow-[-20px_0_50px_rgba(0,0,0,0.08)] transition-colors duration-300 md:p-16 lg:w-[540px]">
+        <div className="absolute right-6 top-6 flex items-center gap-2 lg:right-10 lg:top-10">
+            <button
+                type="button"
+                onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
                 className="p-3 rounded-full bg-container border border-outline/20 hover:scale-105 transition-all shadow-sm text-on-surface"
-                title="Alternar Modo de Cor"
+                title="Alternar tema"
             >
-                {theme === 'dark' ? <Sun size={24} className="text-yellow-500" /> : <Moon size={24} className="text-primary" />}
+                {theme === 'dark' ? <Sun size={22} className="text-yellow-500" /> : <Moon size={22} className="text-primary" />}
             </button>
+            <div className="hidden items-center gap-1 rounded-full border border-outline/16 bg-container/80 p-1 md:flex">
+              {accentChoices.map((choice) => (
+                <button
+                  key={choice.value}
+                  type="button"
+                  onClick={() => onAccentChange(choice.value)}
+                  className={`rounded-full px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] transition-all ${
+                    accent === choice.value ? 'bg-primary text-on-primary' : 'text-on-surface/58 hover:text-on-surface'
+                  }`}
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
         </div>
 
         <div className="flex flex-col justify-center flex-1 w-full max-w-sm mx-auto mt-12 lg:mt-0">
             <div className="mb-10 text-center lg:text-left">
-                <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 mx-auto lg:mx-0 border border-primary/20">
+                <img src="/jmb-logo.png" alt="JMB Tecnologia" className="mx-auto h-12 w-auto lg:mx-0" />
+                <div className="mt-6 w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 mx-auto lg:mx-0 border border-primary/20">
                     <ShieldCheck size={32} className="text-primary" />
                 </div>
-                <h1 className="text-3xl font-black tracking-tight mb-2 text-on-surface">Acesso Restrito</h1>
-                <p className="text-on-surface opacity-60 text-sm font-medium">Insira suas credenciais de operador.</p>
+                <div className="text-[11px] font-black uppercase tracking-[0.22em] text-primary">SGCG</div>
+                <h1 className="mt-2 text-3xl font-black tracking-tight text-on-surface">Acesso institucional</h1>
+                <p className="mt-2 text-sm font-medium text-on-surface/60">
+                  Autentique-se para operar o Sistema de Governança e Controle Governamental.
+                </p>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-6">
@@ -144,13 +143,19 @@ export default function Login({ onLogin }) {
                     type="submit" disabled={loading} 
                     className="w-full bg-primary text-on-primary font-black py-4 rounded-2xl hover:opacity-90 active:scale-95 transition-all shadow-[0_10px_40px_-10px_rgba(var(--color-primary),0.5)] mt-4 text-lg flex items-center justify-center gap-2"
                 >
-                    {loading ? <Activity className="animate-spin" size={20} /> : 'ENTRAR NO SISTEMA'}
+                    {loading ? <ShieldCheck className="animate-pulse" size={20} /> : <>Entrar no sistema <ArrowRight size={18} /></>}
                 </button>
             </form>
-            
-            <p className="text-center text-xs font-bold text-on-surface opacity-40 uppercase tracking-widest mt-12">
-                Conexão Segura Criptografada
-            </p>
+
+            <div className="mt-10 rounded-3xl border border-outline/12 bg-surface-high/62 p-4">
+              <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-on-surface/46">
+                <Palette size={14} className="text-primary" />
+                Aparência inicial
+              </div>
+              <p className="mt-2 text-sm leading-6 text-on-surface/62">
+                O módulo de Configurações ficará disponível após o login para ajuste de temas e cores institucionais.
+              </p>
+            </div>
         </div>
       </div>
     </div>

@@ -14,57 +14,37 @@ import BlockingReleases from './pages/BlockingReleases';
 import Control from './pages/Control';
 import Backups from './pages/Backups';
 import Security from './pages/Security';
-import { api } from './services/api';
+import Settings from './pages/Settings';
+
+const resolveStoredTheme = () => localStorage.getItem('sgcg_theme') || localStorage.getItem('becker_theme') || 'dark';
+const resolveStoredAccent = () => localStorage.getItem('sgcg_accent') || 'government';
 
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('becker_token'));
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('becker_user') || '{}'));
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [theme, setTheme] = useState(localStorage.getItem('becker_theme') || 'dark');
-  
-  // Estados para o Header
-  const [gatewayOnline, setGatewayOnline] = useState(true);
-  const [currentTime, setCurrentTime] = useState('');
-  const [uptimeStr, setUptimeStr] = useState('0 dias, 0 horas');
+  const [theme, setTheme] = useState(resolveStoredTheme);
+  const [accent, setAccent] = useState(resolveStoredAccent);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    document.documentElement.setAttribute('data-accent', accent);
+    localStorage.setItem('sgcg_theme', theme);
+    localStorage.setItem('sgcg_accent', accent);
     localStorage.setItem('becker_theme', theme);
-  }, [theme]);
+  }, [theme, accent]);
 
-  useEffect(() => {
-    if (!token) return undefined;
-
-    const updateHeader = async () => {
-      // 1. Hora em GMT -3
-      const now = new Date();
-      setCurrentTime(now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
-
-      // 2. Status Gateway e Uptime (Vindo do Metrics)
-      try {
-        const res = await api.get('/api/dashboard/metrics');
-        if (res.data) {
-          setGatewayOnline(res.data.internet.online);
-          const s = res.data.system.uptime;
-          const d = Math.floor(s / 86400);
-          const h = Math.floor((s % 86400) / 3600);
-          const m = Math.floor((s % 3600) / 60);
-          setUptimeStr(`${d} dias, ${h} horas e ${m} min`);
-        }
-      } catch (e) {}
-    };
-
-    updateHeader();
-    const interval = setInterval(updateHeader, 5000); // Atualiza a cada 5s
-    const clockInterval = setInterval(() => {
-        const now = new Date();
-        setCurrentTime(now.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
-    }, 1000); // Relógio segundo a segundo
-
-    return () => { clearInterval(interval); clearInterval(clockInterval); };
-  }, [token]);
-
-  if (!token) return <Login onLogin={(t, u) => { setToken(t); setUser(u); }} />;
+  if (!token) {
+    return (
+      <Login
+        theme={theme}
+        accent={accent}
+        onThemeChange={setTheme}
+        onAccentChange={setAccent}
+        onLogin={(t, u) => { setToken(t); setUser(u); }}
+      />
+    );
+  }
 
   return (
     <BrowserRouter>
@@ -72,6 +52,8 @@ export default function App() {
         sidebar={(
           <Sidebar
             user={user}
+            theme={theme}
+            accent={accent}
             isOpen={isMobileMenuOpen}
             onClose={() => setIsMobileMenuOpen(false)}
             onLogout={() => { localStorage.clear(); setToken(null); }}
@@ -83,9 +65,6 @@ export default function App() {
             theme={theme}
             onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
             onOpenMenu={() => setIsMobileMenuOpen(true)}
-            gatewayOnline={gatewayOnline}
-            currentTime={currentTime}
-            uptimeStr={uptimeStr}
           />
         )}
         footer={(
@@ -94,11 +73,11 @@ export default function App() {
             target="_blank"
             rel="noreferrer"
             className="group inline-flex items-center gap-2 rounded-full border border-outline/12 bg-surface-high/68 px-3 py-2 text-[10px] font-bold uppercase tracking-[0.18em] text-on-surface/44 transition-all duration-200 hover:border-primary/18 hover:text-on-surface/72"
-            title="Desenvolvido por JMB Tecnologia"
+            title="JMB Tecnologia"
           >
-            <span>Desenvolvido por</span>
+            <span>Operado por</span>
             <span className="inline-flex items-center rounded-md border border-primary/16 bg-primary/10 px-2 py-1 text-[9px] font-black tracking-[0.24em] text-primary transition-colors duration-200 group-hover:border-primary/24">
-              JMB
+              JMB TECNOLOGIA
             </span>
           </a>
         )}
@@ -113,6 +92,18 @@ export default function App() {
           <Route path="/control" element={<Control />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />
+          <Route
+            path="/settings"
+            element={(
+              <Settings
+                theme={theme}
+                accent={accent}
+                onThemeChange={setTheme}
+                onAccentChange={setAccent}
+                user={user}
+              />
+            )}
+          />
           <Route path="*" element={<Navigate to="/" />} />
           <Route path="/redes/agendamento" element={<VlanManagerMD3 />} />
         </Routes>

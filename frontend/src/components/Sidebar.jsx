@@ -1,4 +1,4 @@
-import { Database, Eye, LayoutDashboard, LockKeyhole, Network, Server, Shield, ShieldAlert, Users } from 'lucide-react';
+import { Database, Eye, LayoutDashboard, LockKeyhole, Network, Server, Settings2, Shield, ShieldAlert, Users } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -11,6 +11,7 @@ const menu = [
   { label: 'Controle', icon: ShieldAlert, path: '/control' },
   { label: 'Cofre de Backup', icon: Database, path: '/backups' },
   { label: 'Segurança (SOC)', icon: Shield, path: '/security' },
+  { label: 'Configurações', icon: Settings2, path: '/settings' },
 ];
 
 export default function AppSidebar(props) {
