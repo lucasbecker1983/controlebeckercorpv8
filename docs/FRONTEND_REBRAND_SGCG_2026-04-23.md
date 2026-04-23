@@ -162,3 +162,24 @@ Resultado observado:
 
 - build concluido sem erros
 - bundle gerado em `frontend/dist/`
+
+## Atualizacao posterior - preferencia por usuario
+
+Solicitacao adicional registrada:
+
+- retirar os controles de tema e cor da pagina de login
+- permitir a escolha de tema somente apos autenticacao
+- persistir tema e cor por usuario logado
+
+Decisao funcional para a proxima iteracao:
+
+1. a tela de login deve permanecer neutra, sem toggle de tema ou seletor de paleta
+2. o modulo `Configurações` passa a ser a unica origem de alteracao de aparencia
+3. a persistencia nao deve mais ser global no navegador
+4. tema e paleta devem ser gravados por usuario autenticado
+5. o logout nao deve apagar as preferencias visuais do usuario
+
+Status desta solicitacao:
+
+- registrada
+- ainda nao aplicada no codigo nesta rodada
