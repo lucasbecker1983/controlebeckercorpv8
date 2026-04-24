@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, ShieldCheck, Lock, Unlock, Server, Activity, Globe, Trash2, Terminal, Radar, Ban, Mail, X, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { api } from '../services/api';
+import { ActionButton, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 const defaultSmtpForm = {
     host: '',
@@ -26,11 +27,11 @@ function ToggleField({ label, checked, onChange, hint }) {
         >
             <div className="flex items-center justify-between gap-4">
                 <div>
-                    <p className="text-xs font-black uppercase">{label}</p>
+                    <p className="text-sm font-semibold tracking-tight">{label}</p>
                     {hint && <p className="mt-1 text-[10px] opacity-60">{hint}</p>}
                 </div>
-                <span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${checked ? 'bg-emerald-500/20 text-emerald-500' : 'bg-outline/10 text-on-surface opacity-60'}`}>
-                    {checked ? 'Ativo' : 'Off'}
+                <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-tight ${checked ? 'bg-info/20 text-info' : 'bg-outline/10 text-on-surface opacity-60'}`}>
+                    {checked ? 'Ativo' : 'Inativo'}
                 </span>
             </div>
         </button>
@@ -117,9 +118,9 @@ function SmtpModal({ open, onClose }) {
                         <div className="mb-3 inline-flex rounded-2xl bg-primary/10 p-3 text-primary">
                             <Mail size={24} />
                         </div>
-                        <h3 className="text-2xl font-black uppercase text-on-surface">Sentinela SMTP</h3>
-                        <p className="mt-2 text-xs font-bold uppercase tracking-widest text-on-surface opacity-60">
-                            Configuracao administrativa do envio de alertas por e-mail
+                        <h3 className="text-2xl font-black text-on-surface">Notificações institucionais</h3>
+                        <p className="mt-2 text-sm text-on-surface/68">
+                            Administração do envio de alertas por correio eletrônico.
                         </p>
                     </div>
                     <button onClick={onClose} className="rounded-full bg-surface p-3 text-on-surface opacity-70 transition-all hover:opacity-100">
@@ -128,7 +129,7 @@ function SmtpModal({ open, onClose }) {
                 </div>
 
                 {status && (
-                    <div className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${status.type === 'success' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-danger/30 bg-danger/10 text-danger'}`}>
+                    <div className={`mb-6 rounded-2xl border px-4 py-3 text-sm ${status.type === 'success' ? 'border-info/30 bg-info/10 text-info' : 'border-danger/30 bg-danger/10 text-danger'}`}>
                         {status.message}
                     </div>
                 )}
@@ -136,7 +137,7 @@ function SmtpModal({ open, onClose }) {
                 {loading ? (
                     <div className="flex min-h-[240px] items-center justify-center gap-3 text-primary">
                         <Activity className="animate-spin" size={20} />
-                        <span className="font-bold uppercase text-sm">Carregando configuracao...</span>
+                        <span className="font-semibold text-sm">Carregando configuração...</span>
                     </div>
                 ) : (
                     <>
@@ -302,49 +303,53 @@ export default function Security() {
     return (
         <>
             <div className="space-y-8 pb-20 animate-in fade-in duration-500">
-                <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-                    <div>
-                        <h2 className="text-4xl font-black uppercase italic leading-none text-on-surface">
-                            Seguranca <span className="font-black text-primary">(SOC)</span>
-                        </h2>
-                        <p className="mt-2 text-xs font-bold uppercase tracking-widest text-on-surface opacity-60">Cockpit de monitoramento ativo</p>
-                    </div>
-                    <div className="flex flex-col gap-3 sm:flex-row">
-                        <button onClick={() => setSmtpModalOpen(true)} className="flex items-center justify-center gap-3 rounded-full border border-outline/20 bg-container px-6 py-3 text-sm font-black uppercase text-on-surface shadow-sm transition-all hover:border-primary/50">
-                            <Mail size={18} className="text-primary" />
-                            SMTP da Sentinela
-                        </button>
-                        <button onClick={handleBlindagem} disabled={loading} className="flex items-center justify-center gap-3 rounded-full bg-primary px-8 py-3.5 text-sm font-black uppercase text-on-primary shadow-[0_10px_30px_-10px_rgba(var(--color-primary),0.6)] transition-all hover:opacity-90 active:scale-95">
-                            {loading ? <Activity className="animate-spin" size={18} /> : <ShieldCheck size={18} />}
-                            Aplicar blindagem V8
-                        </button>
-                    </div>
-                </div>
+                <ModuleHeader
+                    eyebrow="Controle"
+                    title="Segurança Operacional"
+                    description="Firewall, fail2ban, resposta rápida, sentinela de ataque e trilha de regras ativas em uma linguagem mais adequada à gestão institucional do ambiente."
+                    badges={(
+                        <>
+                            <StatusChip label="Enforcement local" tone="primary" />
+                            <StatusChip label="Resposta imediata" tone="warning" />
+                            <StatusChip label="Firewall e banimento" tone="neutral" />
+                        </>
+                    )}
+                    actions={(
+                        <>
+                            <ActionButton tone="ghost" icon={Mail} onClick={() => setSmtpModalOpen(true)}>
+                                SMTP institucional
+                            </ActionButton>
+                            <ActionButton tone="primary" icon={loading ? Activity : ShieldCheck} onClick={handleBlindagem} disabled={loading}>
+                                {loading ? 'Aplicando blindagem...' : 'Aplicar blindagem'}
+                            </ActionButton>
+                        </>
+                    )}
+                />
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                     <div className="space-y-6">
-                        <div className="flex items-center justify-between rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
+                        <Surface className="flex items-center justify-between p-6">
                             <div>
                                 <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Firewall UFW</p>
-                                <h3 className={`text-xl font-black ${data.ufw.active ? 'text-emerald-500' : 'text-danger'}`}>{data.ufw.active ? 'ATIVO E BLINDADO' : 'VULNERAVEL'}</h3>
+                                <h3 className={`text-xl font-black ${data.ufw.active ? 'text-info' : 'text-danger'}`}>{data.ufw.active ? 'Ativo e blindado' : 'Requer atenção'}</h3>
                             </div>
-                            <div className={`rounded-2xl p-4 ${data.ufw.active ? 'bg-emerald-500/10 text-emerald-500' : 'bg-danger/10 text-danger'}`}>
+                            <div className={`rounded-2xl p-4 ${data.ufw.active ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}>
                                 {data.ufw.active ? <Shield size={28} /> : <ShieldAlert size={28} />}
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="flex items-center justify-between rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
+                        <Surface className="flex items-center justify-between p-6">
                             <div>
                                 <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Fail2Ban (SSHD)</p>
-                                <h3 className="text-xl font-black text-on-surface"><span className="text-danger">{data.fail2ban.currently_banned}</span> IPS PRESOS</h3>
+                                <h3 className="text-xl font-black text-on-surface"><span className="text-danger">{data.fail2ban.currently_banned}</span> IPs bloqueados</h3>
                                 <p className="text-[10px] text-on-surface opacity-40">Historico de {data.fail2ban.total_banned} banimentos</p>
                             </div>
                             <div className="rounded-2xl bg-danger/10 p-4 text-danger">
                                 <Lock size={28} />
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
+                        <Surface className="p-6">
                             <div className="mb-4 flex items-center justify-between">
                                 <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-primary"><Ban size={18} /> Resposta rapida</h3>
                                 <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Manual</span>
@@ -353,27 +358,27 @@ export default function Security() {
                                 <input value={banIp} onChange={(e) => setBanIp(e.target.value)} placeholder="IP suspeito" className="flex-1 rounded-xl border border-outline/20 bg-surface p-3 text-xs text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                 <button onClick={handleBan} className="rounded-xl bg-danger px-4 text-xs font-black uppercase text-white transition-all hover:opacity-90">Banir</button>
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
+                        <Surface className="p-6">
                             <div className="mb-4 flex items-center justify-between">
-                                <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-emerald-500"><Globe size={18} /> IPs publicos</h3>
+                                <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-info"><Globe size={18} /> IPs publicos</h3>
                                 <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Monitorados</span>
                             </div>
                             <div className="space-y-2">
                                 {(data.public_ips || []).map((ip) => (
                                     <div key={ip.ip} className="group flex items-center justify-between rounded-xl border border-outline/10 bg-surface p-3 transition-colors hover:border-outline/30">
                                         <div className="flex items-center gap-3">
-                                            <span className={`h-2.5 w-2.5 rounded-full ${ip.online ? 'bg-emerald-500' : 'bg-danger'}`} />
+                                            <span className={`h-2.5 w-2.5 rounded-full ${ip.online ? 'bg-info' : 'bg-danger'}`} />
                                             <span className="font-mono text-xs text-on-surface">{ip.ip}</span>
                                         </div>
-                                        <span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${ip.online ? 'bg-emerald-500/20 text-emerald-500' : 'bg-danger/20 text-danger'}`}>{ip.online ? 'ONLINE' : 'OFFLINE'}</span>
+                                        <span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${ip.online ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>{ip.online ? 'ONLINE' : 'OFFLINE'}</span>
                                     </div>
                                 ))}
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
+                        <Surface className="p-6">
                             <div className="mb-4 flex items-center justify-between">
                                 <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-orange-500"><Unlock size={18} /> Bans atuais</h3>
                                 <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">{data.fail2ban.banned_ips.length} IPs</span>
@@ -388,18 +393,18 @@ export default function Security() {
                                                 <Lock size={14} className="text-danger" />
                                                 <span className="font-mono text-xs text-on-surface">{ip}</span>
                                             </div>
-                                            <button onClick={() => handleUnban(ip)} className="rounded-lg bg-emerald-500/10 px-3 py-1.5 text-[9px] font-black uppercase text-emerald-500 opacity-0 transition-all group-hover:opacity-100 hover:bg-emerald-500 hover:text-white">
+                                            <button onClick={() => handleUnban(ip)} className="rounded-lg bg-info/10 px-3 py-1.5 text-[9px] font-black uppercase text-info opacity-0 transition-all group-hover:opacity-100 hover:bg-info hover:text-white">
                                                 <Unlock size={12} className="inline" /> Perdoar
                                             </button>
                                         </div>
                                     ))
                                 )}
                             </div>
-                        </div>
+                        </Surface>
 
-                        <div className="flex flex-col rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm">
-                            <h3 className="mb-6 flex items-center gap-2 text-sm font-bold uppercase text-orange-500"><Radar size={18} /> Sentinela: vetores de ataque</h3>
-                            <div className="grid flex-1 grid-cols-2 gap-6">
+                        <Surface className="flex flex-col p-6">
+                            <h3 className="mb-6 flex items-center gap-2 text-sm font-bold uppercase text-orange-500"><Radar size={18} /> Sentinela: vetores observados</h3>
+                            <div className="grid flex-1 grid-cols-1 gap-6 sm:grid-cols-2">
                                 <div>
                                     <span className="mb-3 block text-[10px] font-bold uppercase opacity-50 text-on-surface">Portas alvo</span>
                                     {(!data.sentinel_metrics?.top_ports || data.sentinel_metrics.top_ports.length === 0) ? (
@@ -428,7 +433,7 @@ export default function Security() {
                                                     </div>
                                                     <button
                                                         onClick={() => isBanned ? handleUnban(p.ip) : handleBanSpecific(p.ip)}
-                                                        className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase shadow-sm transition-all ${isBanned ? 'bg-danger text-white hover:bg-danger/80' : 'bg-emerald-500 text-white hover:bg-emerald-400'}`}
+                                                        className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase shadow-sm transition-all ${isBanned ? 'bg-danger text-white hover:bg-danger/80' : 'bg-info text-white hover:bg-info/80'}`}
                                                     >
                                                         {isBanned ? <Lock size={10} /> : <Ban size={10} />}
                                                         {isBanned ? 'BLOQUEADO' : 'BLOQUEAR'}
@@ -439,10 +444,10 @@ export default function Security() {
                                     )}
                                 </div>
                             </div>
-                        </div>
+                        </Surface>
                     </div>
 
-                    <div className="flex min-h-[500px] flex-col rounded-[28px] border border-outline/20 bg-container p-6 shadow-sm lg:col-span-2">
+                    <Surface className="flex min-h-[500px] flex-col p-6 lg:col-span-2">
                         <div className="mb-6 flex items-center justify-between">
                             <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-blue-500"><Terminal size={18} /> Regras ativas do firewall</h3>
                             <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Total: {data.ufw.rules.length}</span>
@@ -459,7 +464,7 @@ export default function Security() {
                                             <div>
                                                 <div className="flex items-center gap-2">
                                                     <span className="text-sm font-bold text-on-surface">{r.to}</span>
-                                                    <span className={`rounded px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${r.action === 'ALLOW' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-danger/20 text-danger'}`}>
+                                                    <span className={`rounded px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${r.action === 'ALLOW' ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>
                                                         {r.action}
                                                     </span>
                                                 </div>
@@ -473,7 +478,7 @@ export default function Security() {
                                 ))
                             )}
                         </div>
-                    </div>
+                    </Surface>
                 </div>
             </div>
 

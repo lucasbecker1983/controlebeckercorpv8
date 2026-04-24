@@ -4,22 +4,25 @@ import { api } from '../../services/api';
 
 function HeaderChip({ icon: Icon, label, value, tone = 'default' }) {
   const toneClass = tone === 'success'
-    ? 'border-emerald-500/18 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    ? 'border-info/18 bg-info/10 text-info'
     : tone === 'danger'
       ? 'border-danger/18 bg-danger/10 text-danger'
-      : 'border-outline/15 bg-surface-high/75 text-on-surface/72';
+      : 'border-outline/15 bg-surface-high/88 text-on-surface/88';
 
   return (
-    <div className={`inline-flex min-h-[var(--control-height)] items-center gap-2 rounded-full border px-[var(--chip-padding-x)] py-1.5 text-[10px] xl:text-[11px] ${toneClass}`}>
-      <Icon size={14} className="shrink-0" />
-      <span className="font-black uppercase tracking-[0.16em] opacity-70">{label}</span>
-      <span className="font-semibold tracking-tight text-on-surface">{value}</span>
+    <div className={`inline-flex min-h-[var(--control-height)] min-w-[11rem] items-center gap-3 rounded-[20px] border px-[var(--chip-padding-x)] py-2 text-[11px] xl:text-[12px] ${toneClass}`}>
+      <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/55 text-current dark:bg-white/8">
+        <Icon size={15} className="shrink-0" />
+      </div>
+      <div className="min-w-0 leading-tight">
+        <div className="truncate text-[10px] font-semibold tracking-tight opacity-72">{label}</div>
+        <div className="truncate text-sm font-semibold tracking-tight text-current">{value}</div>
+      </div>
     </div>
   );
 }
 
 export default function Topbar({
-  user,
   theme,
   onToggleTheme,
   onOpenMenu,
@@ -62,8 +65,8 @@ export default function Topbar({
 
   return (
     <header className="sticky top-0 z-30 border-b border-outline/10 bg-surface-low/78 px-[var(--app-shell-gutter-x)] py-2.5 backdrop-blur-[18px]">
-      <div className="mx-auto flex max-w-[var(--app-shell-content-max)] items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2 md:gap-3">
+      <div className="mx-auto flex max-w-[var(--app-shell-content-max)] flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
           <button
             type="button"
             onClick={onOpenMenu}
@@ -72,11 +75,11 @@ export default function Topbar({
           >
             <Menu size={20} />
           </button>
-          <div className="hidden min-w-0 xl:block">
-            <div className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface/38">SGCG</div>
-            <div className="mt-1 truncate text-sm font-semibold text-on-surface">Sistema institucional de governança e controle</div>
+          <div className="hidden min-w-0 lg:block">
+            <div className="text-[11px] font-semibold tracking-tight text-primary">SGCG</div>
+            <div className="mt-1 truncate text-sm font-semibold text-on-surface">Sistema de governança e controle governamental</div>
           </div>
-          <div className="hidden min-w-0 items-center gap-2 xl:flex">
+          <div className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:flex">
             <HeaderChip icon={NetworkIcon} label="Gateway" value="186.251.14.25" tone={headerTone} />
             <HeaderChip icon={ShieldCheck} label="Status" value={gatewayOnline ? 'Online' : 'Offline'} tone={headerTone} />
             <HeaderChip icon={Clock3} label="Hora" value={currentTime} />
@@ -84,11 +87,7 @@ export default function Topbar({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
-          <div className="hidden sm:block text-right">
-            <div className="text-[10px] font-black uppercase tracking-[0.18em] text-on-surface/42">Operador</div>
-            <div className="mt-1 text-sm font-semibold text-on-surface">{user?.username || 'Usuário'}</div>
-          </div>
+        <div className="ml-auto flex items-center gap-2">
           <button
             type="button"
             onClick={onToggleTheme}
@@ -97,9 +96,6 @@ export default function Topbar({
           >
             {theme === 'dark' ? <Sun size={18} className="text-yellow-500" /> : <Moon size={18} className="text-primary" />}
           </button>
-          <div className="flex h-[calc(var(--control-height)+0.25rem)] w-[calc(var(--control-height)+0.25rem)] items-center justify-center rounded-full border border-primary/18 bg-primary text-sm font-black text-on-primary shadow-[var(--shadow-soft)]">
-            {user?.username?.charAt(0).toUpperCase()}
-          </div>
         </div>
       </div>
     </header>

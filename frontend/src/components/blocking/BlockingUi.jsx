@@ -37,7 +37,7 @@ export function MetricCard({ icon: Icon, eyebrow, title, value, subtitle, tone =
           </ActionButton>
         ) : null}
       </div>
-      {eyebrow ? <div className="mt-3 text-[10px] font-black uppercase tracking-[0.18em] text-on-surface/46 xl:text-[11px]">{eyebrow}</div> : null}
+      {eyebrow ? <div className="mt-3 text-[11px] font-semibold tracking-tight text-on-surface/62 xl:text-[12px]">{eyebrow}</div> : null}
       <div className="mt-1.5 text-[1.55rem] font-black tracking-tight text-on-surface xl:text-2xl">{value}</div>
       <div className="mt-1 text-sm font-semibold text-on-surface">{title}</div>
       {subtitle ? <div className="mt-2 text-sm leading-5 text-on-surface/62 xl:leading-6">{subtitle}</div> : null}
@@ -48,7 +48,7 @@ export function MetricCard({ icon: Icon, eyebrow, title, value, subtitle, tone =
 export function InlineStat({ label, value, tone = 'neutral' }) {
   return (
     <div className={cx('rounded-[calc(var(--surface-radius)-4px)] border px-3.5 py-3 xl:px-4 xl:py-3.5', toneMap[tone] || toneMap.neutral)}>
-      <div className="text-[10px] font-black uppercase tracking-[0.18em] opacity-70">{label}</div>
+      <div className="text-[11px] font-semibold tracking-tight opacity-78">{label}</div>
       <div className="mt-1.5 text-base font-black tracking-tight xl:text-lg">{value}</div>
     </div>
   );

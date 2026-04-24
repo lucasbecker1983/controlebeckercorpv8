@@ -8,20 +8,30 @@ export const cx = (...values) => twMerge(clsx(values));
 export const toneMap = {
   neutral: 'border-outline/12 bg-surface-high/72 text-on-surface/70',
   primary: 'border-primary/16 bg-primary/12 text-primary',
-  success: 'border-emerald-500/18 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
-  warning: 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+  success: 'border-info/18 bg-info/10 text-info',
+  warning: 'border-orange-500/22 bg-orange-500/12 text-orange-700 dark:text-orange-300',
   danger: 'border-danger/20 bg-danger/10 text-danger',
   info: 'border-info/18 bg-info/10 text-info',
 };
 
-export function Surface({ className = '', tone = 'neutral', children }) {
+const stripeMap = {
+  neutral: 'bg-primary',
+  primary: 'bg-primary',
+  success: 'bg-info',
+  warning: 'bg-orange-500',
+  danger: 'bg-danger',
+  info: 'bg-info',
+};
+
+export function Surface({ className = '', tone = 'neutral', stripe = true, children }) {
   return (
     <div className={cx(
-      'rounded-[var(--surface-radius)] border shadow-[var(--shadow-soft)] backdrop-blur-[var(--blur-soft)] transition-colors duration-200',
+      'relative min-w-0 overflow-hidden rounded-[24px] border shadow-sm backdrop-blur-[var(--blur-soft)] transition-all duration-200 hover:shadow-md',
       toneMap[tone] || toneMap.neutral,
       className,
     )}
     >
+      {stripe ? <div className={cx('absolute left-0 top-0 h-1.5 w-full', stripeMap[tone] || stripeMap.neutral)} /> : null}
       {children}
     </div>
   );
@@ -45,7 +55,7 @@ export function StatusChip({ label, tone = 'neutral', className = '', title }) {
     <span
       title={title || ''}
       className={cx(
-        'inline-flex min-h-[var(--chip-height)] items-center rounded-full border px-[var(--chip-padding-x)] py-1 text-[10px] font-black uppercase tracking-[0.16em]',
+        'inline-flex min-h-[var(--chip-height)] items-center justify-center rounded-full border px-[var(--chip-padding-x)] py-1 text-center text-[11px] font-semibold tracking-tight',
         toneMap[tone] || toneMap.neutral,
         className,
       )}
@@ -59,13 +69,13 @@ export function ActionButton({ children, icon: Icon, tone = 'neutral', className
   const buttonTone = tone === 'primary'
     ? 'border-primary/18 bg-primary text-on-primary hover:brightness-105'
     : tone === 'success'
-      ? 'border-emerald-500/18 bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500 hover:text-white dark:text-emerald-300'
+      ? 'border-info/18 bg-info/10 text-info hover:bg-info hover:text-white'
       : tone === 'danger'
         ? 'border-danger/18 bg-danger/10 text-danger hover:bg-danger hover:text-white'
         : tone === 'ghost'
           ? 'border-outline/12 bg-transparent text-on-surface/70 hover:border-primary/16 hover:bg-primary/8 hover:text-primary'
           : tone === 'warning'
-            ? 'border-amber-500/18 bg-amber-500/10 text-amber-700 hover:bg-amber-500 hover:text-white dark:text-amber-300'
+            ? 'border-orange-500/20 bg-orange-500/12 text-orange-700 hover:bg-orange-500 hover:text-white dark:text-orange-300'
             : tone === 'info'
               ? 'border-info/18 bg-info/10 text-info hover:bg-info hover:text-white'
               : 'border-outline/14 bg-surface-high/72 text-on-surface/78 hover:border-primary/16 hover:text-primary';
@@ -75,7 +85,7 @@ export function ActionButton({ children, icon: Icon, tone = 'neutral', className
       type={type}
       {...props}
       className={cx(
-        'inline-flex min-h-[var(--control-height)] items-center justify-center gap-2 rounded-full border px-[var(--control-padding-x)] py-2 text-[11px] font-black uppercase tracking-[0.12em] shadow-[var(--shadow-soft)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container disabled:cursor-not-allowed disabled:opacity-50 xl:text-xs',
+        'inline-flex min-h-[var(--control-height)] items-center justify-center gap-2 rounded-full border px-[var(--control-padding-x)] py-2 text-center text-[12px] font-semibold tracking-tight shadow-[var(--shadow-soft)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container disabled:cursor-not-allowed disabled:opacity-50 xl:text-sm',
         buttonTone,
         className,
       )}
@@ -230,7 +240,7 @@ export function SegmentedTabs({ tabs = [], value, onChange, className = '' }) {
             type="button"
             onClick={() => onChange(tab.key)}
             aria-pressed={active}
-            className={`inline-flex min-h-[var(--control-height)] shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container xl:px-3.5 xl:text-xs ${
+            className={`inline-flex min-h-[var(--control-height)] shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[12px] font-semibold tracking-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container xl:px-3.5 xl:text-sm ${
               active
                 ? 'border-primary/16 bg-primary text-on-primary shadow-[var(--shadow-soft)]'
                 : 'border-transparent text-on-surface/64 hover:border-outline/12 hover:bg-surface-highest/40 hover:text-on-surface'
@@ -255,11 +265,11 @@ export function DataToolbar({ children, className = '' }) {
 
 export function ModuleHeader({ eyebrow, title, description, badges, actions, aside, className = '' }) {
   return (
-    <Surface className={cx('overflow-hidden bg-gradient-to-br from-primary/12 via-surface-high/82 to-surface-high/92 p-[var(--spacing-section)]', className)}>
+    <Surface stripe={false} className={cx('overflow-hidden bg-gradient-to-br from-primary/12 via-surface-high/82 to-surface-high/92 p-[var(--spacing-section)]', className)}>
       <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] 2xl:items-start">
         <div className="min-w-0">
           {eyebrow ? (
-            <div className="inline-flex items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[10px] font-black uppercase tracking-[0.18em] text-primary xl:text-[11px]">
+            <div className="inline-flex items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[11px] font-semibold tracking-tight text-primary xl:text-[12px]">
               {eyebrow}
             </div>
           ) : null}
@@ -277,7 +287,7 @@ export function ModuleHeader({ eyebrow, title, description, badges, actions, asi
 export function FormField({ label, hint, error, children, className = '' }) {
   return (
     <label className={cx('flex flex-col gap-2.5', className)}>
-      {label ? <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">{label}</span> : null}
+      {label ? <span className="text-[12px] font-semibold tracking-tight text-on-surface/72">{label}</span> : null}
       {children}
       {error ? (
         <span className="text-xs leading-5 text-danger">{error}</span>

@@ -6,7 +6,6 @@ const QosLimiter = () => {
     const [loading, setLoading] = useState(false);
     const [configs, setConfigs] = useState({});
 
-    // CARDS ESTILO GOOGLE MD3 (Cores Semânticas)
     const vlans = [
         { id: 10, label: 'Secretaria', iface: 'enp6s0.10', icon: ShieldCheck, color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', btn: 'bg-indigo-500 hover:bg-indigo-600', ring: 'focus:ring-indigo-500' },
         { id: 30, label: 'Celulares', iface: 'enp6s0.30', icon: Smartphone, color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/30', btn: 'bg-purple-500 hover:bg-purple-600', ring: 'focus:ring-purple-500' },
@@ -81,15 +80,14 @@ const QosLimiter = () => {
                                         <span className="text-[10px] font-mono text-on-surface opacity-60 mt-1 block">VLAN {v.id}</span>
                                     </div>
                                 </div>
-                                <span className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${conf.active ? 'bg-success/10 text-success' : 'bg-outline/10 text-on-surface opacity-50'}`}>
+                                <span className={`px-2 py-1 rounded-md text-[10px] font-semibold tracking-tight ${conf.active ? 'bg-info/10 text-info' : 'bg-outline/10 text-on-surface opacity-60'}`}>
                                     {conf.active ? 'Ativa' : 'Inativa'}
                                 </span>
                             </div>
 
-                            {/* NOVOS INPUTS: DOWNLOAD & UPLOAD LADO A LADO */}
                             <div className="mb-5">
-                                <label className="text-[10px] font-bold uppercase text-on-surface opacity-70 mb-2 block">Limite de Banda (Mbit/s)</label>
-                                <div className="grid grid-cols-2 gap-2">
+                                <label className="mb-2 block text-[11px] font-semibold tracking-tight text-on-surface/72">Limite de banda (Mbit/s)</label>
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                     <div className="relative group/input">
                                         <ArrowDown size={14} className={`absolute left-2.5 top-1/2 -translate-y-1/2 ${v.color} opacity-70 transition-transform group-focus-within/input:-translate-y-2`} />
                                         <input 
@@ -109,10 +107,9 @@ const QosLimiter = () => {
                                 </div>
                             </div>
 
-                            {/* DISPOSITIVOS VIP */}
                             <div className="mb-4">
                                 <div className="flex justify-between items-center mb-2">
-                                    <label className="text-[10px] font-bold uppercase text-on-surface opacity-70 flex items-center gap-1"><Crown size={12} className="text-yellow-500"/> Dispositivos Bypass (VIP)</label>
+                                    <label className="text-[11px] font-semibold tracking-tight text-on-surface/72 flex items-center gap-1"><Crown size={12} className="text-yellow-500"/> Dispositivos VIP</label>
                                     <button onClick={() => addVipLocal(v.iface)} className={`p-1 rounded ${v.bg} ${v.color} hover:opacity-80 transition-all`}><Plus size={14}/></button>
                                 </div>
                                 <div className="space-y-1.5 max-h-24 overflow-y-auto pr-1 custom-scrollbar">
@@ -123,13 +120,13 @@ const QosLimiter = () => {
                                             <button onClick={() => removeVipLocal(v.iface, idx)} className="p-1.5 text-danger hover:bg-danger/10 rounded transition-colors"><Trash2 size={12}/></button>
                                         </div>
                                     ))}
-                                    {vips.length === 0 && <p className="text-[10px] text-on-surface opacity-40 italic text-center py-1 bg-surface rounded-lg border border-outline/10">Sem restrições (Bypass Vazio)</p>}
+                                    {vips.length === 0 && <p className="text-[11px] text-on-surface/52 text-center py-1 bg-surface rounded-lg border border-outline/10">Nenhum dispositivo prioritário cadastrado.</p>}
                                 </div>
                             </div>
                         </div>
 
-                        <button onClick={() => handleApply(v)} disabled={loading} className={`w-full py-2.5 text-white rounded-xl font-bold uppercase text-[10px] flex justify-center items-center gap-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md ${v.btn}`}>
-                            <Save size={14}/> Aplicar Limites
+                        <button onClick={() => handleApply(v)} disabled={loading} className={`w-full py-2.5 text-white rounded-xl font-semibold text-[12px] flex justify-center items-center gap-1.5 transition-all active:scale-95 shadow-sm hover:shadow-md ${v.btn}`}>
+                            <Save size={14}/> Aplicar limites
                         </button>
                     </div>
                 );

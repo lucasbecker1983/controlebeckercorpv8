@@ -5,6 +5,7 @@ import { api } from '../services/api';
 import QosLimiter from '../components/QosLimiter';
 import { Clock } from 'lucide-react';
 import VlanManagerMD3 from './VlanManagerMD3';
+import { ModuleHeader, SegmentedTabs, StatusChip } from '../components/ui/primitives';
 
 // --- VLAN TAB (CORREÇÃO DE MÉTRICAS E PERSPECTIVA) ---
 const VlanTab = () => {
@@ -47,7 +48,7 @@ const VlanTab = () => {
     };
     
     const INTERFACES_CONFIG = [
-        { id: 'enp6s0', label: 'ENP6S0 - Rede LAN', defaultIp: '', color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+        { id: 'enp6s0', label: 'ENP6S0 - Rede LAN', defaultIp: '', color: 'text-info', bg: 'bg-info/10', border: 'border-info/20' },
         { id: 'enp8s0', label: 'ENP8S0 - Rede WAN', defaultIp: '', color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
         { id: 'enp6s0.10', label: 'ENP6S0.10 - VLAN 10 (Secretaria)', defaultIp: '192.168.10.1/24', color: 'text-indigo-500', bg: 'bg-indigo-500/10', border: 'border-indigo-500/20' },
         { id: 'enp6s0.30', label: 'ENP6S0.30 - VLAN 30 (Celulares Colaboradores)', defaultIp: '192.168.30.1/24', color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
@@ -86,7 +87,7 @@ const VlanTab = () => {
                                     <p className="text-[10px] font-mono text-on-surface opacity-60 mt-0.5">{conf.id.toUpperCase()}</p>
                                 </div>
                             </div>
-                            <div className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${isUp ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}>
+                            <div className={`px-2 py-1 rounded-md text-[9px] font-bold uppercase ${isUp ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}>
                                 {isUp ? 'ON' : 'OFF'}
                             </div>
                         </div>
@@ -94,7 +95,7 @@ const VlanTab = () => {
                             <span className="text-[10px] font-bold uppercase text-on-surface opacity-50 block">Endereço IP</span>
                             <span className="font-mono text-on-surface font-bold text-xs">{ip}</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
                                 <span className="text-[10px] font-bold uppercase text-on-surface opacity-50 flex items-center gap-1 mb-1"><ArrowDown size={12} className="text-blue-500"/> Download</span>
                                 <div className="text-lg font-black text-on-surface">{fmtMbps(downloadBps)} <span className="text-[10px] opacity-50 font-normal">Mbps</span></div>
@@ -151,10 +152,10 @@ const AccessTab = () => {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 pt-4">
             <div className="space-y-6">
                 <div className="bg-danger/10 border border-danger/20 p-6 rounded-[24px]">
-                    <h3 className="text-danger font-bold uppercase mb-4 text-sm flex items-center gap-2"><ShieldAlert size={18}/> Bloqueio Manual</h3>
+                    <h3 className="text-danger font-semibold mb-4 text-sm flex items-center gap-2"><ShieldAlert size={18}/> Bloqueio manual</h3>
                     <div className="space-y-4">
                         <div className="flex gap-4">
-                            <select value={manualForm.type} onChange={e=>setManualForm({...manualForm, type:e.target.value})} className="bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs uppercase font-bold w-24 focus:ring-2 focus:ring-danger">
+                            <select value={manualForm.type} onChange={e=>setManualForm({...manualForm, type:e.target.value})} className="bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs font-semibold w-24 focus:ring-2 focus:ring-danger">
                                 <option value="ip">IP</option>
                                 <option value="mac">MAC</option>
                             </select>
@@ -162,13 +163,13 @@ const AccessTab = () => {
                         </div>
                         <div className="flex gap-4">
                             <input value={manualForm.reason} onChange={e=>setManualForm({...manualForm, reason:e.target.value})} placeholder="Motivo (Opcional)" className="flex-1 bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs focus:ring-2 focus:ring-danger"/>
-                            <button onClick={() => handleBlock(manualForm.type, manualForm.value, 'Manual', manualForm.reason)} className="bg-danger hover:opacity-90 text-white px-6 rounded-xl font-black uppercase text-xs transition-all active:scale-95 shadow-md">BLOQUEAR</button>
+                            <button onClick={() => handleBlock(manualForm.type, manualForm.value, 'Manual', manualForm.reason)} className="bg-danger hover:opacity-90 text-white px-6 rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-md">Bloquear</button>
                         </div>
                     </div>
                 </div>
 
                 <div className="space-y-3">
-                    <h4 className="text-on-surface opacity-60 font-bold uppercase text-xs pl-2">Alvos Bloqueados ({blockedList.length})</h4>
+                    <h4 className="text-on-surface/72 font-semibold text-sm pl-2">Alvos bloqueados ({blockedList.length})</h4>
                     {blockedList.length === 0 && <p className="text-on-surface opacity-50 text-center text-xs py-4 bg-container rounded-2xl border border-outline/10">Nenhum dispositivo bloqueado.</p>}
                     {blockedList.map(item => (
                         <div key={item.id} className="bg-container border border-outline/20 p-4 rounded-2xl flex justify-between items-center group hover:border-danger/50 transition-all shadow-sm">
@@ -177,13 +178,13 @@ const AccessTab = () => {
                                 <div>
                                     <span className="text-on-surface font-bold block text-sm font-mono">{item.target_value}</span>
                                     <div className="flex gap-2 mt-1">
-                                        <span className="text-[10px] bg-surface px-2 py-0.5 rounded text-on-surface opacity-60 uppercase font-bold border border-outline/10">{item.target_type}</span>
+                                        <span className="text-[10px] bg-surface px-2 py-0.5 rounded text-on-surface/68 font-semibold border border-outline/10">{item.target_type}</span>
                                         <span className="text-[10px] text-on-surface opacity-50">{item.vendor}</span>
                                     </div>
                                 </div>
                             </div>
-                            <button onClick={() => handleUnblock(item.id, item.target_type, item.target_value)} className="opacity-0 group-hover:opacity-100 flex items-center gap-2 bg-success/20 hover:bg-success text-success hover:text-white px-4 py-2 rounded-xl transition-all">
-                                <Check size={14}/> <span className="text-[10px] font-bold uppercase">Liberar</span>
+                            <button onClick={() => handleUnblock(item.id, item.target_type, item.target_value)} className="opacity-0 group-hover:opacity-100 flex items-center gap-2 bg-info/20 hover:bg-info text-info hover:text-white px-4 py-2 rounded-xl transition-all">
+                                <Check size={14}/> <span className="text-[11px] font-semibold">Liberar</span>
                             </button>
                         </div>
                     ))}
@@ -192,8 +193,8 @@ const AccessTab = () => {
 
             <div className="bg-container border border-outline/20 p-6 rounded-[24px] flex flex-col h-full min-h-[500px] shadow-sm">
                 <div className="flex justify-between items-center mb-6">
-                    <h3 className="text-primary font-bold uppercase text-sm flex items-center gap-2"><Activity size={18}/> Radar de Rede</h3>
-                    {isScanning && <span className="text-xs text-primary animate-pulse font-mono">VARRENDO FREQUÊNCIAS...</span>}
+                    <h3 className="text-primary font-semibold text-sm flex items-center gap-2"><Activity size={18}/> Radar de rede</h3>
+                    {isScanning && <span className="text-sm text-primary animate-pulse">Varredura em andamento...</span>}
                 </div>
                 
                 <div className="flex justify-center mb-8">
@@ -208,18 +209,18 @@ const AccessTab = () => {
                     {scanList.length === 0 && !isScanning && (
                         <div className="text-center text-on-surface opacity-50 mt-10">
                             <Monitor size={48} className="mx-auto mb-4 opacity-40"/>
-                            <p className="text-xs uppercase font-bold">Nenhum dispositivo detectado</p>
+                            <p className="text-sm font-semibold">Nenhum dispositivo detectado</p>
                             <p className="text-[10px]">Inicie o scan para encontrar alvos</p>
                         </div>
                     )}
                     {scanList.map((dev, idx) => (
                         <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: idx * 0.05 }} key={dev.mac + idx} className={`p-3 rounded-xl border flex justify-between items-center group transition-colors ${dev.is_blocked ? 'bg-danger/5 border-danger/30 opacity-70' : 'bg-surface border-outline/10 hover:border-primary/50'}`}>
                             <div className="flex items-center gap-3">
-                                <div className={`w-2 h-2 rounded-full ${dev.is_blocked ? 'bg-danger' : 'bg-success shadow-[0_0_8px_rgba(var(--color-success),0.5)]'}`}/>
+                                <div className={`w-2 h-2 rounded-full ${dev.is_blocked ? 'bg-danger' : 'bg-info shadow-[0_0_8px_rgba(var(--color-info),0.45)]'}`}/>
                                 <div>
                                     <p className="text-on-surface font-mono text-xs font-bold">{dev.ip}</p>
                                     <p className="text-[10px] text-on-surface opacity-50 font-mono">{dev.mac}</p>
-                                    <p className="text-[10px] text-primary font-bold uppercase truncate max-w-[150px]">{dev.vendor || 'Desconhecido'}</p>
+                                    <p className="text-[11px] text-primary font-semibold truncate max-w-[150px]">{dev.vendor || 'Desconhecido'}</p>
                                 </div>
                             </div>
                             {!dev.is_blocked ? (
@@ -273,20 +274,20 @@ const ConnectivityTab = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-4">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-black text-on-surface italic uppercase flex items-center gap-2"><Globe className="text-purple-500"/> WireGuard VPN</h3>
-                    <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold ${data.status.vpn ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>{data.status.vpn ? 'ONLINE' : 'OFFLINE'}</span>
+                    <h3 className="text-xl font-black text-on-surface flex items-center gap-2"><Globe className="text-purple-500"/> Acesso remoto institucional</h3>
+                    <span className={`px-2 py-1 rounded text-[11px] font-semibold ${data.status.vpn ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>{data.status.vpn ? 'Disponível' : 'Indisponível'}</span>
                 </div>
                 <div className="bg-container border border-outline/20 p-6 rounded-[24px]">
                     <div className="flex gap-2">
                         <input value={vpnName} onChange={e=>setVpnName(e.target.value)} placeholder="Nome do Cliente" className="flex-1 bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs focus:ring-2 focus:ring-purple-500"/>
-                        <button onClick={createVpn} className="bg-purple-600 hover:bg-purple-500 text-white px-4 rounded-xl font-bold text-xs transition-all active:scale-95">GERAR CERTIFICADO</button>
+                        <button onClick={createVpn} className="bg-purple-600 hover:bg-purple-500 text-white px-4 rounded-xl font-semibold text-sm transition-all active:scale-95">Gerar credencial</button>
                     </div>
                 </div>
                 <div className="space-y-3">
                     {data.vpn.map(p=>(
                         <div key={p.id} className="bg-container border border-outline/20 p-4 rounded-2xl flex justify-between items-center group relative overflow-hidden transition-all hover:border-purple-500/50 shadow-sm">
                             <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${p.is_active?'bg-success/20 text-success':'bg-surface text-on-surface opacity-50'}`}><Wifi size={18}/></div>
+                                <div className={`p-2 rounded-lg ${p.is_active?'bg-info/20 text-info':'bg-surface text-on-surface opacity-50'}`}><Wifi size={18}/></div>
                                 <div><span className="text-on-surface font-bold block text-sm">{p.name}</span><span className="text-on-surface opacity-50 text-[10px] font-mono">{p.ip}</span></div>
                             </div>
                             <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -300,20 +301,20 @@ const ConnectivityTab = () => {
             
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                    <h3 className="text-xl font-black text-on-surface italic uppercase flex items-center gap-2"><Database className="text-orange-500"/> Usuários FTP/SMB</h3>
-                    <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold ${data.status.storage ? 'bg-success/20 text-success' : 'bg-danger/20 text-danger'}`}>{data.status.storage ? 'ONLINE' : 'OFFLINE'}</span>
+                    <h3 className="text-xl font-black text-on-surface flex items-center gap-2"><Database className="text-orange-500"/> Acesso a arquivos institucionais</h3>
+                    <span className={`px-2 py-1 rounded text-[11px] font-semibold ${data.status.storage ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>{data.status.storage ? 'Disponível' : 'Indisponível'}</span>
                 </div>
                 <div className="bg-container border border-outline/20 p-6 rounded-[24px] space-y-3">
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <input value={storageForm.username} onChange={e=>setStorageForm({...storageForm, username:e.target.value})} placeholder="Usuário" className="w-full bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs focus:ring-2 focus:ring-orange-500"/>
                         <input type="password" value={storageForm.password} onChange={e=>setStorageForm({...storageForm, password:e.target.value})} placeholder="Senha" className="w-full bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs focus:ring-2 focus:ring-orange-500"/>
                     </div>
                     <input value={storageForm.path} onChange={e=>setStorageForm({...storageForm, path:e.target.value})} placeholder="Caminho (ex: /mnt/dados)" className="w-full bg-surface border border-outline/20 p-3 rounded-xl text-on-surface outline-none text-xs font-mono focus:ring-2 focus:ring-orange-500"/>
                     <div onClick={() => setStorageForm({...storageForm, has_smb: !storageForm.has_smb})} className="flex items-center gap-2 cursor-pointer select-none p-2 rounded-lg hover:bg-outline/5 transition-colors">
                         {storageForm.has_smb ? <CheckCircle size={18} className="text-orange-500"/> : <div className="w-[18px] h-[18px] border border-outline/40 rounded"/>}
-                        <span className="text-xs text-on-surface opacity-70 font-bold uppercase">Habilitar Compatibilidade SMB (Windows)</span>
+                        <span className="text-sm text-on-surface/72 font-semibold">Habilitar compatibilidade SMB (Windows)</span>
                     </div>
-                    <button onClick={createStorage} className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-black uppercase text-xs transition-all active:scale-95 shadow-md">CRIAR USUÁRIO</button>
+                    <button onClick={createStorage} className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-semibold text-sm transition-all active:scale-95 shadow-md">Criar usuário</button>
                 </div>
                 <div className="space-y-3">
                     {data.storage.map(u=>(
@@ -390,7 +391,7 @@ const DnsTab = () => {
     return (
         <div className="space-y-8 pt-4">
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className={`p-3 rounded-xl ${stats.is_running ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'}`}><Server size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Serviço DNS</h3><p className={`text-lg font-black ${stats.is_running ? 'text-success' : 'text-danger'}`}>{stats.is_running ? 'ATIVO' : 'PARADO'}</p></div></div>
+                <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className={`p-3 rounded-xl ${stats.is_running ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}><Server size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Serviço DNS</h3><p className={`text-lg font-black ${stats.is_running ? 'text-info' : 'text-danger'}`}>{stats.is_running ? 'ATIVO' : 'PARADO'}</p></div></div>
                 <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className="p-3 rounded-xl bg-orange-500/10 text-orange-500"><Zap size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Latência</h3><p className="text-xl font-black text-orange-500">{stats.stats?.avg_latency || 0} <span className="text-xs text-on-surface opacity-40">ms</span></p></div></div>
                 <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className="p-3 rounded-xl bg-primary/10 text-primary"><Activity size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Consultas (Recentes)</h3><p className="text-xl font-black text-primary">{vlanTotalQueries.toLocaleString()}</p></div></div>
                 <button onClick={flushCache} className="bg-danger/10 border border-danger/20 p-5 rounded-[24px] flex items-center justify-between hover:bg-danger/20 transition-all group active:scale-95 shadow-sm"><div className="flex items-center gap-4"><div className="p-3 rounded-xl bg-danger/20 text-danger group-hover:scale-110 transition-transform"><Trash2 size={24}/></div><div className="text-left"><h3 className="text-danger font-bold uppercase text-[10px]">Manutenção</h3><p className="text-lg font-black text-danger">Limpar Cache</p></div></div></button>
@@ -453,7 +454,7 @@ const DnsTab = () => {
                                                 <span className="text-on-surface opacity-50 text-[10px] font-mono flex items-center gap-1">
                                                     {isFwd ? 'Forward para' : 'Aponte para'} ➜ <span className="text-on-surface font-bold opacity-100">{z.target_ip}</span>
                                                 </span>
-                                                {verifyStatus[z.id] === 'ok' && <span className="text-[9px] bg-success/10 text-success border border-success/20 px-1.5 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> ATIVA</span>}
+                                                {verifyStatus[z.id] === 'ok' && <span className="text-[9px] bg-info/10 text-info border border-info/20 px-1.5 py-0.5 rounded flex items-center gap-1"><CheckCircle size={10}/> ATIVA</span>}
                                                 {verifyStatus[z.id] === 'error' && <span className="text-[9px] bg-danger/10 text-danger border border-danger/20 px-1.5 py-0.5 rounded flex items-center gap-1"><XCircle size={10}/> OFF</span>}
                                             </div>
                                         </div>
@@ -480,27 +481,33 @@ export default function NetworkPage() {
     const [activeTab, setActiveTab] = useState('connect');
     const tabs = [
         { id: 'connect', label: 'Conectividade', icon: Globe, color: 'text-purple-500' },
-        { id: 'vlans', label: "VLAN's", icon: Activity, color: 'text-blue-500' },
+        { id: 'vlans', label: 'Escopos VLAN', icon: Activity, color: 'text-blue-500' },
         { id: 'qos', label: 'QoS', icon: Gauge, color: 'text-yellow-500' },
-        { id: 'dns', label: 'DNS Unbound', icon: Server, color: 'text-emerald-500' },
-    { id: 'scheduler', label: 'Horários', icon: Clock, color: 'text-blue-500' },
-        { id: 'access', label: 'Bloqueios', icon: Lock, color: 'text-red-500' }
+        { id: 'dns', label: 'DNS Institucional', icon: Server, color: 'text-info' },
+        { id: 'scheduler', label: 'Horários', icon: Clock, color: 'text-blue-500' },
+        { id: 'access', label: 'Controle de Acesso', icon: Lock, color: 'text-red-500' }
     ];
     return (
         <div className="space-y-8 pb-20 animate-in fade-in duration-500">
-             <div className="flex flex-col md:flex-row justify-between items-center gap-6">
-                <div>
-                    <h2 className="text-4xl font-black text-on-surface italic uppercase leading-none">REDE & <span className="text-primary font-black">IP</span></h2>
-                    <p className="text-on-surface opacity-60 text-xs font-bold uppercase tracking-widest mt-2">Gestão de Infraestrutura V8</p>
-                </div>
-                <div className="flex bg-container p-1.5 rounded-full border border-outline/20 shadow-sm overflow-x-auto max-w-full custom-scrollbar">
-                    {tabs.map(t => ( 
-                        <button key={t.id} onClick={() => setActiveTab(t.id)} className={`px-6 py-2.5 rounded-full font-bold text-xs uppercase flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === t.id ? 'bg-primary text-on-primary shadow-md' : 'text-on-surface opacity-60 hover:opacity-100 hover:bg-outline/5'}`}>
-                            <t.icon size={16} className={activeTab === t.id ? '' : t.color} /> {t.label}
-                        </button> 
-                    ))}
-                </div>
-            </div>
+            <ModuleHeader
+                eyebrow="Controle"
+                title="Controle de Rede"
+                description="Conectividade, VLANs, QoS, DNS e controle de acesso sob uma mesma leitura institucional. Este módulo concentra execução operacional da rede sem perder clareza para supervisão administrativa."
+                badges={(
+                    <>
+                        <StatusChip label="Infraestrutura ativa" tone="success" />
+                        <StatusChip label="Operação contínua" tone="primary" />
+                        <StatusChip label="Rede, DNS e acesso" tone="neutral" />
+                    </>
+                )}
+            />
+
+            <SegmentedTabs
+                tabs={tabs.map((tab) => ({ key: tab.id, label: tab.label, icon: tab.icon }))}
+                value={activeTab}
+                onChange={setActiveTab}
+                className="custom-scrollbar"
+            />
             <div className="min-h-[500px]">
                 <AnimatePresence mode="wait">
                     {activeTab === 'connect' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="connect"><ConnectivityTab/></motion.div>}

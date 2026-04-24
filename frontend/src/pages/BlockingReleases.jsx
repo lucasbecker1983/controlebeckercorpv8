@@ -58,15 +58,15 @@ const googleFontStyle = {
 };
 
 const TABS = [
-  { key: 'overview', label: 'Visão Geral', icon: ShieldCheck },
-  { key: 'policies', label: 'Políticas', icon: Layers3 },
-  { key: 'vlans', label: 'VLANs', icon: Network },
-  { key: 'vips', label: 'Exceções / VIPs', icon: ShieldAlert },
-  { key: 'audit', label: 'LGPD', icon: ScrollText },
-  { key: 'radar', label: 'Radar em Tempo Real', icon: Wifi },
-  { key: 'engine', label: 'Motor & Saúde', icon: Cpu },
+  { key: 'overview', label: 'Painel Executivo', icon: ShieldCheck },
+  { key: 'policies', label: 'Políticas & Escopos', icon: Layers3 },
+  { key: 'vlans', label: 'Escopos de Rede', icon: Network },
+  { key: 'vips', label: 'Exceções VIP', icon: ShieldAlert },
+  { key: 'audit', label: 'Relatório de Dados', icon: ScrollText },
+  { key: 'radar', label: 'Radar Operacional', icon: Wifi },
+  { key: 'engine', label: 'Motor de Controle', icon: Cpu },
   { key: 'contingency', label: 'Contingência DNS', icon: Flame },
-  { key: 'metrics', label: 'Métricas', icon: Activity },
+  { key: 'metrics', label: 'Telemetria', icon: Activity },
 ];
 
 const MODE_LABELS = {
@@ -87,6 +87,14 @@ const CONTINGENCY_PROVIDERS = [
   { key: 'google', label: 'Google DNS' },
   { key: 'cloudflare', label: 'Cloudflare' },
   { key: 'quad9', label: 'Quad9' },
+];
+
+const VIP_RUNTIME_BADGES = [
+  { label: 'VIP real', tone: 'primary' },
+  { label: 'Firewall livre', tone: 'success' },
+  { label: 'Unbound recursivo liberado', tone: 'success' },
+  { label: 'RPZ passthrough', tone: 'warning' },
+  { label: 'Sem proxy', tone: 'neutral' },
 ];
 
 function normalizeText(value) {
@@ -412,7 +420,7 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
             </div>
             <div className="inline-flex w-full overflow-x-auto rounded-full border border-outline/12 bg-surface-high/70 p-1 lg:w-auto">
               <button type="button" onClick={() => setViewFilter('all')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'all' ? 'bg-primary text-on-primary' : 'text-on-surface/64'}`}>Todos</button>
-              <button type="button" onClick={() => setViewFilter('allow')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'allow' ? 'bg-emerald-500/16 text-emerald-700 dark:text-emerald-300' : 'text-on-surface/64'}`}>Liberados</button>
+              <button type="button" onClick={() => setViewFilter('allow')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'allow' ? 'bg-info/16 text-info' : 'text-on-surface/64'}`}>Liberados</button>
               <button type="button" onClick={() => setViewFilter('block')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'block' ? 'bg-danger/14 text-danger' : 'text-on-surface/64'}`}>Bloqueados</button>
             </div>
           <div className="text-right text-xs uppercase tracking-[0.14em] text-on-surface/42">
@@ -467,7 +475,7 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
                             'mt-0.5 inline-flex h-6 w-11 items-center rounded-full border px-0.5 transition',
                             value === 'on'
                               ? policy.policy_type === 'allow'
-                                ? 'border-emerald-500/18 bg-emerald-500/20'
+                                ? 'border-info/18 bg-info/20'
                                 : 'border-danger/18 bg-danger/20'
                               : 'border-outline/14 bg-surface',
                           )}
@@ -477,7 +485,7 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-semibold text-on-surface">{policy.name}</span>
-                            <span className={`text-[11px] font-black uppercase tracking-[0.14em] ${policy.policy_type === 'allow' ? 'text-emerald-700 dark:text-emerald-300' : 'text-danger'}`}>
+                            <span className={`text-[11px] font-black uppercase tracking-[0.14em] ${policy.policy_type === 'allow' ? 'text-info' : 'text-danger'}`}>
                               {policy.policy_type === 'allow' ? 'Liberado' : 'Bloqueado'}
                             </span>
                             {changed ? <span className="text-[11px] font-black uppercase tracking-[0.14em] text-primary">Alterado</span> : null}
@@ -718,7 +726,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
                 onClick={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
                 aria-pressed={form.enabled}
                 className={`mt-4 inline-flex min-h-11 items-center rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-container ${
-                  form.enabled ? 'border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300' : 'border-outline/16 bg-container/72 text-on-surface/62'
+                  form.enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'
                 }`}
               >
                 {form.enabled ? 'Ativa' : 'Inativa'}
@@ -754,7 +762,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
       name: event?.domain ? `Liberar ${event.domain}` : 'Nova política',
       scope_type: hasVlan ? 'vlan' : 'global',
       vlan_ids: hasVlan ? [vlanId] : [],
-      description: `Domínio incluído a partir da LGPD${event?.client_ip ? ` do IP ${event.client_ip}` : ''}.`,
+      description: `Domínio incluído a partir do relatório de dados${event?.client_ip ? ` do IP ${event.client_ip}` : ''}.`,
     });
   }, [open, event, policies]);
 
@@ -774,7 +782,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
     <DialogShell
       open={open}
       title="Adicionar domínio a uma política"
-      subtitle="Inclua o domínio visto na LGPD em uma política existente ou crie uma política nomeada. Assim você não cria uma regra separada para cada domínio."
+      subtitle="Inclua o domínio identificado no relatório de dados em uma política existente ou crie uma política nomeada. Assim a governança trata o acesso por regra formal, e não por exceção improvisada."
       onClose={onClose}
       size="max-w-4xl"
       footer={(
@@ -798,7 +806,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
     >
       <div className="space-y-5">
         <ThemeAwareSurface tone="primary" className="p-5">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Domínio capturado na LGPD</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Domínio identificado no relatório de dados</div>
           <div className="mt-2 break-all text-xl font-black text-on-surface">{domain || 'domínio não identificado'}</div>
           <p className="mt-2 text-sm leading-6 text-on-surface/68">
             Origem: {event.client_ip || 'IP não identificado'}{event.vlan_id ? ` • VLAN ${event.vlan_id}` : ''}. A ação abaixo atualiza a política e sincroniza as regras legadas usadas pelo runtime.
@@ -907,7 +915,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
     <DialogShell
       open={open}
       title={item ? 'Editar VIP' : 'Adicionar VIP'}
-      subtitle="Todo IP cadastrado nesta área passa a ser tratado como VIP: bypass total, bypass DNS e liberdade para usar qualquer DNS manual configurado na placa de rede."
+      subtitle="VIP é bypass total real: sai direto pelo firewall e pode usar o Unbound recursivo local sem bloqueios de RPZ, proxy ou interceptação."
       onClose={onClose}
       size="max-w-3xl"
       footer={(
@@ -925,15 +933,14 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
     >
       <div className="space-y-5">
         <ThemeAwareSurface tone="primary" className="p-5">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Impacto automático</div>
+          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Impacto automático de VIP real</div>
           <div className="mt-3 flex flex-wrap gap-2">
-            <VipImpactBadge label="VIP" tone="primary" />
-            <VipImpactBadge label="Bypass total" tone="danger" />
-            <VipImpactBadge label="DNS livre" tone="warning" />
-            <VipImpactBadge label="Fora da política comum" tone="neutral" />
+            {VIP_RUNTIME_BADGES.map((badge) => (
+              <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
+            ))}
           </div>
           <p className="mt-4 text-sm leading-6 text-on-surface/68">
-            O operador não precisa marcar várias opções. Salvar aqui já transforma o IP em exceção administrativa forte.
+            Salvar aqui já transforma o IP em exceção administrativa forte em todas as camadas gerenciadas pelo módulo.
           </p>
         </ThemeAwareSurface>
         <div className="grid gap-4 md:grid-cols-2">
@@ -1057,8 +1064,8 @@ function VlanEditorDialog({ open, item, onClose, onSubmit, saving }) {
         </label>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <button type="button" onClick={() => setForm((current) => ({ ...current, blocking_enabled: !current.blocking_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.blocking_enabled ? 'border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Bloqueio {form.blocking_enabled ? 'ativo' : 'inativo'}</button>
-        <button type="button" onClick={() => setForm((current) => ({ ...current, monitoring_enabled: !current.monitoring_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.monitoring_enabled ? 'border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Monitoramento {form.monitoring_enabled ? 'ativo' : 'inativo'}</button>
+        <button type="button" onClick={() => setForm((current) => ({ ...current, blocking_enabled: !current.blocking_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.blocking_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Bloqueio {form.blocking_enabled ? 'ativo' : 'inativo'}</button>
+        <button type="button" onClick={() => setForm((current) => ({ ...current, monitoring_enabled: !current.monitoring_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.monitoring_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Monitoramento {form.monitoring_enabled ? 'ativo' : 'inativo'}</button>
         <button type="button" onClick={() => setForm((current) => ({ ...current, exempt: !current.exempt }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.exempt ? 'border-amber-500/20 bg-amber-500/12 text-amber-700 dark:text-amber-300' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Exceção {form.exempt ? 'ativa' : 'inativa'}</button>
       </div>
       <label className="mt-4 block space-y-2">
@@ -1581,9 +1588,9 @@ export default function BlockingReleases() {
     {
       icon: Shield,
       eyebrow: 'VIPs ativos',
-      title: 'Exceções administrativas fortes',
+      title: 'Bypass total real',
       value: activeVips.length,
-      subtitle: 'Todo VIP recebe bypass total e DNS livre automaticamente.',
+      subtitle: 'VIP sai livre pelo firewall e usa Unbound recursivo com passthrough de bloqueios.',
       tone: activeVips.length ? 'warning' : 'neutral',
     },
     {
@@ -1857,7 +1864,7 @@ export default function BlockingReleases() {
       }
       const payload = await requestAction(`audit/events?${params.toString()}`, 'GET');
       setData((current) => ({ ...current, auditEvents: payload?.events ? payload : { events: [], summary: {} } }));
-      flash('LGPD atualizada.', 'success');
+      flash('Relatório de dados atualizado.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao carregar auditoria.', 'danger');
     } finally {
@@ -1902,10 +1909,10 @@ export default function BlockingReleases() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `lgpd-acessos-${new Date().toISOString().slice(0, 10)}.pdf`;
+      link.download = `relatorio-dados-acessos-${new Date().toISOString().slice(0, 10)}.pdf`;
       link.click();
       window.URL.revokeObjectURL(url);
-      flash('PDF LGPD gerado.', 'success');
+      flash('PDF do relatório de dados gerado.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao exportar PDF.', 'danger');
     }
@@ -1996,7 +2003,7 @@ export default function BlockingReleases() {
 
       await loadAll();
       setVipEditor({ open: false, item: null });
-      flash(vipEditor.item ? 'VIP atualizado.' : 'VIP criado com bypass total e DNS livre.', 'success');
+      flash(vipEditor.item ? 'VIP atualizado com bypass total real.' : 'VIP criado com firewall livre e Unbound recursivo liberado.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao salvar VIP.', 'danger');
     } finally {
@@ -2253,17 +2260,18 @@ export default function BlockingReleases() {
         eyebrow={(
           <span className="inline-flex items-center gap-2">
             <ShieldCheck size={14} />
-            Bloqueados & Liberados
+            Governança de Bloqueios
           </span>
         )}
-        title="Operação por políticas, escopo e exceções com leitura institucional clara"
-        description="A base visual do módulo foi consolidada para um fluxo corporativo mais sóbrio: políticas nomeadas, VLANs operacionais, VIPs e saúde do motor em uma linguagem única, mais densa e previsível."
+        title="Políticas, exceções e enforcement em uma leitura institucional única"
+        description="Este módulo passa a organizar decisão administrativa, escopo de rede, conformidade e execução técnica na mesma linguagem visual. A leitura privilegia clareza para governança sem perder profundidade operacional."
         badges={(
           <>
-            <StateBadge label="MD3 dark adaptado" tone="primary" title="O módulo agora segue a base visual institucional do sistema." />
+            <StateBadge label="Padrão SGCG" tone="primary" title="O módulo segue a linguagem institucional consolidada do sistema." />
+            <StateBadge label="Governança + Controle" tone="success" title="Decisão, exceção, auditoria e enforcement técnico no mesmo fluxo." />
             <StateBadge label={`${managedVlanIds.length} VLANs no módulo`} tone="neutral" title="A lista operacional é dinâmica e vem do cadastro do produto." />
-            <StateBadge label="VIP = bypass total" tone="danger" title="IPs em Exceções continuam sendo tratados como VIPs." />
-            <StateBadge label="VIP = DNS livre" tone="warning" title="VIP pode usar resolvedores manuais no host." />
+            <StateBadge label="VIP = exceção total" tone="danger" title="VIP sai livre pelo firewall e não segue bloqueios comuns." />
+            <StateBadge label="DNS interno preservado" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
             <StateBadge label="DNS interno por VLAN" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
             <StateBadge label={contingencyActive ? 'Contingência ativa' : 'Contingência pronta'} tone={contingencyActive ? 'danger' : 'success'} />
           </>
@@ -2326,7 +2334,7 @@ export default function BlockingReleases() {
         <ListRow className={banner.tone === 'danger'
           ? 'border-danger/18 bg-danger/10 text-danger'
           : banner.tone === 'success'
-            ? 'border-emerald-500/18 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+            ? 'border-info/18 bg-info/10 text-info'
             : 'border-primary/16 bg-primary/10 text-primary'}
         >
           <div className="text-sm font-semibold">{banner.text}</div>
@@ -2373,7 +2381,7 @@ export default function BlockingReleases() {
           </div>
 
           <div className="grid gap-5 2xl:grid-cols-[1.2fr_0.8fr]">
-            <SectionCard title="Leitura rápida do módulo" subtitle="Resposta direta para o operador entender o estado sem interpretar tabelas técnicas.">
+            <SectionCard title="Síntese executiva do módulo" subtitle="Resposta direta para o gestor entender estado, exceções e risco sem navegar por detalhes técnicos.">
               <div className="grid gap-3 md:grid-cols-2">
                 <ListRow>
                   <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Global agora</div>
@@ -2391,7 +2399,7 @@ export default function BlockingReleases() {
                   <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">VIPs e exceções</div>
                   <div className="mt-3 text-sm leading-6 text-on-surface/68">
                     {activeVips.length
-                      ? `${activeVips.length} VIP(s) ativo(s) com bypass total, bypass DNS e liberdade para usar qualquer DNS manual no host.`
+                      ? `${activeVips.length} VIP(s) ativo(s) com firewall livre, Unbound recursivo liberado e fora de proxy/interceptação.`
                       : 'Nenhum VIP ativo neste momento.'}
                   </div>
                 </ListRow>
@@ -2435,7 +2443,7 @@ export default function BlockingReleases() {
               </div>
             </SectionCard>
 
-            <SectionCard title="Alertas importantes" subtitle="Apenas o que precisa chamar atenção agora.">
+            <SectionCard title="Pontos de atenção" subtitle="Somente o que exige leitura imediata pela governança ou pela operação.">
               <div className="space-y-2.5">
                 {activeAlerts.map((alert, index) => (
                   <ListRow
@@ -2444,7 +2452,7 @@ export default function BlockingReleases() {
                       alert.tone === 'danger'
                         ? 'border-danger/18 bg-danger/10 text-danger'
                         : alert.tone === 'success'
-                          ? 'border-emerald-500/18 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                          ? 'border-info/18 bg-info/10 text-info'
                           : 'border-amber-500/18 bg-amber-500/10 text-amber-700 dark:text-amber-300'
                     }
                   >
@@ -2458,7 +2466,7 @@ export default function BlockingReleases() {
             </SectionCard>
           </div>
 
-          <SectionCard title="Matriz operacional por VLAN" subtitle="Leitura rápida da política efetiva por escopo, mantendo só o que pertence ao produto.">
+          <SectionCard title="Matriz por escopo de rede" subtitle="Leitura rápida da política efetiva por VLAN, mantendo apenas o que é relevante para decisão e controle.">
             <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
               {vlanMatrixCards.map((vlan) => (
                 <ThemeAwareSurface key={`matrix-${vlan.vlan_id}`} className="p-[var(--spacing-card)]">
@@ -2482,18 +2490,18 @@ export default function BlockingReleases() {
       {!loading && activeTab === 'policies' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="Políticas"
-            subtitle="Gerenciador nomeado de políticas por domínio com foco em escaneabilidade, clareza de status e operação segura."
+            title="Políticas nomeadas"
+            subtitle="Catálogo institucional de bloqueios e liberações por domínio, com leitura clara de escopo, status e justificativa."
             actions={<ActionButton tone="primary" icon={Plus} onClick={() => setPolicyEditor({ open: true, item: null })}>Nova Política</ActionButton>}
           >
             <div className="space-y-4 xl:space-y-5">
               <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
                 <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr] xl:items-center">
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Fluxo principal</div>
-                    <div className="mt-2 text-lg font-black text-on-surface">Criar política, definir escopo e validar domínios</div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Fluxo de governança</div>
+                    <div className="mt-2 text-lg font-black text-on-surface">Nomear a política, definir o escopo e justificar a decisão</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/68">
-                      Use esta tela para liberar o Ponto RH, bloquear TikTok, liberar fornecedores ou aplicar uma regra por VLAN sem mexer em categoria técnica.
+                      Use esta tela para formalizar decisões como liberar um sistema institucional, bloquear uma plataforma social ou limitar uma regra a uma VLAN específica sem expor detalhes técnicos desnecessários.
                     </div>
                   </div>
                   <div className="grid gap-2.5 sm:grid-cols-3 xl:grid-cols-1">
@@ -2576,8 +2584,8 @@ export default function BlockingReleases() {
           </SectionCard>
 
           <SectionCard
-            title="Escopos de políticas"
-            subtitle="Controle somente políticas nomeadas criadas na UI. Catálogos fixos não aparecem mais nesta matriz."
+            title="Escopos de aplicação"
+            subtitle="As políticas são distribuídas por escopo global ou por VLAN, preservando governança clara sobre onde cada decisão vale."
             actions={<ActionButton tone="ghost" icon={Layers3} onClick={() => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' })}>Editar global</ActionButton>}
           >
             <div className="grid gap-5 2xl:grid-cols-2">
@@ -2645,9 +2653,9 @@ export default function BlockingReleases() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Regras de precedência" subtitle="A hierarquia operacional continua explícita.">
+          <SectionCard title="Hierarquia de precedência" subtitle="A ordem de decisão e execução continua explícita para auditoria e troubleshooting.">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <ListRow><div className="text-sm font-semibold text-on-surface">1. VIPs</div><div className="mt-2 text-sm text-on-surface/62">Bypass total, inclusive DNS.</div></ListRow>
+              <ListRow><div className="text-sm font-semibold text-on-surface">1. VIPs</div><div className="mt-2 text-sm text-on-surface/62">Bypass total real: firewall livre e Unbound recursivo com passthrough de RPZ.</div></ListRow>
               <ListRow><div className="text-sm font-semibold text-on-surface">2. Liberação</div><div className="mt-2 text-sm text-on-surface/62">Allowlist global ou por VLAN tem precedência.</div></ListRow>
               <ListRow><div className="text-sm font-semibold text-on-surface">3. Bloqueio</div><div className="mt-2 text-sm text-on-surface/62">Blacklist global ou por VLAN.</div></ListRow>
               <ListRow><div className="text-sm font-semibold text-on-surface">4. Contingência</div><div className="mt-2 text-sm text-on-surface/62">Emergência temporária auditada.</div></ListRow>
@@ -2658,8 +2666,8 @@ export default function BlockingReleases() {
 
       {!loading && activeTab === 'vlans' ? (
         <SectionCard
-          title="VLANs"
-          subtitle="CRUD completo de VLANs do módulo: crie, edite e exclua redes sem depender de uma lista fixa."
+          title="Escopos de rede"
+          subtitle="Cadastro e operação das VLANs sob política, com leitura compacta de status, VIPs, monitoramento e bloqueio."
           actions={<ActionButton tone="primary" icon={Plus} onClick={() => setVlanEditor({ open: true, item: null })}>Nova VLAN</ActionButton>}
         >
           <div className="space-y-3.5 xl:space-y-4">
@@ -2701,7 +2709,7 @@ export default function BlockingReleases() {
             <DataToolbar>
               <div className="min-w-0 flex-1">
                 <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/42">Contexto do módulo</div>
-                <div className="mt-1 text-sm text-on-surface/62">Cada VLAN pode participar do padrão operacional ou operar fora do enforcement, mantendo leitura compacta de DNS interno, políticas e status.</div>
+                <div className="mt-1 text-sm text-on-surface/62">Cada VLAN pode aderir ao padrão institucional ou operar em exceção, mantendo leitura compacta de DNS interno, políticas e status.</div>
               </div>
               <div className="grid gap-2.5 sm:grid-cols-4">
                 <InlineStat label="Total" value={vlanPolicies.length} tone="primary" />
@@ -2794,29 +2802,28 @@ export default function BlockingReleases() {
       {!loading && activeTab === 'vips' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="Exceções / VIPs"
-            subtitle="IPs cadastrados em Exceções são VIPs e recebem bypass total, inclusive de DNS."
+            title="Exceções VIP"
+            subtitle="VIP representa exceção total controlada: firewall livre, Unbound recursivo local sem bloqueio de RPZ e fora de proxy/interceptação."
             actions={<ActionButton tone="warning" icon={Plus} onClick={() => setVipEditor({ open: true, item: null })}>Adicionar VIP</ActionButton>}
           >
             <div className="grid gap-5 2xl:grid-cols-[0.82fr_1.18fr]">
               <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Impacto do VIP</div>
+                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Impacto técnico da exceção</div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <VipImpactBadge label="VIP" tone="primary" />
-                  <VipImpactBadge label="Bypass total" tone="danger" />
-                  <VipImpactBadge label="DNS livre" tone="warning" />
-                  <VipImpactBadge label="Fora da política comum" tone="neutral" />
+                  {VIP_RUNTIME_BADGES.map((badge) => (
+                    <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
+                  ))}
                 </div>
                 <p className="mt-4 text-sm leading-7 text-on-surface/68">
-                  O operador não precisa interpretar a regra. Cadastrar nesta área já significa que o IP não seguirá bloqueio comum por domínio,
-                  não seguirá a restrição padrão de DNS interno e poderá usar Google DNS, Cloudflare, Quad9 ou qualquer outro DNS manual configurado no host.
+                  Cadastrar nesta área significa que o IP não segue bloqueio comum por domínio, pode continuar usando o Unbound recursivo local
+                  com passthrough de RPZ e também pode sair direto pela WAN se houver DNS manual configurado no aparelho.
                 </p>
                 <div className="mt-4 grid gap-2.5 md:grid-cols-2 2xl:grid-cols-1">
                   <InlineStat label="VIPs ativos" value={activeVips.length} tone="warning" />
                   <InlineStat label="VIPs inativos" value={(data.exceptions || []).filter((row) => !row.active).length} tone="neutral" />
                 </div>
                 <div className="mt-4 rounded-[22px] border border-outline/14 bg-surface/58 px-4 py-3 text-sm leading-6 text-on-surface/62">
-                  Salvar um VIP agora sincroniza imediatamente três camadas do runtime: RPZ do Unbound, bypass explícito do proxy e liberação de DNS externo no firewall para TCP/UDP 53.
+                  Salvar um VIP sincroniza o runtime imediatamente: ACCEPT total no firewall, bypass explícito no Squid, passthrough RPZ e retorno antes da interceptação seletiva.
                 </div>
               </ThemeAwareSurface>
 
@@ -2837,9 +2844,9 @@ export default function BlockingReleases() {
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="font-mono text-lg font-black text-on-surface">{item.ip}</span>
                             <StateBadge label={item.active ? 'Ativo' : 'Inativo'} tone={item.active ? 'warning' : 'neutral'} />
-                            <VipImpactBadge label="VIP" tone="primary" />
-                            <VipImpactBadge label="Bypass total" tone="danger" />
-                            <VipImpactBadge label="DNS livre" tone="warning" />
+                            {VIP_RUNTIME_BADGES.slice(0, 4).map((badge) => (
+                              <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
+                            ))}
                           </div>
                           <div className="mt-2 text-sm font-semibold text-on-surface">{item.description || item.hostname || 'Sem descrição'}</div>
                           <div className="mt-2 text-sm leading-6 text-on-surface/62">{item.notes || item.reason || 'Sem motivo informado.'}</div>
@@ -2860,7 +2867,7 @@ export default function BlockingReleases() {
                     <EmptyStateBlock
                       icon={ShieldAlert}
                       title="Nenhum VIP encontrado"
-                      description="Crie um VIP para garantir bypass total e DNS livre a um IP específico."
+                      description="Crie um VIP para garantir firewall livre, Unbound recursivo liberado e saída fora de proxy/interceptação."
                       action={<ActionButton tone="warning" icon={Plus} onClick={() => setVipEditor({ open: true, item: null })}>Adicionar VIP</ActionButton>}
                     />
                   )}
@@ -2874,8 +2881,8 @@ export default function BlockingReleases() {
       {!loading && activeTab === 'engine' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="Modos do motor"
-            subtitle="ACL, ACL + DNS e Interceptação Seletiva ficam explícitos, com hint curto e troca direta."
+            title="Modos de enforcement"
+            subtitle="ACL, ACL + DNS e Interceptação Seletiva ficam explícitos em uma leitura simples para mudança controlada."
           >
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {availableModes.map((mode) => (
@@ -2911,8 +2918,8 @@ export default function BlockingReleases() {
           </SectionCard>
 
           <SectionCard
-            title="Motor & Saúde"
-            subtitle="Parte técnica organizada em blocos úteis: serviços, drift, apply, rollback e integridade."
+            title="Motor de controle"
+            subtitle="Execução técnica organizada em blocos claros: serviços, drift, apply, rollback e integridade."
             actions={(
               <QuickActionBar
                 items={[
@@ -2930,7 +2937,7 @@ export default function BlockingReleases() {
                   <div className="flex items-start justify-between gap-3">
                     <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${
                       toneFromStatus(card.status) === 'success'
-                        ? 'border-emerald-500/20 bg-emerald-500/12 text-emerald-700 dark:text-emerald-300'
+                        ? 'border-info/20 bg-info/12 text-info'
                         : toneFromStatus(card.status) === 'danger'
                           ? 'border-danger/18 bg-danger/10 text-danger'
                           : 'border-outline/16 bg-surface/80 text-on-surface/60'
@@ -2947,18 +2954,18 @@ export default function BlockingReleases() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Integridade e checkpoints" subtitle="Status consolidado para apply, rollback e arquivos esperados.">
+          <SectionCard title="Integridade e checkpoints" subtitle="Status consolidado para apply, rollback e artefatos esperados pelo enforcement.">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {Object.entries(data.health?.integrity || {}).map(([key, ok]) => (
                 <ListRow key={key}>
                   <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">{key.replace(/_/g, ' ')}</div>
-                  <div className={`mt-3 text-lg font-black ${ok ? 'text-emerald-600 dark:text-emerald-300' : 'text-danger'}`}>{ok ? 'Disponível' : 'Indisponível'}</div>
+                  <div className={`mt-3 text-lg font-black ${ok ? 'text-info' : 'text-danger'}`}>{ok ? 'Disponível' : 'Indisponível'}</div>
                 </ListRow>
               ))}
             </div>
           </SectionCard>
 
-          <SectionCard title="DNS interno operacional" subtitle="Cada VLAN do módulo mantém seu próprio gateway/DNS interno válido no modo ACL + DNS.">
+          <SectionCard title="DNS interno institucional" subtitle="Cada VLAN do módulo mantém seu próprio gateway/DNS interno válido no modo ACL + DNS.">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {internalDnsEntries.map((item) => (
                 <ListRow key={item.vlanId}>
@@ -3007,7 +3014,7 @@ export default function BlockingReleases() {
                     onClick: () => setContingencyEditor({ open: true, mode: 'renew' }),
                   },
                   {
-                    label: 'Ver LGPD',
+                    label: 'Relatório de Dados',
                     tone: 'ghost',
                     icon: ScrollText,
                     onClick: () => startTransition(() => setActiveTab('audit')),
@@ -3080,14 +3087,14 @@ export default function BlockingReleases() {
 
       {!loading && activeTab === 'metrics' ? (
         <div className="space-y-5 xl:space-y-6">
-          <div className="grid gap-5 xl:grid-cols-2">
-            <SectionCard title="Domínios mais vistos" subtitle="Leitura limpa, sem visual de debug.">
+            <div className="grid gap-5 xl:grid-cols-2">
+            <SectionCard title="Domínios mais vistos" subtitle="Leitura estatística limpa, sem visual de debug.">
               <MiniTrendList items={data.metrics?.topSites || []} labelKey="domain" valueKey="total" />
             </SectionCard>
             <SectionCard title="Domínios mais bloqueados" subtitle="Bloqueios observados no recorte carregado.">
               <MiniTrendList items={data.metrics?.topBlocked || []} labelKey="domain" valueKey="total" />
             </SectionCard>
-            <SectionCard title="IPs com mais eventos" subtitle="Quem mais gerou tentativas ou consultas.">
+            <SectionCard title="IPs com mais eventos" subtitle="Quem mais gerou tentativas, consultas ou bypass.">
               <MiniTrendList items={data.metrics?.topIps || []} labelKey="client_ip" valueKey="total" />
             </SectionCard>
             <SectionCard title="VLANs com mais atividade" subtitle="Ajuda a localizar rapidamente onde o enforcement está mais acionado.">
@@ -3095,7 +3102,7 @@ export default function BlockingReleases() {
             </SectionCard>
           </div>
 
-          <SectionCard title="Linha temporal" subtitle="Resumo por hora do período carregado.">
+          <SectionCard title="Linha temporal" subtitle="Resumo horário do recorte carregado para leitura de volume e variação.">
             <MiniTrendList items={data.metrics?.hourly || []} labelKey="hour" valueKey="total" />
           </SectionCard>
         </div>
@@ -3104,13 +3111,13 @@ export default function BlockingReleases() {
       {!loading && activeTab === 'radar' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="Radar em Tempo Real"
+            title="Radar operacional"
             subtitle="Eventos DNS e Proxy consolidados em uma única leitura operacional, com atualização automática a cada 5 segundos."
             actions={(
               <QuickActionBar
                 items={[
                   { label: 'Atualizar', tone: 'primary', icon: RefreshCcw, onClick: () => loadRealtimeRadar(false) },
-                  { label: 'LGPD', tone: 'ghost', icon: ScrollText, onClick: () => startTransition(() => setActiveTab('audit')) },
+                  { label: 'Dados', tone: 'ghost', icon: ScrollText, onClick: () => startTransition(() => setActiveTab('audit')) },
                 ]}
               />
             )}
@@ -3120,9 +3127,9 @@ export default function BlockingReleases() {
                 <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
                   <div>
                     <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Observabilidade unificada</div>
-                    <div className="mt-2 text-xl font-black text-on-surface">DNS + Proxy sem quebrar os ingesters atuais</div>
+                    <div className="mt-2 text-xl font-black text-on-surface">Eventos de DNS e Proxy em uma visão única</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/68">
-                      O radar lê a visão unificada de eventos e preserva o fluxo em tempo real. Proxy & Logs continua alimentando eventos técnicos, enquanto Bloqueios & Liberações centraliza a operação.
+                      O radar preserva o fluxo em tempo real sem separar o operador entre múltiplas telas. Proxy & Logs continua alimentando eventos técnicos, enquanto o SGCG centraliza a leitura operacional.
                     </div>
                   </div>
                   <div className="grid gap-2.5 sm:grid-cols-3">
@@ -3224,13 +3231,13 @@ export default function BlockingReleases() {
       {!loading && activeTab === 'audit' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="LGPD"
-            subtitle="Veja claramente quem acessou o quê: IP, hostname, VLAN, domínio, decisão aplicada, política correspondente e janela estimada de uso."
+            title="Relatório de Dados"
+            subtitle="Leitura central de governança de dados para identificar quem acessou o quê, em qual rede, com qual decisão aplicada e sob qual política institucional."
             actions={(
               <QuickActionBar
                 items={[
                   { label: 'Filtrar', tone: 'primary', icon: Filter, onClick: loadOperationalAudit },
-                  { label: 'Exportar PDF LGPD', tone: 'success', icon: Download, onClick: exportAuditPdf },
+                  { label: 'Exportar evidências em PDF', tone: 'success', icon: Download, onClick: exportAuditPdf },
                 ]}
               />
             )}
@@ -3239,16 +3246,16 @@ export default function BlockingReleases() {
               <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
                 <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr] xl:items-center">
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Leitura direta de acesso</div>
-                    <div className="mt-2 text-xl font-black text-on-surface">Busque pelo dispositivo e descubra exatamente o domínio acessado</div>
+                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Leitura central de acesso</div>
+                    <div className="mt-2 text-xl font-black text-on-surface">Investigue dispositivos, domínios e decisões aplicadas em uma trilha única de governança</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/68">
-                      Use IP, hostname, VLAN ou domínio. A lista mostra quem originou o acesso, o que foi tentado, se houve bloqueio/liberação e qual política bateu no evento.
+                      Use IP, hostname, VLAN ou domínio. A lista mostra origem, destino, decisão aplicada, política correspondente e a evidência operacional disponível para auditoria e responsabilização.
                     </div>
                   </div>
                   <div className="grid gap-2.5 sm:grid-cols-3">
-                    <InlineStat label="Eventos LGPD" value={operationalAuditSummary.total || filteredOperationalAudit.length} tone="primary" />
+                    <InlineStat label="Eventos auditados" value={operationalAuditSummary.total || filteredOperationalAudit.length} tone="primary" />
                     <InlineStat label="Bloqueados" value={operationalAuditSummary.blocked || 0} tone="danger" />
-                    <InlineStat label="Liberados/Bypass" value={(operationalAuditSummary.allowed || 0) + (operationalAuditSummary.bypassed || 0)} tone="success" />
+                    <InlineStat label="Liberados ou excepcionados" value={(operationalAuditSummary.allowed || 0) + (operationalAuditSummary.bypassed || 0)} tone="success" />
                   </div>
                 </div>
               </ThemeAwareSurface>
@@ -3318,7 +3325,7 @@ export default function BlockingReleases() {
                         ) : null}
                         {item.domain ? (
                           <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain); setAuditFilters((current) => ({ ...current, action: 'all' })); }}>
-                            Ver domínio na LGPD
+                            Ver domínio na trilha
                           </ActionButton>
                         ) : null}
                       </div>
@@ -3327,8 +3334,8 @@ export default function BlockingReleases() {
                 )) : (
                   <EmptyStateBlock
                     icon={ScrollText}
-                    title="Nenhum evento LGPD encontrado"
-                    description="Busque por IP, hostname ou domínio, ajuste o período e aplique o filtro para descobrir quem acessou o quê."
+                    title="Nenhum evento localizado"
+                    description="Busque por IP, hostname ou domínio, ajuste o período e aplique o filtro para reconstruir a trilha institucional de acesso."
                     action={<ActionButton tone="primary" icon={Filter} onClick={loadOperationalAudit}>Aplicar filtros</ActionButton>}
                   />
                 )}

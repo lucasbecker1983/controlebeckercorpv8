@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Cpu, Database, Shield, Clock, Globe, ArrowDown, ArrowUp, Activity } from 'lucide-react';
 import { api } from '../services/api';
+import { ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 const LiveAreaChart = ({ data, color }) => {
     if (!data || data.length < 2) return <div className="h-full w-full flex items-center justify-center opacity-20"><Activity/></div>;
@@ -44,42 +45,72 @@ export default function Dashboard() {
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
-            <h2 className="text-4xl font-light text-on-surface">Visão <span className="font-bold italic text-primary">Geral</span></h2>
+            <ModuleHeader
+                eyebrow="Governança"
+                title="Centro de Governança"
+                description="Painel executivo para leitura institucional do ambiente, com visão consolidada de disponibilidade, ameaça, infraestrutura e tráfego operacional."
+                badges={(
+                    <>
+                        <StatusChip label="Visão executiva" tone="primary" />
+                        <StatusChip label="Governança + Controle" tone="success" />
+                    </>
+                )}
+            />
             
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 {[
                     { title: "Carga CPU", val: `${data?.system?.cpu}%`, sub: "Processamento", icon: Cpu, col: "text-orange-500" },
                     { title: "Memória RAM", val: `${data?.system?.ram}%`, sub: data?.system?.ram_text, icon: Database, col: "text-blue-500" },
                     { title: "Ameaças", val: data?.modules?.threats_blocked, sub: `Bloqueios ${data?.threats?.window || '24h'}${data?.threats?.recent_5m ? ` • ${data.threats.recent_5m} em 5min` : ''}`, icon: Shield, col: "text-danger" },
                     { title: "Uptime", val: "Servidor", sub: fmtUptime(data?.system?.uptime), icon: Clock, col: "text-success" }
                 ].map((c, i) => (
-                    <div key={i} className="bg-container p-6 rounded-[28px] border border-outline/20 relative overflow-hidden group">
-                        <c.icon size={80} className={`absolute -right-4 -top-4 opacity-10 ${c.col} group-hover:scale-110 transition-transform`} />
-                        <div className="relative z-10">
-                            <c.icon size={24} className={`${c.col} mb-4`} />
-                            <p className="text-on-surface opacity-60 text-xs font-bold uppercase mb-1">{c.title}</p>
-                            <h3 className={`text-2xl font-black text-on-surface ${i===3 ? 'text-lg' : ''}`}>{c.val}</h3>
-                            <p className="text-[10px] text-on-surface opacity-50 font-mono mt-2 uppercase">{c.sub}</p>
+                    <Surface key={i} className="h-full p-5 sm:p-6">
+                        <div className="flex h-full items-start gap-4">
+                            <div className={`inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-outline/10 bg-surface ${c.col}`}>
+                                <c.icon size={22} />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-semibold tracking-tight text-on-surface/60">{c.title}</p>
+                                <h3 className={`mt-2 break-words font-black tracking-tight text-on-surface ${i === 3 ? 'text-xl' : 'text-3xl'}`}>{c.val}</h3>
+                                <p className="mt-2 text-sm leading-6 text-on-surface/56">{c.sub}</p>
+                            </div>
                         </div>
-                    </div>
+                    </Surface>
                 ))}
             </div>
 
-            <div className="bg-container p-6 md:p-8 rounded-[32px] border border-outline/20">
-                <h3 className="text-xl font-bold mb-6 flex items-center gap-2 text-on-surface"><Globe className="text-primary"/> Tráfego em Tempo Real</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-surface p-6 rounded-[24px] border border-outline/10 text-blue-500">
-                        <p className="text-[10px] font-bold uppercase mb-2 flex items-center gap-2 text-on-surface"><ArrowDown size={14} className="text-blue-500"/> Internet WAN</p>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <Surface className="p-6">
+                    <div className="text-[11px] font-semibold tracking-tight text-primary">Governança</div>
+                    <h3 className="mt-2 text-xl font-black text-on-surface">Decisão, política e conformidade</h3>
+                    <p className="mt-3 text-sm leading-6 text-on-surface/62">
+                        Use a camada de governança para definir políticas, exceções, perfis, critérios de auditoria e parâmetros institucionais do SGCG.
+                    </p>
+                </Surface>
+                <Surface className="p-6">
+                    <div className="text-[11px] font-semibold tracking-tight text-primary">Controle</div>
+                    <h3 className="mt-2 text-xl font-black text-on-surface">Execução técnica e observabilidade</h3>
+                    <p className="mt-3 text-sm leading-6 text-on-surface/62">
+                        A camada de controle executa enforcement, monitora serviços, expõe telemetria e valida tecnicamente o comportamento da infraestrutura.
+                    </p>
+                </Surface>
+            </div>
+
+            <Surface className="p-6 md:p-8">
+                <h3 className="mb-6 flex items-center gap-2 text-xl font-bold text-on-surface"><Globe className="text-primary"/> Tráfego em tempo real</h3>
+                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                    <div className="rounded-[24px] border border-outline/10 bg-surface p-5 text-blue-500 sm:p-6">
+                        <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-tight text-on-surface"><ArrowDown size={14} className="text-blue-500"/> Internet WAN</p>
                         <h4 className="text-3xl font-black text-on-surface">{(data?.network?.wan?.down || 0).toFixed(1)} <span className="text-sm opacity-50">Mbps</span></h4>
                         <LiveAreaChart data={history.wan} />
                     </div>
-                    <div className="bg-surface p-6 rounded-[24px] border border-outline/10 text-purple-500">
-                        <p className="text-[10px] font-bold uppercase mb-2 flex items-center gap-2 text-on-surface"><ArrowUp size={14} className="text-purple-500"/> Rede Local (VLANs)</p>
+                    <div className="rounded-[24px] border border-outline/10 bg-surface p-5 text-purple-500 sm:p-6">
+                        <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-tight text-on-surface"><ArrowUp size={14} className="text-purple-500"/> Rede local (VLANs)</p>
                         <h4 className="text-3xl font-black text-on-surface">{(data?.network?.lan?.down || 0).toFixed(1)} <span className="text-sm opacity-50">Mbps</span></h4>
                         <LiveAreaChart data={history.lan} />
                     </div>
                 </div>
-            </div>
+            </Surface>
         </div>
     );
 }

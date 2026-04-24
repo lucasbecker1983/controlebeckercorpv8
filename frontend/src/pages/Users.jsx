@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Users as UsersIcon, UserPlus, Edit3, Trash2, Shield, User } from 'lucide-react';
 import { api } from '../services/api';
+import { ActionButton, ModuleHeader, Surface } from '../components/ui/primitives';
 
 export default function Users() {
     const [users, setUsers] = useState([]);
@@ -10,16 +11,25 @@ export default function Users() {
 
     return (
         <div className="space-y-8 pb-10 animate-in fade-in duration-500">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-4xl font-light text-on-surface">Gestão de <span className="font-bold italic text-primary">Equipe</span></h2>
-                <button className="bg-primary text-on-primary px-6 py-3 rounded-full font-bold flex items-center gap-2 shadow-md hover:opacity-90 transition-all">
-                    <UserPlus size={18}/> Novo Membro
-                </button>
-            </div>
+            <ModuleHeader
+                eyebrow="Governança"
+                title="Identidades & Perfis"
+                description="Administre contas do sistema, níveis de acesso e papéis institucionais. Esta camada organiza quem pode governar, operar e auditar o ambiente."
+                badges={[
+                    <span key="usuarios" className="inline-flex min-h-[var(--chip-height)] items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[10px] font-black uppercase tracking-[0.16em] text-primary">
+                        {users.length} identidades cadastradas
+                    </span>,
+                ]}
+                actions={[
+                    <ActionButton key="novo" tone="primary" icon={UserPlus}>
+                        Novo Membro
+                    </ActionButton>,
+                ]}
+            />
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {users.map(u => (
-                    <div key={u.id} className="bg-container border border-outline/20 p-6 rounded-[28px] shadow-sm flex flex-col items-center text-center hover:border-primary/50 transition-all group">
+                    <Surface key={u.id} className="group flex flex-col items-center p-6 text-center hover:border-primary/50">
                         <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center text-3xl font-black mb-4">
                             {u.name.charAt(0).toUpperCase()}
                         </div>
@@ -34,7 +44,7 @@ export default function Users() {
                             <button className="flex-1 py-2 rounded-xl text-on-surface bg-outline/5 hover:bg-outline/20 font-bold text-xs flex justify-center items-center gap-2 transition-colors"><Edit3 size={14}/> Editar</button>
                             <button className="flex-1 py-2 rounded-xl text-danger bg-danger/5 hover:bg-danger/20 font-bold text-xs flex justify-center items-center gap-2 transition-colors"><Trash2 size={14}/> Excluir</button>
                         </div>
-                    </div>
+                    </Surface>
                 ))}
             </div>
         </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { authFetch } from "../services/authFetch";
+import { ActionButton, ModuleHeader, SegmentedTabs, StatusChip } from "../components/ui/primitives";
 
 // ─── Mapa de VLANs ────────────────────────────────────────────────────────────
 const VLANS = [
@@ -30,16 +31,16 @@ function fmt(ts) {
 function getProxyPalette() {
   const isDark = document.documentElement.getAttribute("data-theme") === "dark";
   return {
-    pageBg: isDark ? "#030b18" : "#f8fafc",
-    panel: isDark ? "#07101a" : "#ffffff",
-    panelAlt: isDark ? "#0b1221" : "#ffffff",
-    panelAccent: isDark ? "#0b1628" : "#eef6ff",
-    shell: isDark ? "#020810" : "#f1f5f9",
-    border: isDark ? "#1e293b" : "#cbd5e1",
-    text: isDark ? "#e2e8f0" : "#0f172a",
-    muted: isDark ? "#475569" : "#64748b",
-    dim: isDark ? "#334155" : "#94a3b8",
-    faint: isDark ? "#1e293b" : "#e2e8f0",
+    pageBg: isDark ? "#030b18" : "transparent",
+    panel: isDark ? "#07101a" : "rgba(255,255,255,0.92)",
+    panelAlt: isDark ? "#0b1221" : "rgba(255,255,255,0.96)",
+    panelAccent: isDark ? "#0b1628" : "#f1f7f5",
+    shell: isDark ? "#020810" : "#f4f7f3",
+    border: isDark ? "#1e293b" : "#d7e1db",
+    text: isDark ? "#e2e8f0" : "#183029",
+    muted: isDark ? "#475569" : "#5b6f65",
+    dim: isDark ? "#334155" : "#7b8f86",
+    faint: isDark ? "#1e293b" : "#e6eeea",
   };
 }
 
@@ -859,9 +860,9 @@ export default function Proxy() {
   }, [API]);
 
   const tabs = [
-    { id:"radar",      label:"RADAR" },
-    { id:"relatorios", label:"RELATÓRIOS" },
-    { id:"motor",      label:"MOTOR & CONTROLE", dot: true },
+    { id:"radar",      label:"Radar Técnico" },
+    { id:"relatorios", label:"Relatórios" },
+    { id:"motor",      label:"Motor de Controle", dot: true },
   ];
 
   const motorOk = engineStatus?.redirects_active || engineStatus?.squid_active;
@@ -869,110 +870,59 @@ export default function Proxy() {
   return (
     <div style={{
       background:palette.pageBg, minHeight:"100vh",
-      color:palette.text, fontFamily:"'Inter',sans-serif", padding:28,
+      color:palette.text, fontFamily:"'IBM Plex Sans','Inter',sans-serif",
     }}>
-      {/* Header */}
-      <div style={{ marginBottom:28 }}>
-        <h1 style={{ fontSize:32, fontWeight:900, letterSpacing:"-0.03em", margin:0 }}>
-          <span style={{ color:palette.text }}>PROXY & </span>
-          <span style={{ color:"#3b82f6" }}>LOGS</span>
-        </h1>
-        <p style={{ color:palette.dim, fontSize:11, margin:"5px 0 0", letterSpacing:"0.12em" }}>
-          TELEMETRIA, LOGS BRUTOS, SARG E DIAGNÓSTICO TÉCNICO
-        </p>
-        <div style={{ marginTop:12, display:"flex", gap:8, flexWrap:"wrap" }}>
-          <span style={{
-            background: engineStatus?.squid_active ? "#14532d" : "#3f1d1d",
-            color: engineStatus?.squid_active ? "#86efac" : "#fca5a5",
-            borderRadius:999, padding:"5px 10px", fontSize:11, fontWeight:700,
-          }}>
-            SQUID {engineStatus?.squid_active ? "ATIVO" : "INATIVO"}
-          </span>
-          <span style={{
-            background: engineStatus?.redirects_active ? "#1d4ed8" : "#111827",
-            color: engineStatus?.redirects_active ? "#bfdbfe" : "#cbd5e1",
-            borderRadius:999, padding:"5px 10px", fontSize:11, fontWeight:700,
-          }}>
-            INTERCEPTAÇÃO {engineStatus?.redirects_active ? "SELETIVA" : "DESLIGADA"}
-          </span>
-          <span style={{
-            background:"#111827", color:"#cbd5e1", borderRadius:999, padding:"5px 10px", fontSize:11, fontWeight:700,
-          }}>
-            MODO {engineStatus?.interception_mode || "off"}
-          </span>
-          <span style={{
-            background: engineStatus?.logger_active ? "#0f766e" : "#3f3f46",
-            color: engineStatus?.logger_active ? "#99f6e4" : "#cbd5e1",
-            borderRadius:999, padding:"5px 10px", fontSize:11, fontWeight:700,
-          }}>
-            LOGGER {engineStatus?.logger_active ? "ATIVO" : "INATIVO"}
-          </span>
-        </div>
-      </div>
+      <div className="space-y-6 p-[var(--spacing-section)]">
+        <ModuleHeader
+          eyebrow="Controle"
+          title="Observabilidade DNS/Proxy"
+          description="Radar técnico, relatórios operacionais, saúde do Squid e diagnóstico fino da camada observável. Decisão administrativa e política permanecem centralizadas em Bloqueios & Liberações."
+          badges={(
+            <>
+              <StatusChip label={`Squid ${engineStatus?.squid_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.squid_active ? 'success' : 'danger'} />
+              <StatusChip label={`Interceptação ${engineStatus?.redirects_active ? 'seletiva' : 'desligada'}`} tone={engineStatus?.redirects_active ? 'primary' : 'neutral'} />
+              <StatusChip label={`Modo ${engineStatus?.interception_mode || 'off'}`} tone="neutral" />
+              <StatusChip label={`Logger ${engineStatus?.logger_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.logger_active ? 'success' : 'warning'} />
+            </>
+          )}
+        />
 
-      <div style={{
-        background:palette.panelAlt,
-        border:`1px solid ${palette.border}`,
-        borderRadius:8,
-        padding:"12px 14px",
-        marginBottom:18,
-        display:"flex",
-        justifyContent:"space-between",
-        gap:14,
-        alignItems:"center",
-        flexWrap:"wrap",
-      }}>
-        <div>
-          <div style={{ fontSize:11, color:"#60a5fa", fontWeight:800, letterSpacing:"0.08em", marginBottom:5 }}>
-            MÓDULO TÉCNICO
+        <div style={{
+          background:palette.panelAlt,
+          border:`1px solid ${palette.border}`,
+          borderRadius:24,
+          padding:"14px 16px",
+          display:"flex",
+          justifyContent:"space-between",
+          gap:14,
+          alignItems:"center",
+          flexWrap:"wrap",
+          boxShadow:"var(--shadow-soft)",
+        }}>
+          <div>
+            <div style={{ fontSize:11, color:"#0e6b62", fontWeight:800, letterSpacing:"0.08em", marginBottom:5 }}>
+              MÓDULO DE CONTROLE TÉCNICO
+            </div>
+            <div style={{ fontSize:12, color:palette.muted, lineHeight:1.6 }}>
+              Políticas, bloqueios, liberações e VIPs são operados em Bloqueios & Liberações.
+              Esta tela permanece para radar técnico, relatórios SARG, saúde do Squid e diagnóstico fino de observabilidade.
+            </div>
           </div>
-          <div style={{ fontSize:12, color:palette.muted, lineHeight:1.6 }}>
-            Políticas, bloqueios, liberações e VIPs agora são operados somente em Bloqueios & Liberações.
-            Esta tela permanece para radar técnico, relatórios SARG, certificado, saúde do Squid e diagnóstico fino.
-          </div>
+          <ActionButton tone="primary" onClick={() => { window.location.href = "/bloqueios-liberacoes"; }}>
+            Abrir Bloqueios & Liberações
+          </ActionButton>
         </div>
-        <a
-          href="/bloqueios-liberacoes"
-          style={{
-            background:"#1d4ed8",
-            color:"#fff",
-            textDecoration:"none",
-            borderRadius:6,
-            padding:"9px 13px",
-            fontSize:11,
-            fontWeight:800,
-            whiteSpace:"nowrap",
-          }}
-        >
-          ABRIR BLOQUEIOS & LIBERAÇÕES
-        </a>
-      </div>
 
-      {/* Tabs */}
-      <div style={{ display:"flex", gap:2, borderBottom:`1px solid ${palette.border}`, marginBottom:24 }}>
-        {tabs.map(t => {
-          const active = tab===t.id;
-          return (
-            <button key={t.id} onClick={()=>setTab(t.id)} style={{
-              display:"flex", alignItems:"center", gap:7,
-              padding:"9px 18px", border:"none", background:"transparent",
-              borderBottom: active?"2px solid #3b82f6":"2px solid transparent",
-              color: active?palette.text:palette.dim,
-              fontWeight: active?700:500, fontSize:12,
-              letterSpacing:"0.08em", cursor:"pointer",
-              transition:"all .15s", marginBottom:-1,
-            }}>
-              {t.label}
-              {t.dot && <Dot color={motorOk?"#22c55e":"#f87171"} pulse={motorOk} />}
-            </button>
-          );
-        })}
-      </div>
+        <SegmentedTabs
+          tabs={tabs.map((t) => ({ key: t.id, label: t.label }))}
+          value={tab}
+          onChange={setTab}
+        />
 
-      {/* Conteúdo */}
-      {tab==="radar"      && <TabRadar     apiBase={API} palette={palette} engineStatus={engineStatus} />}
-      {tab==="relatorios" && <TabRelatorios apiBase={API} />}
-      {tab==="motor"      && <TabMotor apiBase={API} />}
+        {tab==="radar"      && <TabRadar     apiBase={API} palette={palette} engineStatus={engineStatus} />}
+        {tab==="relatorios" && <TabRelatorios apiBase={API} />}
+        {tab==="motor"      && <TabMotor apiBase={API} />}
+      </div>
     </div>
   );
 }
