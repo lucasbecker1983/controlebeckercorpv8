@@ -27,6 +27,7 @@ export default function Login({ onLogin }) {
       resetAuthFetchInvalidation();
       localStorage.setItem('becker_token', token);
       localStorage.setItem('becker_user', JSON.stringify(res.data.user));
+      window.history.replaceState({}, '', '/');
       onLogin(res.data.user);
     } catch (err) {
       localStorage.removeItem('becker_token');

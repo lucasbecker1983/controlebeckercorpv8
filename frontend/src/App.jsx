@@ -100,14 +100,14 @@ export default function App() {
   }, [theme, accent, uiStyle, user]);
 
   const handleLogout = () => {
-    api.post('/api/auth/logout').catch(() => null).finally(() => {
-      resetAuthInvalidation();
-      resetAuthFetchInvalidation();
-      localStorage.removeItem('becker_token');
-      localStorage.removeItem('becker_user');
-      setUser({});
-      setAuthReady(true);
-    });
+    resetAuthInvalidation();
+    resetAuthFetchInvalidation();
+    localStorage.removeItem('becker_token');
+    localStorage.removeItem('becker_user');
+    window.history.replaceState({}, '', '/');
+    setUser({});
+    setAuthReady(true);
+    api.post('/api/auth/logout').catch(() => null);
   };
 
   if (!authReady) {

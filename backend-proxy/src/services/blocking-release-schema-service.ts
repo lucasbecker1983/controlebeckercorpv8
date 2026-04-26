@@ -463,76 +463,111 @@ const DEFAULT_VLANS = MANAGED_BLOCKING_VLAN_IDS.map((vlanId) => ({
 
 let schemaReady = false;
 let schemaPromise: Promise<void> | null = null;
+const SCHEMA_LOCK_KEY = 80422061;
+
+const schemaExists = async () => {
+    const { rows } = await pool.query(
+        `
+            SELECT
+                to_regclass('public.policy_engine_state') AS policy_engine_state,
+                to_regclass('public.dns_contingency_state') AS dns_contingency_state,
+                to_regclass('public.vlan_policies') AS vlan_policies,
+                to_regclass('public.policy_exceptions') AS policy_exceptions,
+                to_regclass('public.domain_policies') AS domain_policies,
+                to_regclass('public.domain_policy_entries') AS domain_policy_entries
+        `,
+    );
+    const row = rows[0] || {};
+    return Object.values(row).every(Boolean);
+};
 
 export const ensureBlockingReleaseSchema = async () => {
     if (schemaReady) return;
     if (schemaPromise) return schemaPromise;
 
     schemaPromise = (async () => {
-        await pool.query(schemaSql);
-        await pool.query(`
-            INSERT INTO policy_engine_state (
-                id,
-                enforcement_mode,
-                global_blocking_enabled,
-                global_monitoring_enabled,
-                emergency_bypass,
-                health_status,
-                compiler_status,
-                last_validation
-            )
-            VALUES (1, 'acl-plus-dns', TRUE, TRUE, FALSE, 'unknown', 'unknown', '{}'::jsonb)
-            ON CONFLICT (id) DO NOTHING
-        `);
-        await pool.query(`
-            INSERT INTO dns_contingency_state (
-                id,
-                status,
-                scope_type,
-                vlan_ids,
-                providers,
-                resolvers,
-                last_test
-            )
-            VALUES (1, 'normal', 'global', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '{}'::jsonb)
-            ON CONFLICT (id) DO NOTHING
-        `);
+        if (await schemaExists()) {
+            schemaReady = true;
+            return;
+        }
 
-        for (const vlan of DEFAULT_VLANS) {
-            await pool.query(
-                `
-                    INSERT INTO vlan_policies (
-                        vlan_id,
-                        label,
-                        interface_name,
-                        subnet_cidr,
-                        exempt,
-                        blocking_enabled,
-                        monitoring_enabled,
-                        custom_policy,
-                        policy_mode,
-                        whitelist_scope,
-                        blacklist_scope
-                    )
-                    VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE, 'global', '[]'::jsonb, '[]'::jsonb)
-                    ON CONFLICT (vlan_id) DO NOTHING
-                `,
-                [
-                    vlan.vlanId,
-                    vlan.label,
-                    vlan.interfaceName,
-                    vlan.subnetCidr,
-                    vlan.exempt,
-                    vlan.blockingEnabled,
-                ],
-            );
+        const client = await pool.connect();
+        try {
+            await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_KEY]);
+
+            if (await schemaExists()) {
+                schemaReady = true;
+                return;
+            }
+
+            await client.query(schemaSql);
+            await client.query(`
+                INSERT INTO policy_engine_state (
+                    id,
+                    enforcement_mode,
+                    global_blocking_enabled,
+                    global_monitoring_enabled,
+                    emergency_bypass,
+                    health_status,
+                    compiler_status,
+                    last_validation
+                )
+                VALUES (1, 'acl-plus-dns', TRUE, TRUE, FALSE, 'unknown', 'unknown', '{}'::jsonb)
+                ON CONFLICT (id) DO NOTHING
+            `);
+            await client.query(`
+                INSERT INTO dns_contingency_state (
+                    id,
+                    status,
+                    scope_type,
+                    vlan_ids,
+                    providers,
+                    resolvers,
+                    last_test
+                )
+                VALUES (1, 'normal', 'global', '[]'::jsonb, '[]'::jsonb, '[]'::jsonb, '{}'::jsonb)
+                ON CONFLICT (id) DO NOTHING
+            `);
+
+            for (const vlan of DEFAULT_VLANS) {
+                await client.query(
+                    `
+                        INSERT INTO vlan_policies (
+                            vlan_id,
+                            label,
+                            interface_name,
+                            subnet_cidr,
+                            exempt,
+                            blocking_enabled,
+                            monitoring_enabled,
+                            custom_policy,
+                            policy_mode,
+                            whitelist_scope,
+                            blacklist_scope
+                        )
+                        VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE, 'global', '[]'::jsonb, '[]'::jsonb)
+                        ON CONFLICT (vlan_id) DO NOTHING
+                    `,
+                    [
+                        vlan.vlanId,
+                        vlan.label,
+                        vlan.interfaceName,
+                        vlan.subnetCidr,
+                        vlan.exempt,
+                        vlan.blockingEnabled,
+                    ],
+                );
+            }
+        } finally {
+            await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_KEY]).catch(() => undefined);
+            client.release();
         }
 
         schemaReady = true;
-        schemaPromise = null;
     })().catch((error) => {
-        schemaPromise = null;
         throw error;
+    }).finally(() => {
+        schemaPromise = null;
     });
 
     return schemaPromise;

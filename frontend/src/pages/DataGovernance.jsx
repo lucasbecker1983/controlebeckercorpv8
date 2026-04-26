@@ -89,7 +89,7 @@ export default function DataGovernance() {
     const [overviewResult, auditResult, metricsResult, radarResult] = await Promise.allSettled([
       fetchJson(`/api/data-governance/overview?period=${nextPeriod}`),
       fetchJson(`/api/data-governance/audit/events?period=${nextPeriod}&limit=240`),
-      fetchJson(`/api/data-governance/metrics?range=${nextPeriod === '90d' ? '30d' : nextPeriod}`),
+      fetchJson(`/api/data-governance/metrics?range=${nextPeriod}`),
       fetchJson('/api/data-governance/radar/realtime?window_minutes=10&limit=120'),
     ]);
 
@@ -269,7 +269,7 @@ export default function DataGovernance() {
         </SectionCard>
       ) : null}
 
-      {!error && activeTab === 'overview' ? (
+      {activeTab === 'overview' ? (
         <div className="space-y-5 xl:space-y-6">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {executiveCards.map((card) => (
@@ -323,7 +323,7 @@ export default function DataGovernance() {
         </div>
       ) : null}
 
-      {!error && activeTab === 'audit' ? (
+      {activeTab === 'audit' ? (
         <SectionCard
           title="Relatório de Acessos"
           subtitle="Trilha central para identificar origem, destino, decisão aplicada e política correlata sem misturar isso com edição de políticas."
@@ -370,7 +370,7 @@ export default function DataGovernance() {
         </SectionCard>
       ) : null}
 
-      {!error && activeTab === 'metrics' ? (
+      {activeTab === 'metrics' ? (
         <div className="grid gap-5 xl:grid-cols-3">
           <SectionCard title="Domínios mais acessados" subtitle="Volume bruto observado na janela selecionada.">
             <MiniTrendList items={topSites} />

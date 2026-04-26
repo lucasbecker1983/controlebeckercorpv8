@@ -1584,15 +1584,13 @@ function useModuleData() {
     flash.timer = window.setTimeout(() => setBanner(null), 3600);
   };
 
-  const fetchJson = async (endpoint, fallback, timeoutMs = 9000) => {
+  const fetchJson = async (endpoint, timeoutMs = 9000) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await authFetch(`${API}/api/bloqueios-liberacoes/${endpoint}`, { signal: controller.signal });
       if (!response.ok) throw new Error(`Falha em ${endpoint}`);
       return await response.json();
-    } catch {
-      return fallback;
     } finally {
       window.clearTimeout(timer);
     }
@@ -1602,50 +1600,73 @@ function useModuleData() {
     setLoading(true);
     setLoadingState({ critical: true, secondary: true });
 
-    const critical = await Promise.all([
-      fetchJson('domain-policies', []),
-      fetchJson('blocklist', []),
-      fetchJson('allowlist', []),
-      fetchJson('vlans', []),
-      fetchJson('exceptions', []),
-    ]);
+    const criticalRequests = [
+      { key: 'domainPolicies', endpoint: 'domain-policies' },
+      { key: 'blocklist', endpoint: 'blocklist' },
+      { key: 'allowlist', endpoint: 'allowlist' },
+      { key: 'vlans', endpoint: 'vlans' },
+      { key: 'exceptions', endpoint: 'exceptions' },
+    ];
+    const critical = await Promise.allSettled(
+      criticalRequests.map((request) => fetchJson(request.endpoint)),
+    );
+    const criticalFailures = [];
 
-    setData((current) => ({
-      ...current,
-      domainPolicies: Array.isArray(critical[0]) ? critical[0] : [],
-      blocklist: Array.isArray(critical[1]) ? critical[1] : [],
-      allowlist: Array.isArray(critical[2]) ? critical[2] : [],
-      vlans: Array.isArray(critical[3]) ? critical[3] : [],
-      exceptions: Array.isArray(critical[4]) ? critical[4] : [],
-    }));
+    setData((current) => {
+      const next = { ...current };
+      critical.forEach((result, index) => {
+        const { key, endpoint } = criticalRequests[index];
+        if (result.status === 'fulfilled') {
+          next[key] = Array.isArray(result.value) ? result.value : current[key];
+          return;
+        }
+        criticalFailures.push(endpoint);
+      });
+      return next;
+    });
 
     setLoading(false);
     setLoadingState((current) => ({ ...current, critical: false }));
 
-    const secondary = await Promise.all([
-      fetchJson('status', null, 15000),
-      fetchJson('overview', null, 15000),
-      fetchJson('metrics?range=24h', null, 12000),
-      fetchJson('audit', [], 12000),
-      fetchJson('audit/events?period=24h&limit=300', { events: [], summary: {} }, 12000),
-      fetchJson('radar/realtime?window_minutes=10&limit=150', { events: [], summary: {} }, 12000),
-      fetchJson('health', null, 15000),
-      fetchJson('contingency/status', null, 12000),
-      fetchJson('contingency/audit', [], 12000),
-    ]);
+    const secondaryRequests = [
+      { key: 'status', endpoint: 'status', timeoutMs: 15000 },
+      { key: 'overview', endpoint: 'overview', timeoutMs: 15000 },
+      { key: 'metrics', endpoint: 'metrics?range=24h', timeoutMs: 12000 },
+      { key: 'audit', endpoint: 'audit', timeoutMs: 12000 },
+      { key: 'auditEvents', endpoint: 'audit/events?period=24h&limit=300', timeoutMs: 12000 },
+      { key: 'realtimeRadar', endpoint: 'radar/realtime?window_minutes=10&limit=150', timeoutMs: 12000 },
+      { key: 'health', endpoint: 'health', timeoutMs: 15000 },
+      { key: 'contingency', endpoint: 'contingency/status', timeoutMs: 12000 },
+      { key: 'contingencyAudit', endpoint: 'contingency/audit', timeoutMs: 12000 },
+    ];
+    const secondary = await Promise.allSettled(
+      secondaryRequests.map((request) => fetchJson(request.endpoint, request.timeoutMs)),
+    );
+    const secondaryFailures = [];
 
-    setData((current) => ({
-      ...current,
-      status: secondary[0],
-      overview: secondary[1],
-      metrics: secondary[2],
-      audit: Array.isArray(secondary[3]) ? secondary[3] : [],
-      auditEvents: secondary[4]?.events ? secondary[4] : { events: [], summary: {} },
-      realtimeRadar: secondary[5]?.events ? secondary[5] : { events: [], summary: {} },
-      health: secondary[6],
-      contingency: secondary[7],
-      contingencyAudit: Array.isArray(secondary[8]) ? secondary[8] : [],
-    }));
+    setData((current) => {
+      const next = { ...current };
+      secondary.forEach((result, index) => {
+        const { key, endpoint } = secondaryRequests[index];
+        if (result.status !== 'fulfilled') {
+          secondaryFailures.push(endpoint);
+          return;
+        }
+
+        const value = result.value;
+        if (key === 'audit') next.audit = Array.isArray(value) ? value : current.audit;
+        else if (key === 'auditEvents') next.auditEvents = value?.events ? value : current.auditEvents;
+        else if (key === 'realtimeRadar') next.realtimeRadar = value?.events ? value : current.realtimeRadar;
+        else if (key === 'contingencyAudit') next.contingencyAudit = Array.isArray(value) ? value : current.contingencyAudit;
+        else next[key] = value ?? current[key];
+      });
+      return next;
+    });
+
+    const failedEndpoints = [...criticalFailures, ...secondaryFailures];
+    if (failedEndpoints.length) {
+      flash(`Falha parcial ao carregar: ${failedEndpoints.join(', ')}`, 'warning');
+    }
 
     setLoadingState({ critical: false, secondary: false });
   };

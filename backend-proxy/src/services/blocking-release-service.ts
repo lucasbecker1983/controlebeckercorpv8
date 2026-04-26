@@ -29,6 +29,10 @@ type ApplyOptions = {
     lookback_minutes?: number;
     restart_squid?: boolean;
 };
+type SyncTelemetryOptions = {
+    force?: boolean;
+    background?: boolean;
+};
 
 const ENTERPRISE_DIR = path.join(env.rulesDir, 'generated', 'bloqueios-liberacoes');
 const SNAPSHOT_DIR = path.join(env.proxyStateDir, 'backups', 'bloqueios-liberacoes');
@@ -49,6 +53,7 @@ const QUARANTINED_LEGACY_SCRIPT_PATHS = [
 ];
 const MANAGED_POLICY_SCOPE_SQL = `(scope_type = 'global' OR (scope_type = 'vlan' AND scope_value ~ '^[0-9]+$' AND CAST(scope_value AS integer) IN (${MANAGED_VLAN_SQL_LIST})))`;
 const MANAGED_EXCEPTION_SCOPE_SQL = `(vlan_id IN (${MANAGED_VLAN_SQL_LIST}) OR CAST(substring(host(ip) from '^192\\.168\\.([0-9]{1,3})\\.') AS integer) IN (${MANAGED_VLAN_SQL_LIST}))`;
+const TELEMETRY_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 const BASELINE_BLOCK_CATALOG = {
     'Pornografia': [
@@ -234,6 +239,9 @@ const normalizeOptionalDate = (value: unknown) => {
     if (Number.isNaN(date.getTime())) throw new Error(`Data inválida: ${normalized}`);
     return normalized;
 };
+
+let telemetrySyncPromise: Promise<any> | null = null;
+let lastTelemetrySyncAt = 0;
 
 const resolveExceptionGovernance = (payload: any, requestedBy = 'system', fallback?: any) => {
     const parsedPayload = parseGovernanceText(payload?.notes ?? payload?.reason);
@@ -715,105 +723,146 @@ class BlockingReleaseService {
         return result;
     }
 
-    async syncTelemetry() {
-        await this.ensureReady();
-        const [proxyRadarImport, dnsImport, proxyImport] = await Promise.all([
-            pool.query(
-            `
-                INSERT INTO access_events (
-                    occurred_at,
-                    client_ip,
-                    vlan_id,
-                    domain,
-                    action,
-                    source,
-                    policy_origin,
-                    http_status,
-                    evidence,
-                    raw_payload
-                )
-                SELECT
-                    occurred_at,
-                    NULLIF(client_ip, '')::inet,
-                    NULLIF(regexp_replace(COALESCE(vlan_id, ''), '[^0-9]', '', 'g'), '')::integer,
-                    NULLIF(domain, ''),
-                    CASE WHEN blocked THEN 'blocked' ELSE 'allowed' END,
-                    COALESCE(source, 'proxy-radar'),
-                    COALESCE(status, 'proxy-radar'),
-                    NULL,
-                    evidence,
-                    COALESCE(raw_payload, '{}'::jsonb)
-                FROM proxy_radar_events
-                ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
-            `,
-            ).catch(() => ({ rowCount: 0 })),
-            pool.query(
-                `
-                    INSERT INTO access_events (
-                        occurred_at,
-                        client_ip,
-                        vlan_id,
-                        domain,
-                        action,
-                        source,
-                        policy_origin,
-                        http_status,
-                        evidence,
-                        raw_payload
-                    )
-                    SELECT
-                        occurred_at,
-                        client_ip,
-                        vlan_id,
-                        NULLIF(query_name, ''),
-                        action,
-                        resolver,
-                        policy_source,
-                        NULL,
-                        response_code,
-                        COALESCE(raw_payload, '{}'::jsonb)
-                    FROM dns_policy_events
-                    ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
-                `,
-            ).catch(() => ({ rowCount: 0 })),
-            pool.query(
-                `
-                    INSERT INTO access_events (
-                        occurred_at,
-                        client_ip,
-                        vlan_id,
-                        domain,
-                        action,
-                        source,
-                        policy_origin,
-                        http_status,
-                        evidence,
-                        raw_payload
-                    )
-                    SELECT
-                        occurred_at,
-                        client_ip,
-                        vlan_id,
-                        NULLIF(host, ''),
-                        action,
-                        proxy_layer,
-                        matched_rule,
-                        status_code,
-                        category,
-                        COALESCE(raw_payload, '{}'::jsonb)
-                    FROM proxy_policy_events
-                    ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
-                `,
-            ).catch(() => ({ rowCount: 0 })),
-        ]);
+    async syncTelemetry(options: SyncTelemetryOptions = {}) {
+        const { force = false, background = false } = options;
+        const now = Date.now();
 
-        await this.refreshReportIndex();
-        await this.updateEngineState({ last_sync_at: new Date().toISOString() });
-        return {
-            importedEvents: (proxyRadarImport.rowCount || 0) + (dnsImport.rowCount || 0) + (proxyImport.rowCount || 0),
-            importedDnsEvents: dnsImport.rowCount || 0,
-            importedProxyEvents: proxyImport.rowCount || 0,
+        if (!force && telemetrySyncPromise) {
+            return background
+                ? { running: true, skipped: true, reason: 'sync-in-progress' }
+                : telemetrySyncPromise;
+        }
+
+        if (!force && lastTelemetrySyncAt && now - lastTelemetrySyncAt < TELEMETRY_SYNC_INTERVAL_MS) {
+            return {
+                importedEvents: 0,
+                importedDnsEvents: 0,
+                importedProxyEvents: 0,
+                skipped: true,
+                reason: 'fresh-cache',
+                last_sync_at: new Date(lastTelemetrySyncAt).toISOString(),
+            };
+        }
+
+        const run = async () => {
+            await this.ensureReady();
+            const [proxyRadarImport, dnsImport, proxyImport] = await Promise.all([
+                pool.query(
+                `
+                    INSERT INTO access_events (
+                        occurred_at,
+                        client_ip,
+                        vlan_id,
+                        domain,
+                        action,
+                        source,
+                        policy_origin,
+                        http_status,
+                        evidence,
+                        raw_payload
+                    )
+                    SELECT
+                        occurred_at,
+                        NULLIF(client_ip, '')::inet,
+                        NULLIF(regexp_replace(COALESCE(vlan_id, ''), '[^0-9]', '', 'g'), '')::integer,
+                        NULLIF(domain, ''),
+                        CASE WHEN blocked THEN 'blocked' ELSE 'allowed' END,
+                        COALESCE(source, 'proxy-radar'),
+                        COALESCE(status, 'proxy-radar'),
+                        NULL,
+                        evidence,
+                        COALESCE(raw_payload, '{}'::jsonb)
+                    FROM proxy_radar_events
+                    ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
+                `,
+                ).catch(() => ({ rowCount: 0 })),
+                pool.query(
+                    `
+                        INSERT INTO access_events (
+                            occurred_at,
+                            client_ip,
+                            vlan_id,
+                            domain,
+                            action,
+                            source,
+                            policy_origin,
+                            http_status,
+                            evidence,
+                            raw_payload
+                        )
+                        SELECT
+                            occurred_at,
+                            client_ip,
+                            vlan_id,
+                            NULLIF(query_name, ''),
+                            action,
+                            resolver,
+                            policy_source,
+                            NULL,
+                            response_code,
+                            COALESCE(raw_payload, '{}'::jsonb)
+                        FROM dns_policy_events
+                        ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
+                    `,
+                ).catch(() => ({ rowCount: 0 })),
+                pool.query(
+                    `
+                        INSERT INTO access_events (
+                            occurred_at,
+                            client_ip,
+                            vlan_id,
+                            domain,
+                            action,
+                            source,
+                            policy_origin,
+                            http_status,
+                            evidence,
+                            raw_payload
+                        )
+                        SELECT
+                            occurred_at,
+                            client_ip,
+                            vlan_id,
+                            NULLIF(host, ''),
+                            action,
+                            proxy_layer,
+                            matched_rule,
+                            status_code,
+                            category,
+                            COALESCE(raw_payload, '{}'::jsonb)
+                        FROM proxy_policy_events
+                        ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
+                    `,
+                ).catch(() => ({ rowCount: 0 })),
+            ]);
+
+            await this.refreshReportIndex();
+            lastTelemetrySyncAt = Date.now();
+            await this.updateEngineState({ last_sync_at: new Date(lastTelemetrySyncAt).toISOString() });
+            return {
+                importedEvents: (proxyRadarImport.rowCount || 0) + (dnsImport.rowCount || 0) + (proxyImport.rowCount || 0),
+                importedDnsEvents: dnsImport.rowCount || 0,
+                importedProxyEvents: proxyImport.rowCount || 0,
+                skipped: false,
+                last_sync_at: new Date(lastTelemetrySyncAt).toISOString(),
+            };
         };
+
+        telemetrySyncPromise = run().finally(() => {
+            telemetrySyncPromise = null;
+        });
+
+        if (background) {
+            telemetrySyncPromise.catch(() => undefined);
+            return {
+                started: true,
+                skipped: false,
+                background: true,
+                last_sync_at: lastTelemetrySyncAt ? new Date(lastTelemetrySyncAt).toISOString() : null,
+            };
+        }
+
+        return telemetrySyncPromise;
     }
 
     async refreshReportIndex() {
@@ -1668,11 +1717,12 @@ class BlockingReleaseService {
     }
 
     async getMetrics(range = '24h') {
-        await this.syncTelemetry();
+        await this.syncTelemetry({ background: true });
         const periods: Record<string, string> = {
             '24h': "NOW() - INTERVAL '24 hours'",
             '7d': "NOW() - INTERVAL '7 days'",
             '30d': "NOW() - INTERVAL '30 days'",
+            '90d': "NOW() - INTERVAL '90 days'",
         };
         const sinceExpr = periods[range] || periods['24h'];
         const [topSites, topBlocked, topIps, topVlans, hourly, daily, recent, allowedDomains, serviceTrend] = await Promise.all([
@@ -1917,7 +1967,7 @@ class BlockingReleaseService {
     }
 
     async buildOverview() {
-        await this.syncTelemetry();
+        await this.syncTelemetry({ background: true });
         const [engineState, health, policyCounts, vlanSummary, traffic, recentFailures, contingency] = await Promise.all([
             this.getEngineState(),
             this.getHealth(),

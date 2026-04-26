@@ -258,6 +258,45 @@ Camada de execucao tecnica, enforcement, observabilidade, monitoramento, servico
     - os daemons do sistema nao desaparecem mais da UI quando a leitura de `ClamAV` falha
     - a configuracao `SMTP` voltou a aparecer como card proprio e visivel na tela de seguranca
     - o estado padrao de `SMTP` deixou de sinalizar falso positivo de notificacoes habilitadas
+- rodada de endurecimento institucional e eliminacao de fachada aplicada:
+  - `Políticas Institucionais` deixou de sumir quando uma rota critica falhava ou excedia timeout
+  - `BlockingReleases` agora usa `Promise.allSettled` na carga e preserva os dados anteriores em caso de falha parcial
+  - o frontend passou a acusar falha parcial explicitamente, em vez de substituir `VLANs`, `ACLs` e `VIPs` por listas vazias
+  - a rotina `ensureBlockingReleaseSchema` deixou de executar DDL pesado sem necessidade no caminho quente de leitura
+  - o bootstrap de schema agora verifica existencia previa das estruturas e usa `pg_advisory_lock` para serializar criacao residual
+  - o risco de deadlock no bootstrap do modulo institucional foi reduzido sem abrir mao da autoprotecao do schema
+- fluxo institucional de sessao refinado:
+  - o `login` agora fixa a URL para `/`, garantindo entrada sempre em `Centro de Governança`
+  - o `logout` passou a limpar a sessao local imediatamente e a revogacao no backend roda em paralelo
+  - a interface deixa de aparentar travamento no ciclo `logout -> login`
+- `Governança de Dados` promovido a modulo proprio de verdade:
+  - a rota `GET /api/data-governance/metrics` deixou de herdar a telemetria consolidada pesada de `Políticas Institucionais`
+  - o modulo agora calcula metricas diretamente de `dns_policy_events` e `proxy_policy_events`
+  - o `overview` do modulo passou a ler sumarios e destaques a partir dessa leitura dedicada
+  - `90d` deixou de ser truncado silenciosamente para `30d`
+  - falha parcial em `Governança de Dados` nao oculta mais toda a superficie da pagina
+  - o modulo preserva as abas `Painel Executivo`, `Relatório de Acessos` e `Telemetria` mesmo com degradacao parcial de uma fonte
+- endurecimento da sincronizacao de telemetria:
+  - `syncTelemetry()` passou a operar com janela de reaproveitamento temporal e suporte a execucao em background
+  - leituras institucionais deixaram de disparar reimportacao massiva a cada refresh
+  - a sincronizacao forcada continua disponivel por acao operacional dedicada quando for necessaria reindexacao
+
+## Validacao mais recente
+
+- `frontend`: `npm run build` validado
+- `backend-proxy`: `npm run build` validado
+- `backend-proxy` reiniciado no `PM2`
+- `bcc-frontend` reiniciado no `PM2`
+- rotas verificadas manualmente:
+  - `GET /api/data-governance/overview?period=24h`
+  - `GET /api/data-governance/audit/events?period=24h&limit=10`
+  - `GET /api/data-governance/metrics?range=24h`
+  - `GET /api/data-governance/metrics?range=90d`
+  - `GET /api/data-governance/radar/realtime?window_minutes=10&limit=10`
+
+## Observacao operacional atual
+
+- `backend-proxy/regras/listas/blocked_domains.txt` permaneceu fora deste registro porque nao compoe a rodada documental atual e pode conter alteracao operacional paralela ao trabalho de codigo
   - a navegacao lateral foi refinada para o padrao institucional atual:
     - o logotipo da `JMB Tecnologia` foi incorporado ao sidebar
     - o header do sidebar foi compactado
