@@ -228,6 +228,16 @@ router.get('/reports', async (req, res) => {
     }
 });
 
+router.get('/reports/institutional', async (req, res) => {
+    try {
+        res.json(await proxyEngineService.reportService.buildInstitutionalReport(
+            req.query.reportKey ? String(req.query.reportKey) : undefined,
+        ));
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 router.post('/reports/generate', async (req, res) => {
     try {
         const reports = await proxyEngineService.reportService.generate();

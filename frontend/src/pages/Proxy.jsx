@@ -372,6 +372,7 @@ function EngineTab({ engineStatus, refreshAll }) {
 
 function ReportsTab() {
   const [reports, setReports] = useState([]);
+  const [institutional, setInstitutional] = useState(null);
   const [proxyStats, setProxyStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -379,15 +380,18 @@ function ReportsTab() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    const [reportsResult, statsResult] = await Promise.allSettled([
+    const [reportsResult, statsResult, institutionalResult] = await Promise.allSettled([
       fetchJson('/api/proxy/reports'),
       fetchJson('/api/proxy/stats'),
+      fetchJson('/api/proxy/reports/institutional'),
     ]);
     if (reportsResult.status === 'fulfilled') setReports(Array.isArray(reportsResult.value) ? reportsResult.value : []);
     if (statsResult.status === 'fulfilled') setProxyStats(statsResult.value || null);
+    if (institutionalResult.status === 'fulfilled') setInstitutional(institutionalResult.value || null);
     const failures = [
       reportsResult.status === 'rejected' ? 'relatórios' : null,
       statsResult.status === 'rejected' ? 'estatísticas do proxy' : null,
+      institutionalResult.status === 'rejected' ? 'relatório institucional' : null,
     ].filter(Boolean);
     if (failures.length) {
       setError(`Falha parcial em: ${failures.join(', ')}.`);
@@ -411,6 +415,101 @@ function ReportsTab() {
         <MetricSurface label="Bloqueios proxy" value={proxyStats?.blocked ?? '—'} subtitle="Eventos explicitamente negados na camada observável." tone="danger" />
         <MetricSurface label="Relatórios indexados" value={reports.length} subtitle="Artefatos SARG disponíveis para consulta institucional." tone="success" />
       </div>
+
+      {institutional ? (
+        <Surface className="p-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-[11px] font-semibold tracking-tight text-primary">Relatório institucional baseado em SARG</div>
+              <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Uso explícito do proxy no modo ACL + DNS</h3>
+              <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/64">
+                {institutional.scope?.statement}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <StatusChip label={institutional.mode === 'acl-plus-dns' ? 'Modo ACL + DNS' : (institutional.mode || 'Modo não identificado')} tone="primary" />
+              <StatusChip label={`${institutional.executive_summary?.explicit_coverage_pct_24h ?? 0}% de cobertura proxy`} tone={(institutional.executive_summary?.explicit_coverage_pct_24h ?? 0) >= 50 ? 'success' : 'warning'} />
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <MetricSurface
+              label="Acessos SARG"
+              value={institutional.executive_summary?.total_accesses ?? '—'}
+              subtitle="Registros lidos do artefato SARG selecionado."
+            />
+            <MetricSurface
+              label="Eventos proxy 24h"
+              value={institutional.executive_summary?.explicit_proxy_events_24h ?? '—'}
+              subtitle="Tráfego que realmente passou pelo proxy explícito."
+              tone="success"
+            />
+            <MetricSurface
+              label="Eventos DNS 24h"
+              value={institutional.executive_summary?.dns_events_24h ?? '—'}
+              subtitle="Base principal de observabilidade do modo atual."
+            />
+            <MetricSurface
+              label="Veredito"
+              value={institutional.executive_summary?.coverage_verdict || '—'}
+              subtitle="Leitura de cobertura institucional do relatório."
+              tone={(institutional.executive_summary?.explicit_coverage_pct_24h ?? 0) >= 50 ? 'success' : 'warning'}
+            />
+          </div>
+
+          <div className="mt-5 grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+            <Surface stripe={false} className="p-4">
+              <div className="text-sm font-bold text-on-surface">Limitações assumidas no relatório</div>
+              <div className="mt-3 space-y-2">
+                {(institutional.scope?.limitations || []).map((item, index) => (
+                  <div key={`${item}-${index}`} className="rounded-2xl border border-outline/12 bg-surface-high/56 px-3 py-2 text-sm text-on-surface/68">
+                    {item}
+                  </div>
+                ))}
+              </div>
+            </Surface>
+
+            <Surface stripe={false} className="p-4">
+              <div className="text-sm font-bold text-on-surface">Último artefato e último evento proxy</div>
+              <div className="mt-3 space-y-2 text-sm text-on-surface/68">
+                <div>Relatório SARG: <strong className="text-on-surface">{institutional.report?.name || '—'}</strong></div>
+                <div>Atualizado em: <strong className="text-on-surface">{fmt(institutional.report?.updated_at)}</strong></div>
+                <div>Último evento proxy: <strong className="text-on-surface">{fmt(institutional.executive_summary?.latest_proxy_event_at)}</strong></div>
+                <div>IPs únicos via proxy 24h: <strong className="text-on-surface">{institutional.executive_summary?.explicit_proxy_unique_ips_24h ?? '—'}</strong></div>
+              </div>
+            </Surface>
+          </div>
+
+          <div className="mt-5 grid gap-4 xl:grid-cols-2">
+            <Surface stripe={false} className="p-4">
+              <div className="text-sm font-bold text-on-surface">Top sites vistos pelo proxy explícito</div>
+              <div className="mt-3 space-y-2">
+                {(institutional.highlights?.top_sites || []).length ? institutional.highlights.top_sites.map((item, index) => (
+                  <div key={`${item.domain || index}-${index}`} className="flex items-center justify-between gap-3 rounded-2xl border border-outline/12 bg-surface-high/56 px-3 py-2 text-sm">
+                    <span className="text-on-surface">{item.domain || 'domínio não identificado'}</span>
+                    <span className="font-mono text-on-surface/64">{item.connects ?? 0}</span>
+                  </div>
+                )) : (
+                  <div className="text-sm text-on-surface/62">Sem leitura suficiente no artefato SARG.</div>
+                )}
+              </div>
+            </Surface>
+
+            <Surface stripe={false} className="p-4">
+              <div className="text-sm font-bold text-on-surface">Tentativas negadas registradas no SARG</div>
+              <div className="mt-3 space-y-2">
+                {(institutional.highlights?.denied_attempts || []).length ? institutional.highlights.denied_attempts.map((item, index) => (
+                  <div key={`${item.client_ip || index}-${index}`} className="rounded-2xl border border-outline/12 bg-surface-high/56 px-3 py-2 text-sm text-on-surface/68">
+                    {item.client_ip || 'IP não identificado'} • {item.domain || 'domínio não identificado'} • {item.occurred_at || 'sem data'}
+                  </div>
+                )) : (
+                  <div className="text-sm text-on-surface/62">Nenhuma negativa estruturada encontrada no artefato selecionado.</div>
+                )}
+              </div>
+            </Surface>
+          </div>
+        </Surface>
+      ) : null}
 
       <Surface className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
