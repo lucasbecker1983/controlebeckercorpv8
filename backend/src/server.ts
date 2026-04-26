@@ -1,8 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
+import helmet from 'helmet';
 import { env } from './config/env';
 import { globalJwtGuard } from './middleware/auth';
+import { authSecurityService } from './modules/auth/auth-security-service';
 
 // Rotas Modernas (Modules)
 import authRoutes from './modules/auth/auth-routes';
@@ -19,6 +21,7 @@ import downtimeRoutes from './modules/connectivity/downtime-routes';
 import unboundRoutes from './modules/unbound/routes';
 import proxyRoutes from './modules/proxy/proxy-routes';
 import securityRoutes from './modules/security/security-routes';
+import lgpdRoutes from './modules/lgpd/lgpd-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 
 import vlanScheduleRoutes from "./modules/network/vlan-schedule-routes";
@@ -32,7 +35,33 @@ import { startLinkMonitor } from './modules/connectivity/downtime-monitor';
 const app = express();
 const PORT = env.corePort;
 
-app.use(cors({ origin: env.corsOrigin === '*' ? true : env.corsOrigin }));
+app.set('trust proxy', 1);
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            connectSrc: ["'self'", env.appBaseUrl, env.proxyRuntimeBaseUrl],
+            imgSrc: ["'self'", 'data:', 'blob:'],
+            styleSrc: ["'self'", "'unsafe-inline'"],
+            scriptSrc: ["'self'"],
+            fontSrc: ["'self'", 'data:'],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'self'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+        },
+    },
+    hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true,
+        preload: true,
+    },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+}));
+app.use(cors({
+    origin: env.corsOrigin === '*' ? true : env.corsOrigin.split(',').map((item) => item.trim()),
+    credentials: true,
+}));
 app.use(express.json());
 
 app.use((req, res, next) => {
@@ -57,6 +86,7 @@ app.use('/api/downtime', downtimeRoutes);
 app.use('/api/dns', unboundRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/security', securityRoutes);
+app.use('/api/lgpd', lgpdRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -66,6 +96,9 @@ app.get('/api/ping', (req, res) => res.json({ msg: 'Pong HTTP (Core 6778)' }));
 // Motor HTTP Puro e Leve (Terminação SSL via Nginx)
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`>>> BACKEND CORE ONLINE: ${PORT} (HTTP Interno)`);
+    authSecurityService.ensureSchema().catch((error) => {
+        console.error('[AUTH] Falha ao garantir schema de autenticacao:', error);
+    });
     // Iniciando Sentinelas
     try { startMonitor(); } catch(e) {}
     try { startBackupScanner(); } catch(e) {}

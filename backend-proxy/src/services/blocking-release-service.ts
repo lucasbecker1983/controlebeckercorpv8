@@ -188,6 +188,112 @@ const normalizeCategoryKey = (value: string) => String(value || '')
 
 const formatSnapshotKey = (date = new Date()) => date.toISOString().replace(/[:.]/g, '-');
 
+const normalizeMetadataKey = (value: string) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+const parseGovernanceText = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (!raw) return { summary: '', metadata: {} as Record<string, string> };
+    const marker = '\n[Governanca]\n';
+    const [summaryPart, metaPart] = raw.includes(marker)
+        ? raw.split(marker)
+        : [raw, ''];
+    const metadata: Record<string, string> = {};
+    metaPart.split('\n').forEach((line) => {
+        const match = line.match(/^([^:]+):\s*(.+)$/);
+        if (!match) return;
+        metadata[normalizeMetadataKey(match[1])] = match[2].trim();
+    });
+    return {
+        summary: summaryPart.trim(),
+        metadata,
+    };
+};
+
+const normalizeOptionalText = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    return normalized || null;
+};
+
+const normalizeOptionalTimestamp = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) throw new Error(`Data/hora inválida: ${normalized}`);
+    return date.toISOString();
+};
+
+const normalizeOptionalDate = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const date = new Date(`${normalized}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) throw new Error(`Data inválida: ${normalized}`);
+    return normalized;
+};
+
+const resolveExceptionGovernance = (payload: any, requestedBy = 'system', fallback?: any) => {
+    const parsedPayload = parseGovernanceText(payload?.notes ?? payload?.reason);
+    const parsedFallback = parseGovernanceText(fallback?.notes ?? fallback?.reason);
+    return {
+        summary: String(
+            payload?.governance_summary
+            ?? payload?.governanceSummary
+            ?? parsedPayload.summary
+            ?? fallback?.governance_summary
+            ?? parsedFallback.summary
+            ?? '',
+        ).trim(),
+        legal_basis: normalizeOptionalText(
+            payload?.legal_basis
+            ?? payload?.legalBasis
+            ?? parsedPayload.metadata['base-legal']
+            ?? fallback?.legal_basis
+            ?? parsedFallback.metadata['base-legal'],
+        ),
+        requested_by: normalizeOptionalText(
+            payload?.requested_by
+            ?? payload?.requestedBy
+            ?? parsedPayload.metadata.solicitante
+            ?? fallback?.requested_by
+            ?? parsedFallback.metadata.solicitante
+            ?? payload?.responsible
+            ?? fallback?.responsible
+            ?? requestedBy,
+        ),
+        approval_scope: normalizeOptionalText(
+            payload?.approval_scope
+            ?? payload?.approvalScope
+            ?? parsedPayload.metadata['alcada-de-aprovacao']
+            ?? fallback?.approval_scope
+            ?? parsedFallback.metadata['alcada-de-aprovacao'],
+        ),
+        lifecycle_status: normalizeOptionalText(
+            payload?.lifecycle_status
+            ?? payload?.lifecycleStatus
+            ?? parsedPayload.metadata['status-institucional']
+            ?? fallback?.lifecycle_status
+            ?? parsedFallback.metadata['status-institucional'],
+        ),
+        review_date: normalizeOptionalDate(
+            payload?.review_date
+            ?? payload?.reviewDate
+            ?? parsedPayload.metadata['revisao-prevista']
+            ?? fallback?.review_date
+            ?? parsedFallback.metadata['revisao-prevista'],
+        ),
+        approved_by: normalizeOptionalText(payload?.approved_by ?? payload?.approvedBy ?? fallback?.approved_by),
+        approved_at: normalizeOptionalTimestamp(payload?.approved_at ?? payload?.approvedAt ?? fallback?.approved_at),
+        effective_from: normalizeOptionalTimestamp(payload?.effective_from ?? payload?.effectiveFrom ?? payload?.valid_until ?? fallback?.effective_from),
+        expires_at: normalizeOptionalTimestamp(payload?.expires_at ?? payload?.expiresAt ?? payload?.valid_until ?? fallback?.expires_at ?? fallback?.valid_until),
+        revoked_by: normalizeOptionalText(payload?.revoked_by ?? payload?.revokedBy ?? fallback?.revoked_by),
+        revoked_at: normalizeOptionalTimestamp(payload?.revoked_at ?? payload?.revokedAt ?? fallback?.revoked_at),
+    };
+};
+
 const readTextIfExists = (filePath: string) => fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
 const isQuarantineStub = (filePath: string) => readTextIfExists(filePath).includes('[LEGACY QUARANTINED]');
 const modeLabel = (mode: string | null | undefined) => mode === 'acl-only'
@@ -1437,16 +1543,33 @@ class BlockingReleaseService {
         if (vlanId !== null && vlanId !== undefined) {
             assertManagedPolicyVlan(vlanId);
         }
+        const current = id
+            ? (await pool.query(`SELECT * FROM policy_exceptions WHERE id = $1`, [id])).rows[0]
+            : null;
+        if (id && !current) throw new Error('Exceção não encontrada');
+        const governance = resolveExceptionGovernance(payload, requestedBy, current);
         const values = [
             ip,
             payload?.hostname || null,
             payload?.description || null,
-            payload?.responsible || requestedBy,
+            governance.summary || null,
+            governance.legal_basis,
+            payload?.responsible || current?.responsible || governance.requested_by || requestedBy,
+            governance.requested_by,
+            governance.approval_scope,
+            governance.lifecycle_status,
+            governance.review_date,
+            governance.approved_by,
+            governance.approved_at,
+            governance.effective_from,
+            governance.expires_at,
+            governance.revoked_by,
+            governance.revoked_at,
             vlanId || null,
             payload?.exception_type || 'vip',
             true,
             payload?.active ?? true,
-            payload?.valid_until || null,
+            governance.expires_at || payload?.valid_until || current?.valid_until || null,
             payload?.notes || null,
         ];
         const { rows } = id
@@ -1456,15 +1579,27 @@ class BlockingReleaseService {
                     SET ip = $1,
                         hostname = $2,
                         description = $3,
-                        responsible = $4,
-                        vlan_id = $5,
-                        exception_type = $6,
-                        bypass_total = $7,
-                        active = $8,
-                        valid_until = $9,
-                        notes = $10,
+                        governance_summary = $4,
+                        legal_basis = $5,
+                        responsible = $6,
+                        requested_by = $7,
+                        approval_scope = $8,
+                        lifecycle_status = $9,
+                        review_date = $10,
+                        approved_by = $11,
+                        approved_at = $12,
+                        effective_from = $13,
+                        expires_at = $14,
+                        revoked_by = $15,
+                        revoked_at = $16,
+                        vlan_id = $17,
+                        exception_type = $18,
+                        bypass_total = $19,
+                        active = $20,
+                        valid_until = $21,
+                        notes = $22,
                         updated_at = NOW()
-                    WHERE id = $11
+                    WHERE id = $23
                     RETURNING *
                 `,
                 [...values, id],
@@ -1475,7 +1610,19 @@ class BlockingReleaseService {
                         ip,
                         hostname,
                         description,
+                        governance_summary,
+                        legal_basis,
                         responsible,
+                        requested_by,
+                        approval_scope,
+                        lifecycle_status,
+                        review_date,
+                        approved_by,
+                        approved_at,
+                        effective_from,
+                        expires_at,
+                        revoked_by,
+                        revoked_at,
                         vlan_id,
                         exception_type,
                         bypass_total,
@@ -1483,7 +1630,7 @@ class BlockingReleaseService {
                         valid_until,
                         notes
                     )
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
                     RETURNING *
                 `,
                 values,
@@ -2166,6 +2313,7 @@ class BlockingReleaseService {
             const validation = noOp
                 ? await this.validateCurrentRuntime()
                 : await this.validateCompiledState(mode);
+            await dnsContingencyService.ensureFirewallState();
             const sessionTermination = options.disconnect_active_sessions
                 ? await this.disconnectActiveSessions(requestedBy, options)
                 : null;

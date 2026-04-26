@@ -69,8 +69,7 @@ router.get('/vlans-detail', async (req, res) => {
 
     } catch (error: any) {
         console.error("[CRÍTICO] Falha catastrófica no pipeline de rede:", error.message);
-        // Graceful Degradation: Devolve Array vazio e Status 200, protegendo a estabilidade da UI
-        return res.json([]);
+        return res.status(500).json({ error: error.message || 'Falha ao coletar telemetria de rede.' });
     }
 });
 

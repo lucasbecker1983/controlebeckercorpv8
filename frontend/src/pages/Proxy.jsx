@@ -1,928 +1,640 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { authFetch } from "../services/authFetch";
-import { ActionButton, ModuleHeader, SegmentedTabs, StatusChip } from "../components/ui/primitives";
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, ArrowRightLeft, FileBarChart2, Radar, RefreshCcw, Search, ShieldCheck, Wifi } from 'lucide-react';
+import { authFetch } from '../services/authFetch';
+import { ActionButton, ModuleHeader, SegmentedTabs, StatusChip, Surface } from '../components/ui/primitives';
 
-// ─── Mapa de VLANs ────────────────────────────────────────────────────────────
+const API = '';
+
 const VLANS = [
-  { id: "todas",  label: "TODAS",   color: "#60a5fa", subnet: null },
-  { id: "VLAN10", label: "VLAN 10", color: "#34d399", subnet: "192.168.10" },
-  { id: "VLAN30", label: "VLAN 30", color: "#a78bfa", subnet: "192.168.30" },
-  { id: "VLAN40", label: "VLAN 40", color: "#f59e0b", subnet: "192.168.40" },
-  { id: "VLAN50", label: "VLAN 50", color: "#f472b6", subnet: "192.168.50" },
-  { id: "VLAN70", label: "VLAN 70", color: "#fb923c", subnet: "192.168.70" },
-  { id: "VLAN80", label: "VLAN 80", color: "#22d3ee", subnet: "192.168.80" },
-  { id: "VLAN99", label: "VLAN 99", color: "#e879f9", subnet: "192.168.99" },
+  { key: 'todas', label: 'Todas' },
+  { key: 'VLAN10', label: 'VLAN 10' },
+  { key: 'VLAN30', label: 'VLAN 30' },
+  { key: 'VLAN40', label: 'VLAN 40' },
+  { key: 'VLAN50', label: 'VLAN 50' },
+  { key: 'VLAN70', label: 'VLAN 70' },
+  { key: 'VLAN80', label: 'VLAN 80' },
+  { key: 'VLAN99', label: 'VLAN 99' },
 ];
-const VLAN_COLOR = Object.fromEntries(VLANS.map(v => [v.id, v.color]));
 
-function getVlan(ip) {
-  for (const v of VLANS) {
-    if (v.subnet && ip?.startsWith(v.subnet)) return v.id;
-  }
-  return "OUTROS";
+function fmt(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('pt-BR');
 }
 
-function fmt(ts) {
-  if (!ts) return "—";
-  const d = new Date(ts);
-  return `${d.toLocaleDateString("pt-BR")}, ${d.toLocaleTimeString("pt-BR")}`;
+async function fetchJson(path, init) {
+  const response = await authFetch(`${API}${path}`, init);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || 'Falha ao consultar observabilidade.');
+  return payload;
 }
 
-function getProxyPalette() {
-  const isDark = document.documentElement.getAttribute("data-theme") === "dark";
-  return {
-    pageBg: isDark ? "#030b18" : "transparent",
-    panel: isDark ? "#07101a" : "rgba(255,255,255,0.92)",
-    panelAlt: isDark ? "#0b1221" : "rgba(255,255,255,0.96)",
-    panelAccent: isDark ? "#0b1628" : "#f1f7f5",
-    shell: isDark ? "#020810" : "#f4f7f3",
-    border: isDark ? "#1e293b" : "#d7e1db",
-    text: isDark ? "#e2e8f0" : "#183029",
-    muted: isDark ? "#475569" : "#5b6f65",
-    dim: isDark ? "#334155" : "#7b8f86",
-    faint: isDark ? "#1e293b" : "#e6eeea",
-  };
-}
+function MetricSurface({ label, value, subtitle, tone = 'neutral' }) {
+  const toneClass = tone === 'success'
+    ? 'text-info'
+    : tone === 'danger'
+      ? 'text-danger'
+      : tone === 'warning'
+        ? 'text-orange-600 dark:text-orange-300'
+        : 'text-primary';
 
-// ─── Badge VLAN ────────────────────────────────────────────────────────────────
-function VlanBadge({ vlan }) {
-  const color = VLAN_COLOR[vlan] || "#94a3b8";
   return (
-    <span style={{
-      background: color + "20", color, border: `1px solid ${color}50`,
-      borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700,
-      letterSpacing: "0.05em", whiteSpace: "nowrap",
-    }}>{vlan}</span>
+    <Surface className="p-5">
+      <div className="text-[11px] font-semibold tracking-tight text-on-surface/62">{label}</div>
+      <div className={`mt-2 text-3xl font-black tracking-tight ${toneClass}`}>{value}</div>
+      <p className="mt-2 text-sm leading-6 text-on-surface/62">{subtitle}</p>
+    </Surface>
   );
 }
 
-// ─── Dot pulsante ──────────────────────────────────────────────────────────────
-function Dot({ color = "#22c55e", pulse = true }) {
-  return (
-    <>
-      <style>{`@keyframes bcPing{0%{transform:scale(1);opacity:.5}70%,100%{transform:scale(2.5);opacity:0}}`}</style>
-      <span style={{ position:"relative", display:"inline-flex", width:8, height:8, flexShrink:0 }}>
-        {pulse && <span style={{
-          position:"absolute", inset:0, borderRadius:"50%", background:color,
-          animation:"bcPing 1.4s ease-in-out infinite",
-        }}/>}
-        <span style={{ position:"absolute", inset:0, borderRadius:"50%", background:color }}/>
-      </span>
-    </>
-  );
-}
-
-// ─── Stat card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, color, palette }) {
-  return (
-    <div style={{
-      background: palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8,
-      padding:"14px 18px",
-    }}>
-      <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:5 }}>{label}</div>
-      <div style={{ fontSize:24, fontWeight:800, color }}>{value ?? "—"}</div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ABA RADAR
-// ═══════════════════════════════════════════════════════════════════════════════
-function TabRadar({ apiBase, palette, engineStatus }) {
-  const [logs, setLogs]             = useState([]);
-  const [vlanFilter, setVlanFilter] = useState("todas");
-  const [onlyBlocked, setOnlyBlocked] = useState(false);
-  const [search, setSearch]         = useState("");
-  const [paused, setPaused]         = useState(false);
-  const [stats, setStats]           = useState(null);
+function RadarTab() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [entries, setEntries] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [stats, setStats] = useState(null);
   const [vlanSummary, setVlanSummary] = useState([]);
-  const [radarSummary, setRadarSummary] = useState(null);
-  const [radarAction, setRadarAction] = useState(null);
-  const pausedRef = useRef(false);
-  pausedRef.current = paused;
-
-  const fetchLogs = useCallback(async () => {
-    if (pausedRef.current) return;
-    try {
-      const p = new URLSearchParams({ limit: 200 });
-      if (vlanFilter !== "todas") p.set("vlan", vlanFilter);
-      if (onlyBlocked) p.set("blocked", "true");
-      const r = await authFetch(`${apiBase}/api/dns/radar?${p}`);
-      if (r.ok) {
-        const payload = await r.json();
-        setLogs(Array.isArray(payload?.entries) ? payload.entries : []);
-        setRadarSummary(payload?.summary || null);
-      }
-    } catch {}
-  }, [apiBase, vlanFilter, onlyBlocked]);
-
-  const fetchMeta = useCallback(async () => {
-    try {
-      const [s, v] = await Promise.all([
-        authFetch(`${apiBase}/api/dns/stats`).then(r => r.json()),
-        authFetch(`${apiBase}/api/dns/vlan-summary`).then(r => r.json()),
-      ]);
-      setStats(s);
-      setVlanSummary(Array.isArray(v) ? v : []);
-    } catch {}
-  }, [apiBase]);
-
-  const flashRadarAction = (text, ok = true) => {
-    setRadarAction({ text, ok });
-    window.clearTimeout(flashRadarAction.timer);
-    flashRadarAction.timer = window.setTimeout(() => setRadarAction(null), 3500);
-  };
-
-  const clearRadar = async (scope) => {
-    const confirmText = scope === "all"
-      ? "Zerar todo o histórico do radar agora?"
-      : "Remover apenas o ruído local antigo do radar?";
-    if (!window.confirm(confirmText)) return;
-
-    try {
-      const r = await authFetch(`${apiBase}/api/dns/radar/clear`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ scope }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Falha ao limpar radar");
-      flashRadarAction(`✓ ${j.message} (${j.deleted_rows ?? 0} registros)`);
-      fetchLogs();
-      fetchMeta();
-    } catch (e) {
-      flashRadarAction(`✗ ${e.message}`, false);
-    }
-  };
-
-  useEffect(() => {
-    fetchLogs(); fetchMeta();
-    const t1 = setInterval(fetchLogs, 3000);
-    const t2 = setInterval(fetchMeta, 15000);
-    return () => { clearInterval(t1); clearInterval(t2); };
-  }, [fetchLogs, fetchMeta]);
-
-  const visible = logs.filter(l =>
-    !search || l.domain?.includes(search) || l.client_ip?.includes(search)
-  );
-
-  return (
-    <div>
-      {/* Stats */}
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:20 }}>
-        <StatCard label="QUERIES HOJE"     value={stats?.total_hoje}      color="#60a5fa" palette={palette} />
-        <StatCard label="BLOQUEADAS HOJE"  value={stats?.bloqueados_hoje} color="#f87171" palette={palette} />
-        <StatCard label="IPs ATIVOS"       value={stats?.ips_ativos}      color="#34d399" palette={palette} />
-        <StatCard label="ÚLTIMOS 5 MIN"    value={stats?.queries_5min}    color="#a78bfa" palette={palette} />
-      </div>
-
-      <div style={{
-        display:"grid", gridTemplateColumns:"1.4fr 1fr", gap:12, marginBottom:20,
-      }}>
-        <div style={{
-          background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8, padding:"14px 18px",
-        }}>
-          <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:8 }}>
-            EVIDÊNCIA OPERACIONAL DO RADAR
-          </div>
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:10 }}>
-            <span style={{
-              background: radarSummary?.has_real_clients ? "#14532d" : "#3f3f46",
-              color: radarSummary?.has_real_clients ? "#86efac" : "#cbd5e1",
-              borderRadius:999, padding:"4px 10px", fontSize:11, fontWeight:700,
-            }}>
-              {radarSummary?.has_real_clients ? "CLIENTES REAIS OBSERVADOS" : "SEM CLIENTES REAIS DAS VLANs"}
-            </span>
-            <span style={{
-              background:"#111827", color:"#93c5fd", border:"1px solid #1d4ed8",
-              borderRadius:999, padding:"4px 10px", fontSize:11, fontWeight:700,
-            }}>
-              RUÍDO LOCAL: {radarSummary?.local_noise_count ?? 0}
-            </span>
-          </div>
-          <div style={{ fontSize:11, color:palette.muted, lineHeight:1.6 }}>
-            O radar agora distingue eventos locais do servidor como <strong style={{ color:"#f59e0b" }}>ruído</strong> e separa
-            cliente real de ruído sem depender de um IP-alvo legado.
-          </div>
-          <div style={{ marginTop:8, fontSize:11, color:"#f59e0b", lineHeight:1.6 }}>
-            Em <strong>{engineStatus?.mode === "test-http-only" ? "intercept-selective (HTTP)" : "proxy explícito / HTTP"}</strong>, o radar só enxerga o que realmente passa pela camada observada. Navegação HTTPS moderna fora do proxy explícito não aparece nessa trilha.
-          </div>
-        </div>
-
-        <div style={{
-          background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8, padding:"14px 18px",
-        }}>
-          <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:8 }}>
-            CLIENTES REAIS OBSERVADOS
-          </div>
-          <div style={{ fontSize:11, color:palette.text, lineHeight:1.7, fontFamily:"monospace" }}>
-            {(radarSummary?.real_clients_seen || []).length === 0
-              ? "Nenhum cliente real observado ainda neste recorte."
-              : radarSummary.real_clients_seen.slice(0, 8).join(", ")}
-          </div>
-        </div>
-      </div>
-
-      {/* Filtros */}
-      <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center", marginBottom:14 }}>
-        {VLANS.map(v => (
-          <button key={v.id} onClick={() => setVlanFilter(v.id)} style={{
-            padding:"4px 12px", borderRadius:6, fontSize:11, fontWeight:700,
-            border:`1px solid ${vlanFilter===v.id ? v.color : palette.border}`,
-            background: vlanFilter===v.id ? v.color+"22" : "transparent",
-            color: vlanFilter===v.id ? v.color : palette.muted,
-            cursor:"pointer", transition:"all .15s",
-          }}>{v.label}</button>
-        ))}
-        <button onClick={() => setOnlyBlocked(b=>!b)} style={{
-          padding:"4px 12px", borderRadius:6, fontSize:11, fontWeight:700,
-          border:`1px solid ${onlyBlocked?"#f87171":palette.border}`,
-          background: onlyBlocked?"#f8717120":"transparent",
-          color: onlyBlocked?"#f87171":palette.muted, cursor:"pointer",
-        }}>🚫 SÓ BLOQUEADOS</button>
-        <input
-          value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Filtrar por IP..."
-          style={{
-            background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:6,
-            padding:"4px 12px", color:palette.text, fontSize:12,
-            width:180, outline:"none", marginLeft:"auto",
-          }}
-        />
-        <button onClick={() => setPaused(p=>!p)} style={{
-          padding:"4px 12px", borderRadius:6, fontSize:11, fontWeight:700,
-          border:`1px solid ${paused?"#f59e0b":palette.border}`,
-          background: paused?"#f59e0b20":"transparent",
-          color: paused?"#f59e0b":palette.muted, cursor:"pointer",
-        }}>{paused?"▶ RETOMAR":"⏸ PAUSAR"}</button>
-        <button onClick={() => clearRadar("noise")} style={{
-          padding:"4px 12px", borderRadius:6, fontSize:11, fontWeight:700,
-          border:"1px solid #0f766e", background:"transparent",
-          color:"#2dd4bf", cursor:"pointer",
-        }}>LIMPAR RUÍDO LOCAL</button>
-        <button onClick={() => clearRadar("all")} style={{
-          padding:"4px 12px", borderRadius:6, fontSize:11, fontWeight:700,
-          border:"1px solid #7f1d1d", background:"transparent",
-          color:"#f87171", cursor:"pointer",
-        }}>ZERAR RADAR</button>
-      </div>
-
-      {radarAction && (
-        <div style={{
-          padding:"8px 12px", borderRadius:6, marginBottom:12, fontSize:12,
-          background: radarAction.ok ? "#14532d" : "#7f1d1d",
-          color: radarAction.ok ? "#86efac" : "#fca5a5",
-          border:`1px solid ${radarAction.ok ? "#166534" : "#991b1b"}`,
-        }}>{radarAction.text}</div>
-      )}
-
-      {/* Tabela */}
-      <div style={{ background:palette.panel, border:`1px solid ${palette.border}`, borderRadius:8, overflow:"hidden", marginBottom:20 }}>
-        {/* Cabeçalho da tabela */}
-        <div style={{
-          display:"flex", alignItems:"center", gap:8,
-          padding:"9px 16px", borderBottom:`1px solid ${palette.border}`, background:palette.panelAccent,
-        }}>
-          <Dot color={paused?"#f59e0b":"#22c55e"} pulse={!paused} />
-          <span style={{ fontSize:11, color:palette.muted, fontFamily:"monospace" }}>
-            {paused ? "PAUSADO" : "RADAR EM TEMPO REAL"} — {visible.length} registros
-          </span>
-          <span style={{ marginLeft:"auto", fontSize:10, color:palette.dim }}>
-            Modo {engineStatus?.mode || "off"} · atualiza a cada 3s
-          </span>
-        </div>
-
-        <div style={{ overflowX:"auto" }}>
-          <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-            <thead>
-              <tr style={{ background:palette.panelAccent }}>
-                {["DATA/HORA","VLAN","IP CLIENTE","DOMÍNIO","TIPO","EVIDÊNCIA","STATUS"].map(h=>(
-                  <th key={h} style={{
-                    padding:"8px 14px", textAlign:"left",
-                    color:palette.dim, fontWeight:700, fontSize:10,
-                    letterSpacing:"0.09em", borderBottom:`1px solid ${palette.border}`,
-                    whiteSpace:"nowrap",
-                  }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding:36, textAlign:"center", color:palette.dim, fontSize:12 }}>
-                  Aguardando eventos reais do radar...
-                </td></tr>
-              ) : visible.map((l, i) => {
-                const vlan = l.vlan || getVlan(l.client_ip);
-                const blocked = l.blocked;
-                return (
-                  <tr key={i} style={{
-                    borderBottom:`1px solid ${palette.faint}`,
-                    background: blocked
-                      ? (i%2===0?"#140a0a":"#110808")
-                      : (i%2===0?"transparent":palette.pageBg),
-                  }}>
-                    <td style={{ padding:"7px 14px", color:palette.dim, fontFamily:"monospace", fontSize:11, whiteSpace:"nowrap" }}>
-                      {fmt(l.timestamp)}
-                    </td>
-                    <td style={{ padding:"7px 14px" }}>
-                      <VlanBadge vlan={vlan} />
-                    </td>
-                    <td style={{ padding:"7px 14px", fontFamily:"monospace", color:"#60a5fa", fontSize:11 }}>
-                      {l.client_ip}
-                    </td>
-                    <td style={{ padding:"7px 14px", maxWidth:320, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {blocked && <span style={{ marginRight:5, fontSize:11 }}>🚫</span>}
-                      <span style={{ color: blocked?"#f87171":palette.text }}>{l.domain}</span>
-                    </td>
-                    <td style={{ padding:"7px 14px", color:palette.dim, fontFamily:"monospace", fontSize:11 }}>
-                      {l.query_type}
-                    </td>
-                    <td style={{ padding:"7px 14px" }}>
-                      <span style={{
-                        background: l.local_noise ? "#7c2d12" : (l.real_client ? "#14532d" : "#1f2937"),
-                        color: l.local_noise ? "#fdba74" : (l.real_client ? "#86efac" : "#cbd5e1"),
-                        border:`1px solid ${l.local_noise ? "#ea580c55" : (l.real_client ? "#22c55e55" : "#47556955")}`,
-                        borderRadius:4, padding:"2px 8px", fontSize:10, fontWeight:700,
-                        whiteSpace:"nowrap",
-                      }}>
-                        {l.local_noise ? "RUÍDO LOCAL" : (l.real_client ? "CLIENTE REAL" : "SEM PROVA")}
-                      </span>
-                    </td>
-                    <td style={{ padding:"7px 14px" }}>
-                      {blocked ? (
-                        <span style={{
-                          background:"#f8717118", color:"#f87171",
-                          border:"1px solid #f8717140", borderRadius:4,
-                          padding:"2px 8px", fontSize:10, fontWeight:700,
-                        }}>BLOQUEADO</span>
-                      ) : (
-                        <span style={{
-                          background:"#22c55e18", color:"#22c55e",
-                          border:"1px solid #22c55e40", borderRadius:4,
-                          padding:"2px 8px", fontSize:10, fontWeight:700,
-                        }}>AUDIT</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Resumo por VLAN */}
-      {vlanSummary.length > 0 && (
-        <>
-          <div style={{ fontSize:10, color:"#334155", letterSpacing:"0.09em", marginBottom:10 }}>
-            RESUMO POR VLAN — ÚLTIMAS 24H
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))", gap:10 }}>
-            {vlanSummary.map(v => {
-              const color = VLAN_COLOR[v.vlan] || "#94a3b8";
-              const pct = parseFloat(v.block_pct) || 0;
-              return (
-                <div key={v.vlan} style={{
-                  background:"#0b1221", border:`1px solid ${color}30`,
-                  borderRadius:8, padding:"12px 14px",
-                }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                    <VlanBadge vlan={v.vlan} />
-                    <span style={{ fontSize:10, color:"#334155" }}>{v.unique_ips} IPs</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <span style={{ fontSize:11, color:"#475569" }}>Total</span>
-                    <span style={{ fontSize:13, fontWeight:700, color:"#e2e8f0" }}>{v.total_queries}</span>
-                  </div>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:8 }}>
-                    <span style={{ fontSize:11, color:"#475569" }}>Bloqueados</span>
-                    <span style={{ fontSize:13, fontWeight:700, color:"#f87171" }}>{v.blocked_queries}</span>
-                  </div>
-                  <div style={{ background:"#1e293b", borderRadius:3, height:3, overflow:"hidden" }}>
-                    <div style={{
-                      height:"100%", width:`${pct}%`,
-                      background: pct>15?"#f87171":"#34d399",
-                      borderRadius:3, transition:"width .6s",
-                    }}/>
-                  </div>
-                  <div style={{ fontSize:10, color:"#334155", marginTop:4, textAlign:"right" }}>
-                    {pct}% bloqueado
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-// ═══════════════════════════════════════════════════════════════════════════════
-// ABA MOTOR & CONTROLE
-// ═══════════════════════════════════════════════════════════════════════════════
-function TabMotor({ apiBase }) {
-  const palette = getProxyPalette();
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(null);
-  const [actionLog, setActionLog] = useState([]);
-  const [testMenuOpen, setTestMenuOpen] = useState(false);
-  const [certMeta, setCertMeta] = useState(null);
-  const [remoteLogs, setRemoteLogs] = useState([]);
-  const [banner, setBanner] = useState(null);
-
-  const addLog = (msg) => {
-    const ts = new Date().toLocaleTimeString("pt-BR");
-    setActionLog(l => [`[${ts}] ${msg}`, ...l].slice(0,60));
-  };
-
-  const flashBanner = (text, ok = true) => {
-    setBanner({ text, ok });
-    window.clearTimeout(flashBanner.timer);
-    flashBanner.timer = window.setTimeout(() => setBanner(null), 5000);
-  };
-
-  const parseResponsePayload = async (response) => {
-    const contentType = response.headers.get("content-type") || "";
-    if (contentType.includes("application/json")) {
-      return response.json();
-    }
-    const text = await response.text();
-    return { error: text || `HTTP ${response.status}` };
-  };
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      const [statusRes, certRes, logsRes] = await Promise.all([
-        authFetch(`${apiBase}/api/proxy/engine/status`),
-        authFetch(`${apiBase}/api/proxy/certificate`),
-        authFetch(`${apiBase}/api/proxy/action-logs?limit=30`),
-      ]);
-      if (statusRes.ok) setStatus(await statusRes.json());
-      if (certRes.ok) setCertMeta(await certRes.json());
-      if (logsRes.ok) setRemoteLogs(await logsRes.json());
-    } catch {}
-  }, [apiBase]);
-
-  useEffect(() => {
-    fetchStatus();
-    const t = setInterval(fetchStatus, 5000);
-    return () => clearInterval(t);
-  }, [fetchStatus]);
-
-  const act = async (url, label, body) => {
-    setLoading(label);
-    addLog(`→ ${label}`);
-    setTestMenuOpen(false);
-    try {
-      const r = await authFetch(`${apiBase}${url}`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const j = await parseResponsePayload(r);
-      if (!r.ok) throw new Error(j.error || j.message || `Falha HTTP ${r.status}`);
-      addLog(`✓ ${label}: ${j.message||"OK"}`);
-      flashBanner(`✓ ${label}: ${j.message||"OK"}`, true);
-      await fetchStatus();
-    } catch(e){
-      addLog(`✗ ${e.message}`);
-      flashBanner(`✗ ${label}: ${e.message}`, false);
-    }
-    setLoading(null);
-  };
-
-  const downloadCertificate = async () => {
-    const label = "BAIXAR CERTIFICADO";
-    setLoading(label);
-    addLog(`→ ${label}`);
-    try {
-      const response = await authFetch(`${apiBase}/api/cert/download`);
-      if (!response.ok) {
-        let message = "Falha ao baixar certificado";
-        try {
-          const payload = await response.json();
-          message = payload.error || message;
-        } catch {}
-        throw new Error(message);
-      }
-
-      const blob = await response.blob();
-      const objectUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = "certificado_becker_proxy.der";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(objectUrl);
-      addLog("✓ BAIXAR CERTIFICADO: download iniciado");
-    } catch (error) {
-      addLog(`✗ BAIXAR CERTIFICADO: ${error.message}`);
-    }
-    setLoading(null);
-  };
-
-  const regenerateCertificate = async () => {
-    const label = "GERAR NOVA CA";
-    setLoading(label);
-    addLog(`→ ${label}`);
-    flashBanner("Gerando nova CA do proxy...", true);
-    try {
-      const r = await authFetch(`${apiBase}/api/proxy/certificate/regenerate`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-      });
-      const j = await parseResponsePayload(r);
-      if (!r.ok) throw new Error(j.error || "Falha ao gerar certificado");
-      addLog(`✓ ${label}: ${j.fingerprint}`);
-      flashBanner(`✓ Nova CA gerada: ${j.fingerprint || "OK"}`, true);
-      await fetchStatus();
-    } catch (error) {
-      addLog(`✗ ${label}: ${error.message}`);
-      flashBanner(`✗ ${label}: ${error.message}`, false);
-    }
-    setLoading(null);
-  };
-
-  const services = [
-    { label:"Squid",             ok: status?.squid_active,   desc:"Processo do proxy HTTP/HTTPS" },
-    { label:"Interceptação",     ok: status?.intercepting,   desc:"Redirect seletivo gerenciado pelo engine quando explicitamente ativado" },
-    { label:"DNS Logger",        ok: status?.logger_active,  desc:"Ingestão do radar em PostgreSQL" },
-    { label:"Bypass Global",     ok: status?.bypass_global,  desc:"Todo o tráfego segue direto sem redirecionamento" },
-  ];
-
-  const buttons = [
-    { label:"LIGAR HTTP-ONLY",     url:"/api/proxy/mode/test-http-only",   color:"#2563eb" },
-    { label:"LIGAR HTTP+HTTPS",    url:"/api/proxy/mode/test-http-https",   color:"#7c3aed" },
-    { label:"PARAR INTERCEPTAÇÃO", url:"/api/proxy/mode/off",               color:"#ef4444" },
-    { label:"EMERGÊNCIA / BYPASS", url:"/api/proxy/emergency-bypass",       color:"#f59e0b" },
-    { label:"REINICIAR LOGGER",    url:"/api/proxy/logger/restart",         color:"#14b8a6" },
-    { label:"LIMPAR LOGS ANTIGOS", url:"/api/dns/cleanup",                  color:"#475569" },
-  ];
-
-  const localAndRemoteLog = [
-    ...actionLog,
-    ...remoteLogs.map((log) => `[${fmt(log.created_at)}] ${log.success ? "✓" : "✗"} ${log.action}: ${log.message || "sem mensagem"}`),
-  ].slice(0, 60);
-
-  return (
-    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20 }}>
-      <div>
-        <div style={{ fontSize:10, color:palette.dim, letterSpacing:"0.09em", marginBottom:12 }}>STATUS DOS SERVIÇOS</div>
-        {banner && (
-          <div style={{
-            padding:"10px 12px", borderRadius:8, marginBottom:12, fontSize:12,
-            background: banner.ok ? "#14532d" : "#7f1d1d",
-            color: banner.ok ? "#86efac" : "#fecaca",
-            border:`1px solid ${banner.ok ? "#166534" : "#991b1b"}`,
-          }}>
-            {banner.text}
-          </div>
-        )}
-        <div style={{ background:palette.panel, border:`1px solid ${palette.border}`, borderRadius:8, marginBottom:16, overflow:"hidden" }}>
-          {services.map((s,i)=>(
-            <div key={i} style={{
-              display:"flex", alignItems:"center", gap:12,
-              padding:"12px 16px", borderBottom:"1px solid #080f18",
-            }}>
-              <Dot color={s.ok?"#22c55e":"#f87171"} pulse={s.ok} />
-              <div style={{ flex:1 }}>
-                <div style={{ fontSize:13, color:palette.text, fontWeight:600 }}>{s.label}</div>
-                <div style={{ fontSize:11, color:palette.dim }}>{s.desc}</div>
-              </div>
-              <span style={{
-                fontSize:10, fontWeight:700,
-                color: s.ok?"#22c55e":"#f87171",
-                background: s.ok?"#22c55e15":"#f8717115",
-                border:`1px solid ${s.ok?"#22c55e30":"#f8717130"}`,
-                borderRadius:4, padding:"2px 8px",
-              }}>{s.ok?"ATIVO":"INATIVO"}</span>
-            </div>
-          ))}
-        </div>
-
-        <div style={{
-          background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8, padding:"12px 14px", marginBottom:16,
-        }}>
-          <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:10 }}>
-            ESTADO OFICIAL DO ENGINE
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, fontSize:12 }}>
-            <div><span style={{ color:palette.muted }}>Fonte:</span> <strong style={{ color:palette.text }}>{status?.source_of_truth || "—"}</strong></div>
-            <div><span style={{ color:palette.muted }}>Modo:</span> <strong style={{ color:"#60a5fa" }}>{status?.enforcement_mode || status?.mode || status?.interception_mode || "off"}</strong></div>
-            <div><span style={{ color:palette.muted }}>Portas ativas:</span> <strong style={{ color:palette.text }}>{(status?.active_ports || []).join(", ") || "nenhuma"}</strong></div>
-            <div><span style={{ color:palette.muted }}>Escopo de interceptação:</span> <strong style={{ color:palette.text }}>{status?.interception_scope?.mode === "selective" ? "seletivo" : "nenhum"}</strong></div>
-            <div><span style={{ color:palette.muted }}>Última ação:</span> <strong style={{ color:palette.text }}>{status?.last_action || "—"}</strong></div>
-            <div><span style={{ color:palette.muted }}>Operador:</span> <strong style={{ color:palette.text }}>{status?.last_action_by || "—"}</strong></div>
-          </div>
-          <div style={{ marginTop:12, fontSize:11, color:palette.muted, lineHeight:1.6 }}>
-            Squid ligado sem redirect seletivo não significa interceptação ativa. O estado operacional é definido por
-            políticas compiladas, artefatos válidos, `squid.conf` alinhado e redirects seletivos reais quando existirem.
-          </div>
-        </div>
-
-        <div style={{
-          background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8, padding:"12px 14px", marginBottom:16,
-        }}>
-          <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:10 }}>
-            ESCOPO OPERACIONAL
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(145px,1fr))", gap:8 }}>
-            {[
-              { label:"Enforcement principal", value: status?.dns_policy_loaded ? "DNS ativo" : "DNS não carregado", color:"#60a5fa" },
-              { label:"DNS oficial", value: status?.observed_dns_server || "192.168.10.1", color:"#22c55e" },
-              { label:"Redirects ativos", value: status?.redirects_active ? "seletivos" : "nenhum", color:"#f59e0b" },
-              { label:"Último erro", value: status?.last_error || "nenhum", color: status?.last_error ? "#f87171" : palette.text },
-            ].map((item) => (
-              <div key={item.label} style={{
-                background:palette.panel, border:`1px solid ${palette.border}`, borderRadius:8, padding:"10px 12px",
-              }}>
-                <div style={{ color:palette.muted, fontSize:10, marginBottom:6, letterSpacing:"0.08em" }}>{item.label}</div>
-                <div style={{ color:item.color, fontSize:12, fontWeight:700, fontFamily:"monospace" }}>{item.value}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{
-          background:palette.panelAlt, border:`1px solid ${palette.border}`, borderRadius:8, padding:"12px 14px", marginBottom:16,
-        }}>
-          <div style={{ fontSize:10, color:palette.muted, letterSpacing:"0.08em", marginBottom:10 }}>
-            CERTIFICADO DO PROXY HTTPS
-          </div>
-          <div style={{ fontSize:11, color:palette.muted, lineHeight:1.7, marginBottom:12 }}>
-            Se você ligar <strong style={{ color:palette.text }}>HTTP+HTTPS</strong> sem instalar o certificado da autoridade do proxy
-            nos clientes, a navegação HTTPS pode parar imediatamente.
-          </div>
-          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
-            <button
-              type="button"
-              onClick={downloadCertificate}
-              disabled={!!loading}
-              style={{
-                display:"inline-flex", alignItems:"center", justifyContent:"center",
-                background:"#1d4ed8", color:"#fff", border:"none", textDecoration:"none",
-                borderRadius:6, padding:"10px 14px", fontWeight:700, fontSize:11,
-                cursor:"pointer",
-              }}
-            >
-              {loading === "BAIXAR CERTIFICADO" ? "..." : "BAIXAR CERTIFICADO"}
-            </button>
-            <button
-              type="button"
-              onClick={regenerateCertificate}
-              disabled={!!loading}
-              style={{
-                display:"inline-flex", alignItems:"center", justifyContent:"center",
-                background:"transparent", color:"#22c55e", border:"1px solid #166534",
-                borderRadius:6, padding:"10px 14px", fontWeight:700, fontSize:11,
-                cursor:"pointer",
-              }}
-              title="Gerar uma nova autoridade certificadora do proxy HTTPS"
-            >
-              {loading === "GERAR NOVA CA" ? "..." : "GERAR NOVA CA"}
-            </button>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8, marginBottom:12, fontSize:11 }}>
-            <div><span style={{ color:palette.muted }}>Criado em:</span> <strong style={{ color:palette.text }}>{fmt(certMeta?.created_at)}</strong></div>
-            <div><span style={{ color:palette.muted }}>Válido até:</span> <strong style={{ color:palette.text }}>{fmt(certMeta?.valid_until)}</strong></div>
-            <div style={{ gridColumn:"1 / -1" }}>
-              <span style={{ color:palette.muted }}>Fingerprint:</span>{" "}
-              <strong style={{ color:"#60a5fa", fontFamily:"monospace", fontSize:10 }}>{certMeta?.fingerprint || "—"}</strong>
-            </div>
-          </div>
-          <div style={{ fontSize:11, color:palette.muted, lineHeight:1.7 }}>
-            1. Baixe o certificado neste botão.
-            <br />
-            2. Instale como autoridade confiável no sistema ou navegador do cliente.
-            <br />
-            3. Só depois teste o modo <strong style={{ color:palette.text }}>HTTP+HTTPS</strong>.
-          </div>
-        </div>
-
-        <div style={{ marginBottom:10, position:"relative" }}>
-          <button
-            disabled={!!loading}
-            onClick={() => setTestMenuOpen((open) => !open)}
-            style={{
-              width:"100%", background:testMenuOpen ? "#1d4ed820" : "transparent",
-              border:"1px solid #1d4ed860", color:"#2563eb",
-              borderRadius:6, padding:"10px", fontSize:11, fontWeight:700, cursor:"pointer",
-            }}
-          >
-            {loading === "MODO TESTE" ? "..." : "MODO TESTE"}
-          </button>
-          {testMenuOpen && (
-            <div style={{
-              position:"absolute", left:0, right:0, top:"calc(100% + 6px)", zIndex:20,
-              background:palette.panel, border:`1px solid ${palette.border}`, borderRadius:8, padding:8,
-              boxShadow:"0 12px 24px rgba(2,8,16,.18)",
-            }}>
-              {[
-                { label:"Ativar Teste HTTP-only", url:"/api/proxy/mode/test-http-only", color:"#2563eb" },
-                { label:"Ativar Teste HTTP+HTTPS", url:"/api/proxy/mode/test-http-https", color:"#7c3aed" },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  onClick={() => act(item.url, item.label, null)}
-                  style={{
-                    width:"100%", textAlign:"left", background:"transparent", border:`1px solid ${item.color}30`,
-                    color:item.color, borderRadius:6, padding:"10px 12px", fontSize:11, fontWeight:700,
-                    cursor:"pointer", marginBottom:6,
-                  }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
-          {buttons.map(b=>(
-            <button key={b.label} disabled={!!loading}
-              onClick={()=>act(b.url,b.label,b.body)}
-              style={{
-                background: loading===b.label ? b.color+"25":"transparent",
-                border:`1px solid ${b.color}45`, color:b.color,
-                borderRadius:6, padding:"10px", fontSize:11,
-                fontWeight:700, cursor:"pointer", transition:"all .15s",
-              }}>
-              {loading===b.label ? "..." : b.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontSize:10, color:palette.dim, letterSpacing:"0.09em", marginBottom:12 }}>LOG DE AÇÕES</div>
-        <div style={{
-          background:palette.shell, border:`1px solid ${palette.border}`, borderRadius:8,
-          padding:14, height:300, overflowY:"auto", fontFamily:"monospace", fontSize:11,
-        }}>
-          {localAndRemoteLog.length===0
-            ? <span style={{ color:palette.dim }}>Nenhuma ação executada ainda...</span>
-            : localAndRemoteLog.map((l,i)=>(
-              <div key={i} style={{
-                color: l.includes("✓")?"#22c55e": l.includes("✗")?"#f87171":"#475569",
-                marginBottom:3, lineHeight:1.5,
-              }}>{l}</div>
-            ))
-          }
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TabRelatorios({ apiBase }) {
-  const palette = getProxyPalette();
-  const [reports, setReports] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [vlan, setVlan] = useState('todas');
+  const [blockedOnly, setBlockedOnly] = useState(false);
+  const [search, setSearch] = useState('');
 
   const load = useCallback(async () => {
-    try {
-      const r = await authFetch(`${apiBase}/api/proxy/reports`);
-      if (r.ok) setReports(await r.json());
-    } catch {}
-  }, [apiBase]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const generate = async () => {
     setLoading(true);
-    try {
-      await authFetch(`${apiBase}/api/proxy/reports/generate`, { method:"POST" });
-      load();
-    } catch {}
+    setError('');
+    const params = new URLSearchParams({ limit: '160' });
+    if (vlan !== 'todas') params.set('vlan', vlan);
+    if (blockedOnly) params.set('blocked', 'true');
+    const [radarResult, dnsStatsResult, vlanStatsResult] = await Promise.allSettled([
+      fetchJson(`/api/dns/radar?${params.toString()}`),
+      fetchJson('/api/dns/stats'),
+      fetchJson('/api/dns/vlan-summary'),
+    ]);
+
+    if (radarResult.status === 'fulfilled') {
+      setEntries(Array.isArray(radarResult.value.entries) ? radarResult.value.entries : []);
+      setSummary(radarResult.value.summary || null);
+    }
+    if (dnsStatsResult.status === 'fulfilled') setStats(dnsStatsResult.value || null);
+    if (vlanStatsResult.status === 'fulfilled') setVlanSummary(Array.isArray(vlanStatsResult.value) ? vlanStatsResult.value : []);
+
+    const failures = [
+      radarResult.status === 'rejected' ? 'radar DNS' : null,
+      dnsStatsResult.status === 'rejected' ? 'estatísticas DNS' : null,
+      vlanStatsResult.status === 'rejected' ? 'quadro por VLAN' : null,
+    ].filter(Boolean);
+
+    if (failures.length) {
+      setError(`Falha parcial em: ${failures.join(', ')}.`);
+    }
+
     setLoading(false);
-  };
-
-  return (
-    <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-        <div>
-          <div style={{ fontSize:13, color:palette.text, fontWeight:700, marginBottom:4 }}>Relatórios SARG</div>
-          <div style={{ fontSize:11, color:palette.muted }}>
-            Backend pronto para indexar relatórios gerados pelo SARG e publicar os diretórios encontrados em disco.
-          </div>
-        </div>
-        <button onClick={generate} disabled={loading} style={{
-          background:"#1d4ed8", color:"#fff", border:"none", borderRadius:6, padding:"10px 14px",
-          fontWeight:700, fontSize:11, cursor:"pointer",
-        }}>
-          {loading ? "GERANDO..." : "GERAR SARG"}
-        </button>
-      </div>
-
-      <div style={{ background:palette.panel, border:`1px solid ${palette.border}`, borderRadius:8, overflow:"hidden" }}>
-        {reports.length === 0 ? (
-          <div style={{ padding:32, textAlign:"center", color:palette.dim, fontSize:12 }}>
-            Nenhum relatório indexado ainda.
-          </div>
-        ) : reports.map((report) => (
-          <div key={report.id} style={{
-            display:"flex", alignItems:"center", justifyContent:"space-between",
-            padding:"12px 14px", borderBottom:`1px solid ${palette.faint}`,
-          }}>
-            <div>
-              <div style={{ color:palette.text, fontWeight:700, fontSize:12 }}>{report.name}</div>
-              <div style={{ color:palette.muted, fontSize:11 }}>{fmt(report.updated_at)}</div>
-            </div>
-            <a href={report.index_url} target="_blank" rel="noreferrer" style={{
-              color:"#60a5fa", fontSize:11, fontWeight:700, textDecoration:"none",
-            }}>ABRIR</a>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-// ═══════════════════════════════════════════════════════════════════════════════
-// COMPONENTE PRINCIPAL
-// ═══════════════════════════════════════════════════════════════════════════════
-export default function Proxy() {
-  const palette = getProxyPalette();
-  const [tab, setTab]             = useState("radar");
-  const [engineStatus, setEngineStatus] = useState(null);
-  const API = "";
+  }, [blockedOnly, vlan]);
 
   useEffect(() => {
-    const check = async () => {
-      try {
-        const r = await authFetch(`${API}/api/proxy/engine/status`);
-        if (r.ok) setEngineStatus(await r.json());
-      } catch {}
-    };
-    check();
-    const t = setInterval(check, 8000);
-    return () => clearInterval(t);
-  }, [API]);
+    load().catch(() => null);
+  }, [load]);
 
-  const tabs = [
-    { id:"radar",      label:"Radar Técnico" },
-    { id:"relatorios", label:"Relatórios" },
-    { id:"motor",      label:"Motor de Controle", dot: true },
-  ];
-
-  const motorOk = engineStatus?.redirects_active || engineStatus?.squid_active;
+  const filteredEntries = useMemo(() => {
+    const normalized = String(search || '').toLowerCase();
+    return entries.filter((item) => {
+      if (!normalized) return true;
+      return [item.client_ip, item.domain, item.hostname, item.query_type]
+        .some((value) => String(value || '').toLowerCase().includes(normalized));
+    });
+  }, [entries, search]);
 
   return (
-    <div style={{
-      background:palette.pageBg, minHeight:"100vh",
-      color:palette.text, fontFamily:"'IBM Plex Sans','Inter',sans-serif",
-    }}>
-      <div className="space-y-6 p-[var(--spacing-section)]">
-        <ModuleHeader
-          eyebrow="Controle"
-          title="Observabilidade DNS/Proxy"
-          description="Radar técnico, relatórios operacionais, saúde do Squid e diagnóstico fino da camada observável. Decisão administrativa e política permanecem centralizadas em Bloqueios & Liberações."
-          badges={(
-            <>
-              <StatusChip label={`Squid ${engineStatus?.squid_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.squid_active ? 'success' : 'danger'} />
-              <StatusChip label={`Interceptação ${engineStatus?.redirects_active ? 'seletiva' : 'desligada'}`} tone={engineStatus?.redirects_active ? 'primary' : 'neutral'} />
-              <StatusChip label={`Modo ${engineStatus?.interception_mode || 'off'}`} tone="neutral" />
-              <StatusChip label={`Logger ${engineStatus?.logger_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.logger_active ? 'success' : 'warning'} />
-            </>
-          )}
-        />
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricSurface label="Queries do dia" value={stats?.total_hoje ?? '—'} subtitle="Volume observado na telemetria DNS do período." />
+        <MetricSurface label="Bloqueios do dia" value={stats?.bloqueados_hoje ?? '—'} subtitle="Domínios ou consultas negadas pelo enforcement ativo." tone="danger" />
+        <MetricSurface label="IPs ativos" value={stats?.ips_ativos ?? '—'} subtitle="Clientes distintos com presença recente na leitura operacional." tone="success" />
+        <MetricSurface label="Últimos 5 minutos" value={stats?.queries_5min ?? '—'} subtitle="Ritmo de atividade mais recente no radar técnico." tone="warning" />
+      </div>
 
-        <div style={{
-          background:palette.panelAlt,
-          border:`1px solid ${palette.border}`,
-          borderRadius:24,
-          padding:"14px 16px",
-          display:"flex",
-          justifyContent:"space-between",
-          gap:14,
-          alignItems:"center",
-          flexWrap:"wrap",
-          boxShadow:"var(--shadow-soft)",
-        }}>
+      <Surface className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div style={{ fontSize:11, color:"#0e6b62", fontWeight:800, letterSpacing:"0.08em", marginBottom:5 }}>
-              MÓDULO DE CONTROLE TÉCNICO
-            </div>
-            <div style={{ fontSize:12, color:palette.muted, lineHeight:1.6 }}>
-              Políticas, bloqueios, liberações e VIPs são operados em Bloqueios & Liberações.
-              Esta tela permanece para radar técnico, relatórios SARG, saúde do Squid e diagnóstico fino de observabilidade.
-            </div>
+            <div className="text-[11px] font-semibold tracking-tight text-primary">Leitura operacional do radar</div>
+            <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Telemetria DNS observável</h3>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/64">
+              Este painel evidencia consultas DNS, clientes reais, ruído local e intensidade de bloqueio. Ele não substitui decisão institucional; sustenta análise operacional e prova de enforcement.
+            </p>
           </div>
-          <ActionButton tone="primary" onClick={() => { window.location.href = "/bloqueios-liberacoes"; }}>
-            Abrir Bloqueios & Liberações
+          <div className="flex flex-wrap gap-2">
+            <StatusChip label={summary?.has_real_clients ? 'Clientes reais observados' : 'Sem clientes reais no recorte'} tone={summary?.has_real_clients ? 'success' : 'warning'} />
+            <StatusChip label={`Ruído local ${summary?.local_noise_count ?? 0}`} tone="neutral" />
+          </div>
+        </div>
+
+      </Surface>
+
+      {error ? (
+        <Surface className="p-5">
+          <div className="text-sm font-semibold text-danger">{error}</div>
+        </Surface>
+      ) : null}
+
+      <Surface className="p-5">
+        <div className="flex flex-wrap items-center gap-2">
+          {VLANS.map((item) => (
+            <ActionButton key={item.key} tone={vlan === item.key ? 'primary' : 'ghost'} onClick={() => setVlan(item.key)}>
+              {item.label}
+            </ActionButton>
+          ))}
+          <ActionButton tone={blockedOnly ? 'danger' : 'ghost'} onClick={() => setBlockedOnly((current) => !current)}>
+            {blockedOnly ? 'Mostrando bloqueios' : 'Mostrar só bloqueios'}
+          </ActionButton>
+          <div className="ml-auto min-w-[16rem] max-w-full flex-1">
+            <label className="flex min-h-[var(--control-height)] items-center gap-2 rounded-full border border-outline/12 bg-surface-high/72 px-4">
+              <Search size={15} className="text-on-surface/52" />
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Filtrar por IP, domínio ou tipo"
+                className="w-full bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface/45"
+              />
+            </label>
+          </div>
+          <ActionButton tone="ghost" icon={RefreshCcw} onClick={() => load().catch(() => null)}>
+            Atualizar
           </ActionButton>
         </div>
 
-        <SegmentedTabs
-          tabs={tabs.map((t) => ({ key: t.id, label: t.label }))}
-          value={tab}
-          onChange={setTab}
-        />
+        <div className="mt-5 overflow-x-auto">
+          <table className="min-w-full border-separate border-spacing-y-2 text-sm">
+            <thead>
+              <tr className="text-left text-[11px] font-semibold tracking-tight text-on-surface/52">
+                <th className="px-3 py-2">Quando</th>
+                <th className="px-3 py-2">IP cliente</th>
+                <th className="px-3 py-2">Domínio</th>
+                <th className="px-3 py-2">Tipo</th>
+                <th className="px-3 py-2">Evidência</th>
+                <th className="px-3 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-on-surface/56">Carregando telemetria DNS...</td>
+                </tr>
+              ) : filteredEntries.length ? filteredEntries.map((item, index) => (
+                <tr key={`${item.timestamp || index}-${item.client_ip || index}`} className="rounded-2xl border border-outline/10 bg-surface-high/56">
+                  <td className="rounded-l-2xl px-3 py-3 text-on-surface/68">{fmt(item.timestamp)}</td>
+                  <td className="px-3 py-3 font-mono text-primary">{item.client_ip || '—'}</td>
+                  <td className="px-3 py-3 text-on-surface">{item.domain || '—'}</td>
+                  <td className="px-3 py-3 text-on-surface/68">{item.query_type || '—'}</td>
+                  <td className="px-3 py-3">
+                    <StatusChip label={item.local_noise ? 'Ruído local' : item.real_client ? 'Cliente real' : 'Sem prova'} tone={item.local_noise ? 'warning' : item.real_client ? 'success' : 'neutral'} />
+                  </td>
+                  <td className="rounded-r-2xl px-3 py-3">
+                    <StatusChip label={item.blocked ? 'Bloqueado' : 'Auditado'} tone={item.blocked ? 'danger' : 'primary'} />
+                  </td>
+                </tr>
+              )) : (
+                <tr>
+                  <td colSpan={6} className="px-3 py-8 text-center text-on-surface/56">Nenhum evento encontrado no recorte atual.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Surface>
 
-        {tab==="radar"      && <TabRadar     apiBase={API} palette={palette} engineStatus={engineStatus} />}
-        {tab==="relatorios" && <TabRelatorios apiBase={API} />}
-        {tab==="motor"      && <TabMotor apiBase={API} />}
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+        {vlanSummary.map((item) => (
+          <Surface key={item.vlan} className="p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm font-black tracking-tight text-on-surface">{item.vlan}</div>
+              <StatusChip label={`${item.unique_ips} IPs`} tone="neutral" />
+            </div>
+            <div className="mt-4 text-2xl font-black tracking-tight text-on-surface">{item.total_queries}</div>
+            <div className="mt-1 text-sm text-on-surface/62">consultas observadas</div>
+            <div className="mt-4 text-sm text-danger">{item.blocked_queries} bloqueios</div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
+              <div
+                className="h-full rounded-full bg-primary"
+                style={{ width: `${Math.max(4, Number(item.block_pct || 0))}%` }}
+              />
+            </div>
+          </Surface>
+        ))}
       </div>
+    </div>
+  );
+}
+
+function EngineTab({ engineStatus, refreshAll }) {
+  const [actionLoading, setActionLoading] = useState('');
+  const [certificate, setCertificate] = useState(null);
+  const [actionLogs, setActionLogs] = useState([]);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setError('');
+    const [certificateResult, logsResult] = await Promise.allSettled([
+      fetchJson('/api/proxy/certificate'),
+      fetchJson('/api/proxy/action-logs?limit=24'),
+    ]);
+    if (certificateResult.status === 'fulfilled') setCertificate(certificateResult.value);
+    if (logsResult.status === 'fulfilled') setActionLogs(Array.isArray(logsResult.value) ? logsResult.value : []);
+    const failures = [
+      certificateResult.status === 'rejected' ? 'certificado' : null,
+      logsResult.status === 'rejected' ? 'trilha técnica' : null,
+    ].filter(Boolean);
+    if (failures.length) {
+      setError(`Falha parcial em: ${failures.join(', ')}.`);
+    }
+  }, []);
+
+  useEffect(() => {
+    load().catch(() => null);
+  }, [load]);
+
+  const act = async (path, label) => {
+    setActionLoading(label);
+    try {
+      await fetchJson(path, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      await Promise.all([refreshAll(), load()]);
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const engineServices = [
+    { label: 'Squid', value: engineStatus?.squid_active, subtitle: 'Processo do proxy complementar' },
+    { label: 'Interceptação', value: engineStatus?.redirects_active, subtitle: 'Redirect seletivo em produção controlada' },
+    { label: 'Logger', value: engineStatus?.logger_active, subtitle: 'Coleta técnica para trilha DNS/Proxy' },
+    { label: 'Bypass global', value: engineStatus?.bypass_global, subtitle: 'Passagem direta sem observação complementar' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 xl:grid-cols-2">
+        {error ? (
+          <Surface className="p-5 xl:col-span-2">
+            <div className="text-sm font-semibold text-danger">{error}</div>
+          </Surface>
+        ) : null}
+        <Surface className="p-5">
+          <div className="text-[11px] font-semibold tracking-tight text-primary">Estado oficial do motor</div>
+          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Saúde e modo de execução</h3>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {engineServices.map((item) => (
+              <Surface key={item.label} stripe={false} className="p-4">
+                <div className="text-sm font-bold text-on-surface">{item.label}</div>
+                <div className="mt-2">
+                  <StatusChip label={item.value ? 'Ativo' : 'Inativo'} tone={item.value ? 'success' : 'danger'} />
+                </div>
+                <p className="mt-3 text-sm leading-6 text-on-surface/62">{item.subtitle}</p>
+              </Surface>
+            ))}
+          </div>
+          <div className="mt-4 grid gap-3 text-sm text-on-surface/68 sm:grid-cols-2">
+            <div>Modo: <strong className="text-on-surface">{engineStatus?.enforcement_mode || engineStatus?.mode || 'off'}</strong></div>
+            <div>Fonte de verdade: <strong className="text-on-surface">{engineStatus?.source_of_truth || '—'}</strong></div>
+            <div>Portas ativas: <strong className="text-on-surface">{(engineStatus?.active_ports || []).join(', ') || 'nenhuma'}</strong></div>
+            <div>Última ação: <strong className="text-on-surface">{engineStatus?.last_action || '—'}</strong></div>
+          </div>
+        </Surface>
+
+        <Surface className="p-5">
+          <div className="text-[11px] font-semibold tracking-tight text-primary">Ações operacionais</div>
+          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Intervenção técnica controlada</h3>
+          <p className="mt-2 text-sm leading-6 text-on-surface/64">
+            Esta camada atua na saúde do motor observável. Decisões de política permanecem em `Bloqueios & Liberações`.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <ActionButton tone="primary" onClick={() => act('/api/proxy/mode/test-http-only', 'http-only')}>
+              {actionLoading === 'http-only' ? 'Processando...' : 'Ativar HTTP-only'}
+            </ActionButton>
+            <ActionButton tone="warning" onClick={() => act('/api/proxy/mode/test-http-https', 'http-https')}>
+              {actionLoading === 'http-https' ? 'Processando...' : 'Ativar HTTP+HTTPS'}
+            </ActionButton>
+            <ActionButton tone="danger" onClick={() => act('/api/proxy/mode/off', 'off')}>
+              {actionLoading === 'off' ? 'Processando...' : 'Desligar interceptação'}
+            </ActionButton>
+            <ActionButton tone="ghost" onClick={() => act('/api/proxy/logger/restart', 'logger')}>
+              {actionLoading === 'logger' ? 'Processando...' : 'Reiniciar logger'}
+            </ActionButton>
+            <ActionButton tone="ghost" onClick={() => act('/api/proxy/reports/generate', 'report')}>
+              {actionLoading === 'report' ? 'Processando...' : 'Gerar relatório SARG'}
+            </ActionButton>
+          </div>
+        </Surface>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+        <Surface className="p-5">
+          <div className="text-[11px] font-semibold tracking-tight text-primary">Certificado institucional</div>
+          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Autoridade do proxy HTTPS</h3>
+          <div className="mt-4 grid gap-3 text-sm text-on-surface/68">
+            <div>Criado em: <strong className="text-on-surface">{fmt(certificate?.created_at)}</strong></div>
+            <div>Válido até: <strong className="text-on-surface">{fmt(certificate?.valid_until)}</strong></div>
+            <div>Fingerprint: <strong className="break-all text-on-surface">{certificate?.fingerprint || '—'}</strong></div>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <ActionButton tone="ghost" onClick={() => window.open('/api/cert/download', '_blank')}>
+              Baixar certificado
+            </ActionButton>
+            <ActionButton tone="primary" onClick={() => act('/api/proxy/certificate/regenerate', 'certificate')}>
+              {actionLoading === 'certificate' ? 'Processando...' : 'Gerar nova CA'}
+            </ActionButton>
+          </div>
+        </Surface>
+
+        <Surface className="p-5">
+          <div className="text-[11px] font-semibold tracking-tight text-primary">Trilha de ações técnicas</div>
+          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Últimas intervenções no motor</h3>
+          <div className="mt-4 space-y-3">
+            {actionLogs.length ? actionLogs.map((item, index) => (
+              <Surface key={`${item.created_at || index}-${index}`} stripe={false} className="p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-bold text-on-surface">{item.action || 'Ação técnica'}</div>
+                    <div className="mt-1 text-xs text-on-surface/56">{fmt(item.created_at)}</div>
+                  </div>
+                  <StatusChip label={item.success ? 'Sucesso' : 'Falha'} tone={item.success ? 'success' : 'danger'} />
+                </div>
+                <p className="mt-3 text-sm leading-6 text-on-surface/64">{item.message || 'Sem mensagem registrada.'}</p>
+              </Surface>
+            )) : (
+              <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
+                Nenhuma ação técnica recente registrada no motor.
+              </div>
+            )}
+          </div>
+        </Surface>
+      </div>
+    </div>
+  );
+}
+
+function ReportsTab() {
+  const [reports, setReports] = useState([]);
+  const [proxyStats, setProxyStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    const [reportsResult, statsResult] = await Promise.allSettled([
+      fetchJson('/api/proxy/reports'),
+      fetchJson('/api/proxy/stats'),
+    ]);
+    if (reportsResult.status === 'fulfilled') setReports(Array.isArray(reportsResult.value) ? reportsResult.value : []);
+    if (statsResult.status === 'fulfilled') setProxyStats(statsResult.value || null);
+    const failures = [
+      reportsResult.status === 'rejected' ? 'relatórios' : null,
+      statsResult.status === 'rejected' ? 'estatísticas do proxy' : null,
+    ].filter(Boolean);
+    if (failures.length) {
+      setError(`Falha parcial em: ${failures.join(', ')}.`);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load().catch(() => null);
+  }, [load]);
+
+  return (
+    <div className="space-y-6">
+      {error ? (
+        <Surface className="p-5">
+          <div className="text-sm font-semibold text-danger">{error}</div>
+        </Surface>
+      ) : null}
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <MetricSurface label="Eventos proxy" value={proxyStats?.total ?? '—'} subtitle="Registros acumulados da trilha técnica do proxy." />
+        <MetricSurface label="Bloqueios proxy" value={proxyStats?.blocked ?? '—'} subtitle="Eventos explicitamente negados na camada observável." tone="danger" />
+        <MetricSurface label="Relatórios indexados" value={reports.length} subtitle="Artefatos SARG disponíveis para consulta institucional." tone="success" />
+      </div>
+
+      <Surface className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-semibold tracking-tight text-primary">Relatórios e artefatos</div>
+            <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Saída documental do proxy observável</h3>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/64">
+              Aqui permanecem os artefatos gerados por SARG e outras evidências de navegação observável. O módulo serve suporte técnico e prestação de contas operacional.
+            </p>
+          </div>
+          <ActionButton tone="primary" icon={RefreshCcw} onClick={() => load().catch(() => null)}>
+            Atualizar relatórios
+          </ActionButton>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {loading ? (
+            <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
+              Carregando relatórios indexados...
+            </div>
+          ) : reports.length ? reports.map((report) => (
+            <Surface key={report.id} stripe={false} className="p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-bold text-on-surface">{report.name}</div>
+                  <div className="mt-1 text-xs text-on-surface/56">{fmt(report.updated_at)}</div>
+                </div>
+                <ActionButton tone="ghost" onClick={() => window.open(report.index_url, '_blank')}>
+                  Abrir artefato
+                </ActionButton>
+              </div>
+            </Surface>
+          )) : (
+            <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
+              Nenhum relatório indexado no momento.
+            </div>
+          )}
+        </div>
+      </Surface>
+    </div>
+  );
+}
+
+export default function Proxy() {
+  const [tab, setTab] = useState('overview');
+  const [error, setError] = useState('');
+  const [engineStatus, setEngineStatus] = useState(null);
+  const [dnsStats, setDnsStats] = useState(null);
+  const [reports, setReports] = useState([]);
+  const [proxyStats, setProxyStats] = useState(null);
+  const [actionLogs, setActionLogs] = useState([]);
+
+  const refreshAll = useCallback(async () => {
+    setError('');
+    const [engineResult, dnsResult, reportsResult, metricsResult, logsResult] = await Promise.allSettled([
+      fetchJson('/api/proxy/engine/status'),
+      fetchJson('/api/dns/stats'),
+      fetchJson('/api/proxy/reports'),
+      fetchJson('/api/proxy/stats'),
+      fetchJson('/api/proxy/action-logs?limit=12'),
+    ]);
+    if (engineResult.status === 'fulfilled') setEngineStatus(engineResult.value);
+    if (dnsResult.status === 'fulfilled') setDnsStats(dnsResult.value);
+    if (reportsResult.status === 'fulfilled') setReports(Array.isArray(reportsResult.value) ? reportsResult.value : []);
+    if (metricsResult.status === 'fulfilled') setProxyStats(metricsResult.value || null);
+    if (logsResult.status === 'fulfilled') setActionLogs(Array.isArray(logsResult.value) ? logsResult.value : []);
+    const failures = [
+      engineResult.status === 'rejected' ? 'estado do motor' : null,
+      dnsResult.status === 'rejected' ? 'estatísticas DNS' : null,
+      reportsResult.status === 'rejected' ? 'relatórios' : null,
+      metricsResult.status === 'rejected' ? 'estatísticas do proxy' : null,
+      logsResult.status === 'rejected' ? 'trilha técnica' : null,
+    ].filter(Boolean);
+    if (failures.length) {
+      setError(`Falha parcial em: ${failures.join(', ')}.`);
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshAll().catch(() => null);
+    const timer = window.setInterval(() => refreshAll().catch(() => null), 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshAll]);
+
+  const overviewCards = [
+    {
+      label: 'Motor observável',
+      value: engineStatus?.enforcement_mode || engineStatus?.mode || 'off',
+      subtitle: 'Modo atualmente exposto pela camada técnica.',
+      tone: engineStatus?.squid_active ? 'success' : 'warning',
+    },
+    {
+      label: 'Logger DNS',
+      value: dnsStats?.queries_5min ?? '—',
+      subtitle: 'Consultas recentes na trilha operacional.',
+      tone: 'primary',
+    },
+    {
+      label: 'Bloqueios proxy',
+      value: proxyStats?.blocked ?? '—',
+      subtitle: 'Eventos de bloqueio na camada observável do proxy.',
+      tone: 'danger',
+    },
+    {
+      label: 'Relatórios SARG',
+      value: reports.length,
+      subtitle: 'Artefatos indexados para consulta operacional.',
+      tone: 'success',
+    },
+  ];
+
+  return (
+    <div className="space-y-6 pb-10 animate-in fade-in duration-500">
+      <ModuleHeader
+        eyebrow="Controle"
+        title="Observabilidade DNS/Proxy"
+        description="Centro institucional de telemetria observável, saúde do motor complementar e evidência técnica do tráfego que passa pelas camadas DNS e proxy."
+        badges={(
+          <>
+            <StatusChip label={`Squid ${engineStatus?.squid_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.squid_active ? 'success' : 'danger'} />
+            <StatusChip label={`Logger ${engineStatus?.logger_active ? 'ativo' : 'inativo'}`} tone={engineStatus?.logger_active ? 'success' : 'warning'} />
+            <StatusChip label={`Interceptação ${engineStatus?.redirects_active ? 'seletiva' : 'desligada'}`} tone={engineStatus?.redirects_active ? 'primary' : 'neutral'} />
+          </>
+        )}
+        actions={(
+          <ActionButton tone="ghost" icon={ArrowRightLeft} onClick={() => { window.location.href = '/bloqueios-liberacoes'; }}>
+            Abrir Políticas Institucionais
+          </ActionButton>
+        )}
+      />
+
+      <Surface className="p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-semibold tracking-tight text-primary">Papel institucional do módulo</div>
+            <h2 className="mt-2 text-xl font-black tracking-tight text-on-surface">Telemetria, saúde e evidência operacional</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/64">
+              Este módulo não decide política administrativa. Ele sustenta diagnóstico, prova de enforcement, leitura do motor complementar e documentação operacional do que foi efetivamente observado.
+            </p>
+          </div>
+          <ActionButton tone="primary" icon={RefreshCcw} onClick={() => refreshAll().catch(() => null)}>
+            Atualizar leitura
+          </ActionButton>
+        </div>
+      </Surface>
+
+      {error ? (
+        <Surface className="p-5">
+          <div className="text-sm font-semibold text-danger">{error}</div>
+        </Surface>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {overviewCards.map((card) => (
+          <MetricSurface key={card.label} {...card} />
+        ))}
+      </div>
+
+      <SegmentedTabs
+        tabs={[
+          { key: 'overview', label: 'Visão Consolidada', icon: ShieldCheck },
+          { key: 'radar', label: 'Radar DNS', icon: Radar },
+          { key: 'engine', label: 'Motor Complementar', icon: Wifi },
+          { key: 'reports', label: 'Relatórios', icon: FileBarChart2 },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+
+      {tab === 'overview' ? (
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <Surface className="p-5">
+            <div className="text-[11px] font-semibold tracking-tight text-primary">Resumo executivo da camada observável</div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <Surface stripe={false} className="p-4">
+                <div className="text-sm font-bold text-on-surface">Saúde do motor</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <StatusChip label={engineStatus?.squid_active ? 'Squid ativo' : 'Squid inativo'} tone={engineStatus?.squid_active ? 'success' : 'danger'} />
+                  <StatusChip label={engineStatus?.logger_active ? 'Logger ativo' : 'Logger inativo'} tone={engineStatus?.logger_active ? 'success' : 'warning'} />
+                </div>
+                <p className="mt-3 text-sm leading-6 text-on-surface/62">
+                  O motor complementar serve evidência e suporte técnico ao enforcement principal.
+                </p>
+              </Surface>
+              <Surface stripe={false} className="p-4">
+                <div className="text-sm font-bold text-on-surface">Telemetria DNS</div>
+                <div className="mt-2 text-2xl font-black tracking-tight text-on-surface">{dnsStats?.total_hoje ?? '—'}</div>
+                <p className="mt-3 text-sm leading-6 text-on-surface/62">
+                  Consultas do dia registradas na camada de observabilidade.
+                </p>
+              </Surface>
+            </div>
+          </Surface>
+
+          <Surface className="p-5">
+            <div className="flex items-center gap-2 text-[11px] font-semibold tracking-tight text-primary">
+              <Activity size={14} />
+              Últimas ações técnicas
+            </div>
+            <div className="mt-4 space-y-3">
+              {actionLogs.length ? actionLogs.map((item, index) => (
+                <Surface key={`${item.created_at || index}-${index}`} stripe={false} className="p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-bold text-on-surface">{item.action || 'Ação técnica'}</div>
+                      <div className="mt-1 text-xs text-on-surface/56">{fmt(item.created_at)}</div>
+                    </div>
+                    <StatusChip label={item.success ? 'Sucesso' : 'Falha'} tone={item.success ? 'success' : 'danger'} />
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-on-surface/64">{item.message || 'Sem mensagem registrada.'}</p>
+                </Surface>
+              )) : (
+                <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
+                  Sem ações técnicas recentes.
+                </div>
+              )}
+            </div>
+          </Surface>
+        </div>
+      ) : null}
+
+      {tab === 'radar' ? <RadarTab /> : null}
+      {tab === 'engine' ? <EngineTab engineStatus={engineStatus} refreshAll={refreshAll} /> : null}
+      {tab === 'reports' ? <ReportsTab /> : null}
     </div>
   );
 }

@@ -6,6 +6,11 @@ import fs from 'fs';
 const router = Router();
 const pool = new Pool({ connectionString: 'postgres://postgres:becker_admin_secure@localhost:5432/controlebeckercorp_v8' });
 
+const respondDnsError = (res: any, area: string, error: unknown) => {
+    console.error(`[DNS MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 const syncUnboundConfig = async () => {
     try {
         const res = await pool.query("SELECT * FROM net_dns_rules ORDER BY id ASC");
@@ -41,7 +46,9 @@ router.get('/zones', async (req, res) => {
     try {
         const r = await pool.query("SELECT * FROM net_dns_rules ORDER BY id DESC");
         res.json(r.rows);
-    } catch { res.json([]); }
+    } catch (error) {
+        respondDnsError(res, 'zonas DNS', error);
+    }
 });
 
 router.post('/zones/add', async (req, res) => {
@@ -61,7 +68,9 @@ router.post('/zones/delete', async (req, res) => {
         await pool.query("DELETE FROM net_dns_rules WHERE id=$1", [id]);
         await syncUnboundConfig();
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao deletar" }); }
+    } catch (error: any) {
+        respondDnsError(res, 'remoção de zona DNS', error);
+    }
 });
 
 router.post('/zones/verify', async (req, res) => {
@@ -70,14 +79,18 @@ router.post('/zones/verify', async (req, res) => {
         const out = await execCmd(`dig @127.0.0.1 ${domain} +short`);
         const resolvedIp = out.split('\n')[0]?.trim();
         res.json({ match: resolvedIp === target_ip, resolved_to: resolvedIp || null });
-    } catch (e) { res.json({ match: false, resolved_to: null }); }
+    } catch (error) {
+        respondDnsError(res, 'verificação de zona DNS', error);
+    }
 });
 
 router.post('/cache/flush', async (req, res) => {
     try {
         await execCmd("sudo unbound-control flush_zone .");
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao limpar cache" }); }
+    } catch (error) {
+        respondDnsError(res, 'limpeza de cache DNS', error);
+    }
 });
 
 router.get('/stats', async (req, res) => {
@@ -96,8 +109,8 @@ router.get('/stats', async (req, res) => {
             } catch(e) {}
         }
         res.json({ is_running: isRunning, stats: { total_queries: total, avg_latency: latency } });
-    } catch (e) {
-        res.json({ is_running: false, stats: { total_queries: 0, avg_latency: 0 } });
+    } catch (error) {
+        respondDnsError(res, 'estatísticas DNS', error);
     }
 });
 
@@ -119,8 +132,8 @@ router.get('/latency-breakdown', async (req, res) => {
             return { ...v, queries: count };
         });
         res.json(breakdown);
-    } catch(e) {
-        res.json(vlans.map(v => ({ ...v, queries: 0 })));
+    } catch(error) {
+        respondDnsError(res, 'telemetria por VLAN do DNS', error);
     }
 });
 

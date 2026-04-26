@@ -6,6 +6,11 @@ import { env } from '../../config/env';
 
 const router = Router();
 
+const respondUnboundError = (res: any, area: string, error: unknown) => {
+    console.error(`[UNBOUND MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 // --- GERAÇÃO DE ARQUIVO DE CONFIGURAÇÃO ---
 const syncUnboundConfig = async () => {
     try {
@@ -32,7 +37,13 @@ router.get('/stats', async (req, res) => {
     try {
         const stdout = await execCmd("systemctl is-active unbound || echo inactive");
         const isRunning = stdout.trim() === 'active';
+        let isResolving = false;
         let total = 0, latency = 0;
+
+        try {
+            const digOut = await execCmd("dig @127.0.0.1 localhost +short");
+            isResolving = digOut.split('\n').map(line => line.trim()).filter(Boolean).length > 0;
+        } catch (e) {}
         
         if (isRunning) {
             try {
@@ -43,9 +54,9 @@ router.get('/stats', async (req, res) => {
                 if (latMatch) latency = parseFloat(latMatch[1]);
             } catch(e) {}
         }
-        res.json({ is_running: isRunning, stats: { total_queries: total, avg_latency: latency } });
-    } catch (e) {
-        res.json({ is_running: false, stats: { total_queries: 0, avg_latency: 0 } });
+        res.json({ is_running: isRunning, is_resolving: isResolving, stats: { total_queries: total, avg_latency: latency } });
+    } catch (error) {
+        respondUnboundError(res, 'estatísticas do Unbound', error);
     }
 });
 
@@ -67,8 +78,8 @@ router.get('/latency-breakdown', async (req, res) => {
             return { ...v, queries: count };
         });
         res.json(breakdown);
-    } catch(e) {
-        res.json(vlans.map(v => ({ ...v, queries: 0 })));
+    } catch(error) {
+        respondUnboundError(res, 'telemetria por VLAN do Unbound', error);
     }
 });
 
@@ -76,7 +87,9 @@ router.get('/zones', async (req, res) => {
     try {
         const r = await pool.query("SELECT * FROM net_dns_rules ORDER BY id DESC");
         res.json(r.rows);
-    } catch { res.json([]); }
+    } catch (error) {
+        respondUnboundError(res, 'zonas do Unbound', error);
+    }
 });
 
 router.post('/zones/add', async (req, res) => {
@@ -94,7 +107,9 @@ router.post('/zones/delete', async (req, res) => {
         await pool.query("DELETE FROM net_dns_rules WHERE id=$1", [req.body.id]);
         await syncUnboundConfig();
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro" }); }
+    } catch (error) {
+        respondUnboundError(res, 'remoção de zona do Unbound', error);
+    }
 });
 
 router.post('/zones/verify', async (req, res) => {
@@ -102,14 +117,18 @@ router.post('/zones/verify', async (req, res) => {
         const stdout = await execCmd(`dig @127.0.0.1 ${req.body.domain} +short`);
         const resolvedIp = stdout.split('\n')[0]?.trim();
         res.json({ match: resolvedIp === req.body.target_ip, resolved_to: resolvedIp || null });
-    } catch (e) { res.json({ match: false, resolved_to: null }); }
+    } catch (error) {
+        respondUnboundError(res, 'verificação de zona do Unbound', error);
+    }
 });
 
 router.post('/cache/flush', async (req, res) => {
     try {
         await execCmd("sudo unbound-control flush_zone .");
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro" }); }
+    } catch (error) {
+        respondUnboundError(res, 'limpeza de cache do Unbound', error);
+    }
 });
 
 export default router;

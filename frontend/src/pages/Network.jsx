@@ -7,13 +7,25 @@ import { Clock } from 'lucide-react';
 import VlanManagerMD3 from './VlanManagerMD3';
 import { ModuleHeader, SegmentedTabs, StatusChip } from '../components/ui/primitives';
 
+const fetchErrorMessage = (error, fallback) => error?.response?.data?.error || error?.message || fallback;
+
+const ErrorBanner = ({ message }) => (
+    message ? (
+        <div className="rounded-[24px] border border-danger/20 bg-danger/8 px-4 py-3 text-sm font-semibold text-danger shadow-sm">
+            {message}
+        </div>
+    ) : null
+);
+
 // --- VLAN TAB (CORREÇÃO DE MÉTRICAS E PERSPECTIVA) ---
 const VlanTab = () => {
     const [ifaces, setIfaces] = useState([]);
+    const [error, setError] = useState('');
     const lastRead = useRef({});
     
     const load = async () => {
         try {
+            setError('');
             // Timestamp adicionado para evitar cache de requisição no navegador
             const res = await api.get(`/api/network/vlans-detail?_t=${Date.now()}`);
             
@@ -36,7 +48,10 @@ const VlanTab = () => {
                 });
                 setIfaces(calculated);
             }
-        } catch (e) { console.error("Falha ao ler redes", e); }
+        } catch (e) {
+            console.error("Falha ao ler redes", e);
+            setError(fetchErrorMessage(e, 'Falha ao ler telemetria de interfaces.'));
+        }
     };
     
     useEffect(() => { load(); const i = setInterval(load, 2000); return () => clearInterval(i); }, []);
@@ -59,8 +74,10 @@ const VlanTab = () => {
     ];
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pt-4">
-            {INTERFACES_CONFIG.map(conf => {
+        <div className="space-y-4 pt-4">
+            <ErrorBanner message={error} />
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {INTERFACES_CONFIG.map(conf => {
                 const data = ifaces.find(i => i.iface === conf.id || i.iface.startsWith(`${conf.id}@`));
                 const ip = data?.ip ? `${data.ip}${conf.defaultIp?.includes('/24') ? '/24' : ''}` : conf.defaultIp || 'Não detectado';
                 const rx = data?.rx || 0;
@@ -75,7 +92,7 @@ const VlanTab = () => {
                 const downloadBps = isWan ? rx : tx;
                 const uploadBps = isWan ? tx : rx;
 
-                return (
+                    return (
                     <div key={conf.id} className={`bg-container p-4 rounded-[24px] border ${conf.border} shadow-sm group hover:shadow-md transition-all`}>
                         <div className="flex justify-between items-start mb-3">
                             <div className="flex items-center gap-3">
@@ -106,8 +123,9 @@ const VlanTab = () => {
                             </div>
                         </div>
                     </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </div>
     );
 };
@@ -118,38 +136,62 @@ const AccessTab = () => {
     const [scanList, setScanList] = useState([]);
     const [isScanning, setIsScanning] = useState(false);
     const [manualForm, setManualForm] = useState({ type: 'ip', value: '', reason: '' });
+    const [error, setError] = useState('');
 
     const loadBlocked = async () => {
-        try { const res = await api.get('/api/access'); setBlockedList(Array.isArray(res.data) ? res.data : []); } catch { setBlockedList([]); }
+        try {
+            setError('');
+            const res = await api.get('/api/access');
+            setBlockedList(Array.isArray(res.data) ? res.data : []);
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao carregar bloqueios.'));
+        }
     };
     useEffect(() => { loadBlocked(); }, []);
 
     const handleBlock = async (type, value, vendor, reason) => {
         if(!value) return;
         if(confirm(`Bloquear acesso à internet de ${value}?`)) {
-            await api.post('/api/access/block', { type, value, vendor, reason });
-            loadBlocked();
-            if(scanList.length > 0) setScanList(prev => prev.map(d => (d.ip === value || d.mac === value) ? {...d, is_blocked: true} : d));
+            try {
+                setError('');
+                await api.post('/api/access/block', { type, value, vendor, reason });
+                loadBlocked();
+                if(scanList.length > 0) setScanList(prev => prev.map(d => (d.ip === value || d.mac === value) ? {...d, is_blocked: true} : d));
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao bloquear alvo.'));
+            }
         }
     };
 
     const handleUnblock = async (id, type, value) => {
         if(confirm(`Desbloquear ${value}?`)) {
-            await api.post('/api/access/unblock', { id, type, value });
-            loadBlocked();
-            if(scanList.length > 0) setScanList(prev => prev.map(d => (d.ip === value || d.mac === value) ? {...d, is_blocked: false} : d));
+            try {
+                setError('');
+                await api.post('/api/access/unblock', { id, type, value });
+                loadBlocked();
+                if(scanList.length > 0) setScanList(prev => prev.map(d => (d.ip === value || d.mac === value) ? {...d, is_blocked: false} : d));
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao desbloquear alvo.'));
+            }
         }
     };
 
     const runScan = async () => {
         setIsScanning(true); setScanList([]);
-        try { const res = await api.get('/api/access/scan'); setScanList(Array.isArray(res.data) ? res.data : []); } 
-        catch { alert("Erro ao escanear rede."); } 
+        try {
+            setError('');
+            const res = await api.get('/api/access/scan');
+            setScanList(Array.isArray(res.data) ? res.data : []);
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao escanear rede.'));
+        }
         finally { setIsScanning(false); }
     };
 
     return (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 pt-4">
+        <div className="space-y-4 pt-4">
+            <ErrorBanner message={error} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
             <div className="space-y-6">
                 <div className="bg-danger/10 border border-danger/20 p-6 rounded-[24px]">
                     <h3 className="text-danger font-semibold mb-4 text-sm flex items-center gap-2"><ShieldAlert size={18}/> Bloqueio manual</h3>
@@ -232,6 +274,7 @@ const AccessTab = () => {
                     ))}
                 </div>
             </div>
+            </div>
         </div>
     );
 };
@@ -241,27 +284,71 @@ const ConnectivityTab = () => {
     const [data, setData] = useState({ vpn: [], storage: [], status: { vpn: false, storage: false } });
     const [vpnName, setVpnName] = useState('');
     const [storageForm, setStorageForm] = useState({ username: '', password: '', path: '/mnt/dados', has_smb: false });
+    const [error, setError] = useState('');
 
-    const load = async () => { try { const res = await api.get('/api/connectivity/list'); setData(res.data); } catch{} };
+    const load = async () => {
+        try {
+            setError('');
+            const res = await api.get('/api/connectivity/list');
+            setData(res.data);
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao carregar conectividade.'));
+        }
+    };
     useEffect(() => { load(); const i = setInterval(load, 2000); return () => clearInterval(i); }, []);
 
     const createVpn = async () => {
         if(!vpnName) return;
-        const res = await api.post('/api/connectivity/vpn/create', { name: vpnName });
-        if(res.data.success) { downloadString(res.data.config, `vpn-${vpnName}.conf`); setVpnName(''); load(); }
+        try {
+            setError('');
+            const res = await api.post('/api/connectivity/vpn/create', { name: vpnName });
+            if(res.data.success) { downloadString(res.data.config, `vpn-${vpnName}.conf`); setVpnName(''); load(); }
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao gerar credencial VPN.'));
+        }
     };
     const downloadVpn = async (id) => {
-        const res = await api.post('/api/connectivity/vpn/download', { id });
-        if (res.data.success) downloadString(res.data.config, res.data.filename);
+        try {
+            setError('');
+            const res = await api.post('/api/connectivity/vpn/download', { id });
+            if (res.data.success) downloadString(res.data.config, res.data.filename);
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao baixar credencial VPN.'));
+        }
     };
-    const deleteVpn = async (id) => { if(confirm("Revogar certificado?")) { await api.post('/api/connectivity/vpn/delete', { id }); load(); } };
+    const deleteVpn = async (id) => {
+        if(confirm("Revogar certificado?")) {
+            try {
+                setError('');
+                await api.post('/api/connectivity/vpn/delete', { id });
+                load();
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao revogar credencial VPN.'));
+            }
+        }
+    };
 
     const createStorage = async () => {
         if(!storageForm.username) return;
-        await api.post('/api/connectivity/storage/create', storageForm);
-        setStorageForm({...storageForm, username:'', password: ''}); load();
+        try {
+            setError('');
+            await api.post('/api/connectivity/storage/create', storageForm);
+            setStorageForm({...storageForm, username:'', password: ''}); load();
+        } catch (e) {
+            setError(fetchErrorMessage(e, 'Falha ao criar usuário de storage.'));
+        }
     };
-    const deleteStorage = async (id, u) => { if(confirm("Remover usuário?")) { await api.post('/api/connectivity/storage/delete', { id, username: u }); load(); } };
+    const deleteStorage = async (id, u) => {
+        if(confirm("Remover usuário?")) {
+            try {
+                setError('');
+                await api.post('/api/connectivity/storage/delete', { id, username: u });
+                load();
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao remover usuário de storage.'));
+            }
+        }
+    };
 
     const downloadString = (text, filename) => {
         const element = document.createElement("a");
@@ -271,7 +358,9 @@ const ConnectivityTab = () => {
     };
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pt-4">
+        <div className="space-y-4 pt-4">
+            <ErrorBanner message={error} />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <h3 className="text-xl font-black text-on-surface flex items-center gap-2"><Globe className="text-purple-500"/> Acesso remoto institucional</h3>
@@ -334,64 +423,151 @@ const ConnectivityTab = () => {
                     ))}
                 </div>
             </div>
+            </div>
         </div>
     );
 };
 
 // --- DNS TAB ---
 const DnsTab = () => {
-    // FAIL-SAFE: O FRONTEND JÁ NASCE COM AS REDES, NUNCA FICA VAZIO
     const DEFAULT_VLANS = [
-        { id: 'vlan10', name: 'VLAN 10 (Secretaria)', ip: '192.168.10.1/24', queries: 0 },
-        { id: 'vlan30', name: 'VLAN 30 (Celulares)', ip: '192.168.30.1/24', queries: 0 },
-        { id: 'vlan40', name: 'VLAN 40 (CFTV)', ip: '192.168.40.1/24', queries: 0 },
-        { id: 'vlan50', name: 'VLAN 50 (SINE)', ip: '192.168.50.1/24', queries: 0 },
-        { id: 'vlan70', name: 'VLAN 70 (Visitantes)', ip: '192.168.70.1/24', queries: 0 },
-        { id: 'vlan80', name: 'VLAN 80 (VOiP)', ip: '192.168.80.1/24', queries: 0 }
+        { id: 'vlan10', vlan: 'VLAN10', name: 'VLAN 10 (Secretaria)', ip: '192.168.10.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 },
+        { id: 'vlan30', vlan: 'VLAN30', name: 'VLAN 30 (Celulares)', ip: '192.168.30.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 },
+        { id: 'vlan40', vlan: 'VLAN40', name: 'VLAN 40 (CFTV)', ip: '192.168.40.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 },
+        { id: 'vlan50', vlan: 'VLAN50', name: 'VLAN 50 (SINE)', ip: '192.168.50.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 },
+        { id: 'vlan70', vlan: 'VLAN70', name: 'VLAN 70 (Visitantes)', ip: '192.168.70.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 },
+        { id: 'vlan80', vlan: 'VLAN80', name: 'VLAN 80 (VOiP)', ip: '192.168.80.1/24', queries: 0, blocked_queries: 0, unique_ips: 0 }
     ];
 
-    const [stats, setStats] = useState({ is_running: false, stats: { total_queries: 0, cache_hits: 0, avg_latency: 0 } });
+    const [stats, setStats] = useState({ is_running: null, is_resolving: null, stats: { total_queries: 0, cache_hits: 0, avg_latency: 0 } });
     const [breakdown, setBreakdown] = useState(DEFAULT_VLANS);
     const [zones, setZones] = useState([]);
     const [form, setForm] = useState({ domain: '', ip: '', type: 'FWD' });
     const [verifyStatus, setVerifyStatus] = useState({});
+    const [error, setError] = useState('');
+
+    const normalizeDnsStats = (payload = {}) => {
+        const next = payload && typeof payload === 'object' ? payload : {};
+        const hasRunning = typeof next.is_running === 'boolean';
+        const hasResolving = typeof next.is_resolving === 'boolean';
+
+        return {
+            ...next,
+            is_running: hasRunning ? next.is_running : null,
+            is_resolving: hasResolving ? next.is_resolving : (hasRunning && next.is_running ? false : null),
+            stats: {
+                total_queries: next.stats?.total_queries || 0,
+                cache_hits: next.stats?.cache_hits || 0,
+                avg_latency: next.stats?.avg_latency || 0,
+            },
+        };
+    };
 
     const load = () => {
-        // PEDIDOS INDEPENDENTES: SE UM FALHAR, NÃO TRAVA OS OUTROS
-        api.get('/api/dns/stats').then(s => { if(s.data) setStats(s.data); }).catch(()=>{});
+        setError('');
+        const failures = [];
+        api.get('/api/dns/stats').then(s => {
+            if (s.data) setStats((current) => ({ ...current, ...normalizeDnsStats(s.data) }));
+        }).catch((e)=>{
+            failures.push(fetchErrorMessage(e, 'estatísticas DNS'));
+            setError(`Falha parcial em: ${failures.join(', ')}.`);
+        });
         
-        api.get('/api/dns/latency-breakdown').then(b => {
+        api.get('/api/dns/vlan-summary').then(b => {
             if(b.data && Array.isArray(b.data) && b.data.length > 0) {
                 setBreakdown(b.data);
             }
-        }).catch(()=>{});
+        }).catch((e)=>{
+            failures.push(fetchErrorMessage(e, 'quadro por VLAN do DNS'));
+            setError(`Falha parcial em: ${failures.join(', ')}.`);
+        });
         
         api.get('/api/dns/zones').then(z => {
             if(z.data && Array.isArray(z.data)) setZones(z.data);
-        }).catch(()=>{});
+        }).catch((e)=>{
+            failures.push(fetchErrorMessage(e, 'zonas DNS'));
+            setError(`Falha parcial em: ${failures.join(', ')}.`);
+        });
     };
     
     useEffect(() => { load(); const i = setInterval(load, 2000); return () => clearInterval(i); }, []);
     
     const vlanTotalQueries = breakdown.reduce((sum, item) => sum + (item.queries || 0), 0);
+    const dnsStatusLabel = stats.is_resolving === true
+        ? 'RESOLVENDO'
+        : stats.is_running === true
+            ? 'DEGRADADO'
+            : stats.is_running === false
+                ? 'PARADO'
+                : 'VERIFICANDO';
+    const dnsStatusTone = stats.is_resolving === true
+        ? 'bg-info/10 text-info'
+        : stats.is_running === true
+            ? 'bg-orange-500/10 text-orange-500'
+            : stats.is_running === false
+                ? 'bg-danger/10 text-danger'
+                : 'bg-outline/10 text-on-surface/60';
+    const dnsStatusTextTone = stats.is_resolving === true
+        ? 'text-info'
+        : stats.is_running === true
+            ? 'text-orange-500'
+            : stats.is_running === false
+                ? 'text-danger'
+                : 'text-on-surface/60';
 
     const add = async () => { 
         if(!form.domain || !form.ip) return alert("Preencha todos os campos."); 
-        try { await api.post('/api/dns/zones/add', form); setForm({ domain: '', ip: '', type: 'FWD' }); load(); alert("Regra Aplicada!"); } 
-        catch(e) { alert(`FALHA: ${e.response?.data?.error || "Erro"}`); }
+        try {
+            setError('');
+            await api.post('/api/dns/zones/add', form);
+            setForm({ domain: '', ip: '', type: 'FWD' });
+            load();
+            alert("Regra Aplicada!");
+        } catch(e) {
+            const message = fetchErrorMessage(e, 'Falha ao salvar regra DNS.');
+            setError(message);
+            alert(`FALHA: ${message}`);
+        }
     };
-    const del = async (id) => { if(confirm("Remover regra?")) { await api.post('/api/dns/zones/delete', { id }); load(); } };
-    const flushCache = async () => { if(confirm("Limpar cache?")) { await api.post('/api/dns/cache/flush'); load(); } };
+    const del = async (id) => {
+        if(confirm("Remover regra?")) {
+            try {
+                setError('');
+                await api.post('/api/dns/zones/delete', { id });
+                load();
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao remover regra DNS.'));
+            }
+        }
+    };
+    const flushCache = async () => {
+        if(confirm("Limpar cache?")) {
+            try {
+                setError('');
+                await api.post('/api/dns/cache/flush');
+                load();
+            } catch (e) {
+                setError(fetchErrorMessage(e, 'Falha ao limpar cache DNS.'));
+            }
+        }
+    };
     const verifyZone = async (z) => { 
         setVerifyStatus(p => ({ ...p, [z.id]: 'loading' })); 
-        try { const res = await api.post('/api/dns/zones/verify', { domain: z.domain, target_ip: z.target_ip, type: z.type }); setVerifyStatus(p => ({ ...p, [z.id]: res.data.match ? 'ok' : 'error', resolved: res.data.resolved_to })); } 
-        catch(e) { setVerifyStatus(p => ({ ...p, [z.id]: 'error' })); } 
+        try {
+            setError('');
+            const res = await api.post('/api/dns/zones/verify', { domain: z.domain, target_ip: z.target_ip, type: z.type });
+            setVerifyStatus(p => ({ ...p, [z.id]: res.data.match ? 'ok' : 'error', resolved: res.data.resolved_to }));
+        } catch(e) {
+            setVerifyStatus(p => ({ ...p, [z.id]: 'error' }));
+            setError(fetchErrorMessage(e, 'Falha ao verificar zona DNS.'));
+        }
     };
 
     return (
         <div className="space-y-8 pt-4">
+            <ErrorBanner message={error} />
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className={`p-3 rounded-xl ${stats.is_running ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}><Server size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Serviço DNS</h3><p className={`text-lg font-black ${stats.is_running ? 'text-info' : 'text-danger'}`}>{stats.is_running ? 'ATIVO' : 'PARADO'}</p></div></div>
+                <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className={`p-3 rounded-xl ${dnsStatusTone}`}><Server size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">DNS Institucional</h3><p className={`text-lg font-black ${dnsStatusTextTone}`}>{dnsStatusLabel}</p></div></div>
                 <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className="p-3 rounded-xl bg-orange-500/10 text-orange-500"><Zap size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Latência</h3><p className="text-xl font-black text-orange-500">{stats.stats?.avg_latency || 0} <span className="text-xs text-on-surface opacity-40">ms</span></p></div></div>
                 <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className="p-3 rounded-xl bg-primary/10 text-primary"><Activity size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Consultas (Recentes)</h3><p className="text-xl font-black text-primary">{vlanTotalQueries.toLocaleString()}</p></div></div>
                 <button onClick={flushCache} className="bg-danger/10 border border-danger/20 p-5 rounded-[24px] flex items-center justify-between hover:bg-danger/20 transition-all group active:scale-95 shadow-sm"><div className="flex items-center gap-4"><div className="p-3 rounded-xl bg-danger/20 text-danger group-hover:scale-110 transition-transform"><Trash2 size={24}/></div><div className="text-left"><h3 className="text-danger font-bold uppercase text-[10px]">Manutenção</h3><p className="text-lg font-black text-danger">Limpar Cache</p></div></div></button>
@@ -409,6 +585,9 @@ const DnsTab = () => {
                                 </div>
                                 <div className="text-right">
                                     <span className="block text-sm font-black text-primary">{(v.queries || 0).toLocaleString()} <span className="text-[9px] text-on-surface opacity-40 font-normal">reqs</span></span>
+                                    <span className="block text-[10px] text-on-surface opacity-55">
+                                        {(v.unique_ips || 0).toLocaleString()} IPs · {(v.blocked_queries || 0).toLocaleString()} bloqueios
+                                    </span>
                                 </div>
                             </div>
                         ))}

@@ -28,6 +28,10 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'background-script', pattern: /^bash .+ > \/dev\/null 2>&1 &$/ },
     { name: 'misc-safe', pattern: /^(sync|sudo sysctl -w vm\.drop_caches=3)$/ },
     { name: 'nmap-scan', pattern: /^sudo nmap -sn -n --min-rate 1000 .+$/ },
+    { name: 'clamav-control', pattern: /^(sudo\s+)?systemctl (start|stop|restart) clamav-(daemon|freshclam|clamonacc)(\.service)?$/ },
+    { name: 'clamav-status', pattern: /^(sudo\s+)?systemctl is-active clamav-(daemon|freshclam|clamonacc)(\.service)?(\s+\|\|\s+echo\s+"?inactive"?)?$/ },
+    { name: 'clamav-update', pattern: /^(sudo\s+)?freshclam(--stdout)?$/ },
+    { name: 'clamav-scan', pattern: /^(sudo\s+)?clamscan -ri --max-filesize=256M --max-scansize=512M .+$/ },
 ];
 
 const isAllowedCommand = (cmd: string) => SHELL_ALLOWLIST.some((entry) => entry.pattern.test(cmd.trim()));

@@ -14,7 +14,7 @@ const defaultSmtpForm = {
     use_tls: true,
     use_ssl: false,
     requires_auth: true,
-    is_active: true,
+    is_active: false,
     has_password: false,
 };
 
@@ -240,6 +240,8 @@ export default function Security() {
     const [loading, setLoading] = useState(false);
     const [banIp, setBanIp] = useState('');
     const [smtpModalOpen, setSmtpModalOpen] = useState(false);
+    const [smtpSummary, setSmtpSummary] = useState(defaultSmtpForm);
+    const [smtpSummaryError, setSmtpSummaryError] = useState('');
 
     const load = async () => {
         try {
@@ -248,8 +250,20 @@ export default function Security() {
         } catch {}
     };
 
+    const loadSmtpSummary = async () => {
+        try {
+            const res = await api.get('/api/security/smtp');
+            setSmtpSummary({ ...defaultSmtpForm, ...res.data });
+            setSmtpSummaryError('');
+        } catch (error) {
+            setSmtpSummary({ ...defaultSmtpForm });
+            setSmtpSummaryError(error?.response?.data?.error || 'Falha ao carregar a configuração SMTP.');
+        }
+    };
+
     useEffect(() => {
         load();
+        loadSmtpSummary();
         const i = setInterval(load, 5000);
         return () => clearInterval(i);
     }, []);
@@ -315,19 +329,58 @@ export default function Security() {
                         </>
                     )}
                     actions={(
-                        <>
-                            <ActionButton tone="ghost" icon={Mail} onClick={() => setSmtpModalOpen(true)}>
-                                SMTP institucional
-                            </ActionButton>
-                            <ActionButton tone="primary" icon={loading ? Activity : ShieldCheck} onClick={handleBlindagem} disabled={loading}>
-                                {loading ? 'Aplicando blindagem...' : 'Aplicar blindagem'}
-                            </ActionButton>
-                        </>
+                        <ActionButton tone="primary" icon={loading ? Activity : ShieldCheck} onClick={handleBlindagem} disabled={loading}>
+                            {loading ? 'Aplicando blindagem...' : 'Aplicar blindagem'}
+                        </ActionButton>
                     )}
                 />
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
                     <div className="space-y-6">
+                        <Surface className="p-6">
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">SMTP institucional</p>
+                                    <h3 className="mt-1 text-xl font-black text-on-surface">
+                                        {smtpSummary.is_active ? 'Notificações habilitadas' : 'Notificações inativas'}
+                                    </h3>
+                                    <p className="mt-2 text-xs leading-5 text-on-surface/62">
+                                        {smtpSummary.host ? `${smtpSummary.host}:${smtpSummary.port}` : 'Servidor SMTP ainda não configurado.'}
+                                    </p>
+                                </div>
+                                <div className="rounded-2xl bg-primary/10 p-4 text-primary">
+                                    <Mail size={28} />
+                                </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                <StatusChip label={smtpSummary.is_active ? 'Ativo' : 'Inativo'} tone={smtpSummary.is_active ? 'success' : 'warning'} />
+                                <StatusChip label={smtpSummary.requires_auth ? 'Com autenticação' : 'Sem autenticação'} tone="primary" />
+                                <StatusChip label={smtpSummary.has_password ? 'Senha salva' : 'Sem senha'} tone={smtpSummary.has_password ? 'success' : 'warning'} />
+                            </div>
+
+                            <div className="mt-4 space-y-2 text-xs text-on-surface/72">
+                                <div>Usuário: <span className="font-mono">{smtpSummary.username || 'não definido'}</span></div>
+                                <div>Remetente: <span className="font-mono">{smtpSummary.from_email || 'não definido'}</span></div>
+                                <div>Destino padrão: <span className="font-mono">{smtpSummary.to_email || 'não definido'}</span></div>
+                            </div>
+
+                            {smtpSummaryError ? (
+                                <div className="mt-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
+                                    {smtpSummaryError}
+                                </div>
+                            ) : null}
+
+                            <div className="mt-5 flex flex-wrap gap-2">
+                                <ActionButton tone="ghost" icon={RefreshCw} onClick={loadSmtpSummary}>
+                                    Recarregar SMTP
+                                </ActionButton>
+                                <ActionButton tone="primary" icon={Mail} onClick={() => setSmtpModalOpen(true)}>
+                                    Configurar SMTP
+                                </ActionButton>
+                            </div>
+                        </Surface>
+
                         <Surface className="flex items-center justify-between p-6">
                             <div>
                                 <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Firewall UFW</p>
@@ -482,7 +535,10 @@ export default function Security() {
                 </div>
             </div>
 
-            <SmtpModal open={smtpModalOpen} onClose={() => setSmtpModalOpen(false)} />
+            <SmtpModal open={smtpModalOpen} onClose={() => {
+                setSmtpModalOpen(false);
+                loadSmtpSummary();
+            }} />
         </>
     );
 }

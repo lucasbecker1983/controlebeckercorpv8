@@ -3,7 +3,7 @@ import path from 'path';
 import { env } from '../config/env';
 import { runCommand } from '../utils/process';
 import { pool } from '../config/db';
-import { filterOperationalVlans, getGatewayFromSubnet, INTERNAL_DNS_BY_VLAN } from './blocking-release-scope';
+import { filterOperationalVlans, getGatewayFromSubnet, INTERNAL_DNS_BY_VLAN, isManagedBlockingIp, isManagedBlockingVlan } from './blocking-release-scope';
 
 export type EngineMode = 'off' | 'test-http-only' | 'test-http+https';
 
@@ -37,6 +37,23 @@ const buildFilterRules = (mode: EngineMode) => {
     return rules;
 };
 
+const uniqueVipRows = (rows: Array<{ ip: string; vlan_id: number | null }>) => {
+    const seen = new Set<string>();
+    return rows
+        .filter((row) => isManagedBlockingVlan(row.vlan_id) || isManagedBlockingIp(row.ip))
+        .map((row) => ({
+            ip: String(row.ip || '').trim(),
+            vlan_id: row.vlan_id === null || row.vlan_id === undefined ? null : Number(row.vlan_id),
+        }))
+        .filter((row) => {
+            if (!row.ip) return false;
+            const key = `${row.ip}|${row.vlan_id || ''}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+};
+
 export class InterceptionService {
     readonly backupDir = path.join(env.proxyStateDir, 'backups', 'ufw');
 
@@ -59,14 +76,28 @@ export class InterceptionService {
             `,
         ).catch(() => ({ rows: [] as Array<{ vlan_id: number; interface_name: string; subnet_cidr: string; exempt: boolean; blocking_enabled: boolean; monitoring_enabled: boolean }> }));
         const selectiveVlans = filterOperationalVlans(rows);
+        const { rows: vipRows } = await pool.query(
+            `
+                SELECT host(ip) AS ip, vlan_id
+                FROM policy_exceptions
+                WHERE active = TRUE
+                  AND (valid_until IS NULL OR valid_until >= NOW())
+                ORDER BY id ASC
+            `,
+        ).catch(() => ({ rows: [] as Array<{ ip: string; vlan_id: number | null }> }));
+        const vipBypassRows = uniqueVipRows(vipRows);
 
         if (!bypassGlobal && ports.length > 0 && selectiveVlans.length > 0) {
             rules.push('*nat');
             rules.push(':V8_PROXY_ENGINE - [0:0]');
             for (const row of selectiveVlans) {
                 const gatewayIp = getGatewayFromSubnet(row.subnet_cidr);
+                const vlanVips = vipBypassRows.filter((vip) => !vip.vlan_id || vip.vlan_id === row.vlan_id);
                 if (gatewayIp) {
                     rules.push(`-A PREROUTING -i ${row.interface_name} -s ${gatewayIp} -j RETURN`);
+                }
+                for (const vip of vlanVips) {
+                    rules.push(`-A PREROUTING -i ${row.interface_name} -s ${vip.ip} -j RETURN`);
                 }
                 rules.push(`-A PREROUTING -i ${row.interface_name} -s ${row.subnet_cidr} -p udp --dport 53 -j RETURN`);
                 rules.push(`-A PREROUTING -i ${row.interface_name} -s ${row.subnet_cidr} -p tcp --dport 53 -j RETURN`);

@@ -15,6 +15,12 @@ import Control from './pages/Control';
 import Backups from './pages/Backups';
 import Security from './pages/Security';
 import Settings from './pages/Settings';
+import DataGovernance from './pages/DataGovernance';
+import ApprovalsExceptions from './pages/ApprovalsExceptions';
+import InstitutionalTrail from './pages/InstitutionalTrail';
+import Lgpd from './pages/Lgpd';
+import { api, resetAuthInvalidation } from './services/api';
+import { resetAuthFetchInvalidation } from './services/authFetch';
 
 function getPreferenceScope(user) {
   const identifier = user?.username || user?.name || user?.email || user?.id;
@@ -39,12 +45,37 @@ const resolveStoredAccent = (user) => readPreference('sgcg_accent', user, 'gover
 const resolveStoredUiStyle = (user) => readPreference('sgcg_ui_style', user, 'solid');
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem('becker_token'));
+  const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState(JSON.parse(localStorage.getItem('becker_user') || '{}'));
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState(() => resolveStoredTheme(JSON.parse(localStorage.getItem('becker_user') || '{}')));
   const [accent, setAccent] = useState(() => resolveStoredAccent(JSON.parse(localStorage.getItem('becker_user') || '{}')));
   const [uiStyle, setUiStyle] = useState(() => resolveStoredUiStyle(JSON.parse(localStorage.getItem('becker_user') || '{}')));
+
+  useEffect(() => {
+    const token = localStorage.getItem('becker_token');
+    const storedUser = JSON.parse(localStorage.getItem('becker_user') || '{}');
+    if (!token || (!storedUser?.username && !storedUser?.id)) {
+      localStorage.removeItem('becker_token');
+      localStorage.removeItem('becker_user');
+      setUser({});
+    } else {
+      setUser(storedUser);
+    }
+    setAuthReady(true);
+  }, []);
+
+  useEffect(() => {
+    const handleAuthInvalid = () => {
+      localStorage.removeItem('becker_token');
+      localStorage.removeItem('becker_user');
+      setUser({});
+      setAuthReady(true);
+    };
+
+    window.addEventListener('sgcg:auth-invalid', handleAuthInvalid);
+    return () => window.removeEventListener('sgcg:auth-invalid', handleAuthInvalid);
+  }, []);
 
   useEffect(() => {
     setTheme(resolveStoredTheme(user));
@@ -69,14 +100,27 @@ export default function App() {
   }, [theme, accent, uiStyle, user]);
 
   const handleLogout = () => {
-    localStorage.removeItem('becker_token');
-    localStorage.removeItem('becker_user');
-    setToken(null);
-    setUser({});
+    api.post('/api/auth/logout').catch(() => null).finally(() => {
+      resetAuthInvalidation();
+      resetAuthFetchInvalidation();
+      localStorage.removeItem('becker_token');
+      localStorage.removeItem('becker_user');
+      setUser({});
+      setAuthReady(true);
+    });
   };
 
-  if (!token) {
-    return <Login onLogin={(t, u) => { setToken(t); setUser(u); }} />;
+  if (!authReady) {
+    return <div className="flex min-h-screen items-center justify-center bg-surface text-on-surface">Carregando sessão institucional...</div>;
+  }
+
+  if (!user?.id && !user?.username) {
+    return <Login onLogin={(nextUser) => {
+      resetAuthInvalidation();
+      resetAuthFetchInvalidation();
+      setUser(nextUser);
+      localStorage.setItem('becker_user', JSON.stringify(nextUser));
+    }} />;
   }
 
   return (
@@ -120,6 +164,10 @@ export default function App() {
           <Route path="/users" element={<Users />} />
           <Route path="/proxy" element={<Proxy />} />
           <Route path="/bloqueios-liberacoes" element={<BlockingReleases />} />
+          <Route path="/governanca-dados" element={<DataGovernance />} />
+          <Route path="/lgpd" element={<Lgpd />} />
+          <Route path="/aprovacoes-excecoes" element={<ApprovalsExceptions />} />
+          <Route path="/trilha-institucional" element={<InstitutionalTrail />} />
           <Route path="/control" element={<Control />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />

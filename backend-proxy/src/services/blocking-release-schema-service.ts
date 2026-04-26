@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS domain_policies (
     scope_value VARCHAR(255) NOT NULL DEFAULT 'global',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     description TEXT,
+    governance_summary TEXT,
+    legal_basis TEXT,
+    requested_by VARCHAR(128),
+    approval_scope VARCHAR(128),
+    lifecycle_status VARCHAR(64),
+    review_date DATE,
+    approved_by VARCHAR(128),
+    approved_at TIMESTAMPTZ,
+    effective_from TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    revoked_by VARCHAR(128),
+    revoked_at TIMESTAMPTZ,
     created_by VARCHAR(128) NOT NULL DEFAULT 'system',
     updated_by VARCHAR(128) NOT NULL DEFAULT 'system',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -127,7 +139,19 @@ CREATE TABLE IF NOT EXISTS policy_exceptions (
     ip INET NOT NULL,
     hostname VARCHAR(255),
     description TEXT,
+    governance_summary TEXT,
+    legal_basis TEXT,
     responsible VARCHAR(128),
+    requested_by VARCHAR(128),
+    approval_scope VARCHAR(128),
+    lifecycle_status VARCHAR(64),
+    review_date DATE,
+    approved_by VARCHAR(128),
+    approved_at TIMESTAMPTZ,
+    effective_from TIMESTAMPTZ,
+    expires_at TIMESTAMPTZ,
+    revoked_by VARCHAR(128),
+    revoked_at TIMESTAMPTZ,
     vlan_id INTEGER,
     exception_type VARCHAR(64) NOT NULL,
     bypass_total BOOLEAN NOT NULL DEFAULT FALSE,
@@ -292,6 +316,30 @@ CREATE INDEX IF NOT EXISTS idx_domain_policy_audit_logs_created_at ON domain_pol
 ALTER TABLE policy_engine_state ADD COLUMN IF NOT EXISTS enforcement_mode VARCHAR(32) NOT NULL DEFAULT 'acl-plus-dns';
 ALTER TABLE policy_engine_state ADD COLUMN IF NOT EXISTS compiler_status VARCHAR(32) NOT NULL DEFAULT 'unknown';
 ALTER TABLE policy_engine_state ADD COLUMN IF NOT EXISTS compiler_version VARCHAR(128);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS governance_summary TEXT;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS legal_basis TEXT;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS requested_by VARCHAR(128);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS approval_scope VARCHAR(128);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(64);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS review_date DATE;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS approved_by VARCHAR(128);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS effective_from TIMESTAMPTZ;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
+ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS governance_summary TEXT;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS legal_basis TEXT;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS requested_by VARCHAR(128);
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS approval_scope VARCHAR(128);
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS lifecycle_status VARCHAR(64);
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS review_date DATE;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS approved_by VARCHAR(128);
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS effective_from TIMESTAMPTZ;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
 CREATE OR REPLACE VIEW unified_access_events AS
 WITH unified AS (

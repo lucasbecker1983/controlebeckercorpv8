@@ -8,7 +8,7 @@ import { policyCompilerService } from './policy-compiler-service';
 
 type ContingencyStatus = 'normal' | 'active' | 'expired' | 'error';
 type ContingencyScopeType = 'global' | 'vlan';
-type ResolverProvider = 'google' | 'cloudflare' | 'quad9';
+type ResolverProvider = 'google' | 'cloudflare' | 'quad9' | 'opendns';
 
 type VlanRow = {
     vlan_id: number;
@@ -19,15 +19,24 @@ type VlanRow = {
     monitoring_enabled: boolean;
 };
 
+type VipBypassRow = {
+    ip: string;
+    vlan_id: number | null;
+};
+
 const BEGIN_MARKER = '# BEGIN DNS_EMERGENCY_V8';
 const END_MARKER = '# END DNS_EMERGENCY_V8';
+const EARLY_BEGIN_MARKER = '# BEGIN BECKERCORP_EARLY_FORWARD';
+const EARLY_END_MARKER = '# END BECKERCORP_EARLY_FORWARD';
 const CHAIN_NAME = 'DNS_EMERGENCY_V8';
 const DEFAULT_PROVIDERS: ResolverProvider[] = ['google', 'cloudflare', 'quad9'];
+const PERMANENT_WORK_DNS_PROVIDERS: ResolverProvider[] = ['opendns'];
 
 const RESOLVER_CATALOG: Record<ResolverProvider, { label: string; addresses: string[] }> = {
     google: { label: 'Google Public DNS', addresses: ['8.8.8.8', '8.8.4.4'] },
     cloudflare: { label: 'Cloudflare', addresses: ['1.1.1.1', '1.0.0.1'] },
     quad9: { label: 'Quad9 Secure', addresses: ['9.9.9.9', '149.112.112.112'] },
+    opendns: { label: 'OpenDNS / Cisco Umbrella', addresses: ['208.67.222.222', '208.67.220.220'] },
 };
 
 const unique = (items: string[]) => Array.from(new Set(items.filter(Boolean)));
@@ -35,7 +44,7 @@ const normalizeProviders = (items: unknown): ResolverProvider[] => {
     const requested = Array.isArray(items) ? items : [];
     const normalized = requested
         .map((item) => String(item || '').trim().toLowerCase())
-        .filter((item): item is ResolverProvider => item === 'google' || item === 'cloudflare' || item === 'quad9');
+        .filter((item): item is ResolverProvider => item === 'google' || item === 'cloudflare' || item === 'quad9' || item === 'opendns');
     return normalized.length ? Array.from(new Set(normalized)) : [...DEFAULT_PROVIDERS];
 };
 
@@ -215,7 +224,29 @@ class DnsContingencyService {
         return filterOperationalVlans(rows as VlanRow[]);
     }
 
-    async listVipBypassCidrs() {
+    async listConfiguredVlans() {
+        const { rows } = await pool.query(
+            `
+                SELECT vlan_id, label, interface_name, subnet_cidr, blocking_enabled, monitoring_enabled
+                FROM vlan_policies
+                WHERE interface_name IS NOT NULL
+                  AND TRIM(interface_name) <> ''
+                ORDER BY vlan_id ASC
+            `,
+        ).catch(() => ({ rows: [] as VlanRow[] }));
+
+        const seen = new Set<string>();
+        return (rows as VlanRow[])
+            .filter((row) => row.interface_name && row.subnet_cidr)
+            .filter((row) => {
+                const key = String(row.interface_name).trim();
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
+    async listVipBypassRows(): Promise<VipBypassRow[]> {
         const { rows } = await pool.query(
             `
                 SELECT host(ip) AS ip, vlan_id
@@ -226,9 +257,24 @@ class DnsContingencyService {
             `,
         ).catch(() => ({ rows: [] as Array<{ ip: string; vlan_id: number | null }> }));
 
-        return unique(rows
+        const seen = new Set<string>();
+        return rows
             .filter((row) => isManagedBlockingVlan(row.vlan_id) || isManagedBlockingIp(row.ip))
-            .map((row) => String(row.ip || '').trim()));
+            .map((row) => ({
+                ip: String(row.ip || '').trim(),
+                vlan_id: row.vlan_id === null || row.vlan_id === undefined ? null : Number(row.vlan_id),
+            }))
+            .filter((row) => {
+                if (!row.ip) return false;
+                const key = `${row.ip}|${row.vlan_id || ''}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
+    async listVipBypassCidrs() {
+        return unique((await this.listVipBypassRows()).map((row) => row.ip));
     }
 
     getResolverAddresses(providers: ResolverProvider[]) {
@@ -238,6 +284,24 @@ class DnsContingencyService {
     stripManagedBlock(content: string) {
         const pattern = new RegExp(`${BEGIN_MARKER}[\\s\\S]*?${END_MARKER}\\n?`, 'g');
         return content.replace(pattern, '').trimEnd();
+    }
+
+    stripEarlyManagedBlock(content: string) {
+        const managedPattern = new RegExp(`\\n?${EARLY_BEGIN_MARKER}[\\s\\S]*?${EARLY_END_MARKER}\\n?`, 'g');
+        const legacyManualPattern = /\n?# BeckerCorp VIPs: bypass total antes dos bloqueios comuns\.[\s\S]*?# quickly process packets for which we already have a connection/g;
+        return content
+            .replace(managedPattern, '\n')
+            .replace(legacyManualPattern, '\n# quickly process packets for which we already have a connection')
+            .replace(/\n{3,}/g, '\n\n');
+    }
+
+    injectEarlyManagedBlock(content: string, block: string) {
+        const stripped = this.stripEarlyManagedBlock(content);
+        const anchor = '# quickly process packets for which we already have a connection';
+        if (stripped.includes(anchor)) {
+            return stripped.replace(anchor, `${block}\n${anchor}`);
+        }
+        return `${stripped.trimEnd()}\n\n${block}\n`;
     }
 
     injectManagedBlock(content: string, block: string) {
@@ -256,9 +320,29 @@ class DnsContingencyService {
         });
     }
 
-    async applyFirewallBlock(block: string) {
+    buildEarlyFirewallBlock(vipBypassRows: VipBypassRow[]) {
+        const vipIps = unique(vipBypassRows.map((vip) => vip.ip));
+        const lines = [
+            EARLY_BEGIN_MARKER,
+            '# VIPs sempre saem antes dos bloqueios comuns; nao exige DNS externo.',
+            ...vipIps.map((ip) => `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -j ACCEPT`),
+            '',
+            '# WhatsApp/Web WhatsApp compartilha infraestrutura Meta; nao bloquear faixas Meta ou portas push aqui.',
+            '# Redes sociais ficam bloqueadas por Unbound/RPZ e ACLs de dominio para preservar WhatsApp.',
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 149.154.160.0/20 -j DROP`,
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.4.0/22 -j DROP`,
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.8.0/21 -j DROP`,
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.16.0/21 -j DROP`,
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.56.0/22 -j DROP`,
+            EARLY_END_MARKER,
+        ];
+        return lines.join('\n');
+    }
+
+    async applyFirewallBlock(block: string, vipBypassRows: VipBypassRow[]) {
         const original = await this.readFirewallConfig();
-        const candidate = this.injectManagedBlock(original, block);
+        const withEarlyBlock = this.injectEarlyManagedBlock(original, this.buildEarlyFirewallBlock(vipBypassRows));
+        const candidate = this.injectManagedBlock(withEarlyBlock, block);
         await this.validateFirewallConfig(candidate);
         fs.writeFileSync(this.blockFile, candidate);
         await runCommand('ufw', ['reload'], { elevated: true });
@@ -276,18 +360,34 @@ class DnsContingencyService {
     async buildFirewallBlock() {
         const state = await this.getStateRow();
         const operationalVlans = await this.listOperationalVlans();
-        const vipBypassCidrs = await this.listVipBypassCidrs();
+        const configuredVlans = await this.listConfiguredVlans();
+        const vipBypassRows = await this.listVipBypassRows();
         const active = state.status === 'active';
         const scopedVlans = active
             ? await this.getScopedVlans(state.scope_type as ContingencyScopeType, normalizeVlanIds(state.vlan_ids))
             : [];
         const resolverAddresses = active ? this.getResolverAddresses(normalizeProviders(state.providers)) : [];
+        const permanentWorkDnsResolvers = this.getResolverAddresses(PERMANENT_WORK_DNS_PROVIDERS);
         const lines = [
             BEGIN_MARKER,
             '*filter',
             `:${CHAIN_NAME} - [0:0]`,
             `-A ufw-before-forward -j ${CHAIN_NAME}`,
         ];
+
+        for (const vlan of operationalVlans) {
+            const vlanVips = vipBypassRows.filter((vip) => !vip.vlan_id || vip.vlan_id === vlan.vlan_id);
+            for (const vip of vlanVips) {
+                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -s ${vip.ip} -o ${env.wanInterface} -j ACCEPT`);
+            }
+        }
+
+        for (const vlan of configuredVlans) {
+            for (const resolver of permanentWorkDnsResolvers) {
+                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -o ${env.wanInterface} -d ${resolver} -p udp --dport 53 -j ACCEPT`);
+                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -o ${env.wanInterface} -d ${resolver} -p tcp --dport 53 -j ACCEPT`);
+            }
+        }
 
         for (const vlan of scopedVlans) {
             for (const resolver of resolverAddresses) {
@@ -297,9 +397,10 @@ class DnsContingencyService {
         }
 
         for (const vlan of operationalVlans) {
-            for (const vipCidr of vipBypassCidrs) {
-                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -s ${vipCidr} -o ${env.wanInterface} -p udp --dport 53 -j ACCEPT`);
-                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -s ${vipCidr} -o ${env.wanInterface} -p tcp --dport 53 -j ACCEPT`);
+            const vlanVips = vipBypassRows.filter((vip) => !vip.vlan_id || vip.vlan_id === vlan.vlan_id);
+            for (const vip of vlanVips) {
+                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -s ${vip.ip} -o ${env.wanInterface} -p udp --dport 53 -j ACCEPT`);
+                lines.push(`-A ${CHAIN_NAME} -i ${vlan.interface_name} -s ${vip.ip} -o ${env.wanInterface} -p tcp --dport 53 -j ACCEPT`);
             }
         }
 
@@ -316,7 +417,8 @@ class DnsContingencyService {
 
     async ensureFirewallState() {
         const block = await this.buildFirewallBlock();
-        return this.applyFirewallBlock(block);
+        const vipBypassRows = await this.listVipBypassRows();
+        return this.applyFirewallBlock(block, vipBypassRows);
     }
 
     async verifyRuntime() {
@@ -401,6 +503,7 @@ class DnsContingencyService {
             providers,
             provider_labels: providers.map((provider) => this.providerLabels[provider]),
             resolvers: activeResolvers,
+            permanent_work_dns_resolvers: this.getResolverAddresses(PERMANENT_WORK_DNS_PROVIDERS),
             activated_at: state.activated_at,
             expires_at: state.expires_at,
             deactivated_at: state.deactivated_at,

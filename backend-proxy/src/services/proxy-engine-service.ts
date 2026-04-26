@@ -245,11 +245,10 @@ export class ProxyEngineService {
             '',
             '# Ordem de precedência no proxy complementar.',
             'http_access deny !allowed_clients',
-            managedClientCidrs.length ? 'http_access allow managed_module_clients proxy_whitelist' : 'http_access allow proxy_whitelist',
         );
 
         if (ipBypassEntries.length > 0) {
-            lines.splice(lines.length - 1, 0, 'http_access allow ip_bypass');
+            lines.push('http_access allow ip_bypass');
         }
 
         for (const vlan of vlanAcls.filter((row: any) => !row.exempt && row.blocking_enabled)) {
@@ -262,6 +261,7 @@ export class ProxyEngineService {
         }
 
         lines.push(
+            managedClientCidrs.length ? 'http_access allow managed_module_clients proxy_whitelist' : 'http_access allow proxy_whitelist',
             managedClientCidrs.length ? 'http_access deny managed_module_clients proxy_blocklist' : 'http_access deny proxy_blocklist',
             'http_access allow allowed_clients',
             'http_access deny all',

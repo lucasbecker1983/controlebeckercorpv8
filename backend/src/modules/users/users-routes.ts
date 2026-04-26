@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { pool } from '../../config/db';
-import bcrypt from 'bcrypt';
+import { authSecurityService } from '../auth/auth-security-service';
 
 const router = Router();
 
@@ -24,7 +24,7 @@ router.post('/', async (req, res) => {
 
     try {
         // Gera Hash compatível com o módulo de Auth
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await authSecurityService.hashPassword(password);
         
         await pool.query(
             "INSERT INTO app_users (display_name, username, password_hash, role) VALUES ($1, $2, $3, $4)",
@@ -45,7 +45,7 @@ router.post('/update', async (req, res) => {
     
     try {
         if (password) {
-            const hash = await bcrypt.hash(password, 10);
+            const hash = await authSecurityService.hashPassword(password);
             await pool.query(
                 "UPDATE app_users SET display_name=$1, username=$2, password_hash=$3, role=$4 WHERE id=$5",
                 [name, username, hash, role, id]

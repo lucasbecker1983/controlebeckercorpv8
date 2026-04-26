@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { ArrowRight, Building2, Lock, ShieldAlert, ShieldCheck, User } from 'lucide-react';
-import { api } from '../services/api';
+import { api, resetAuthInvalidation } from '../services/api';
 import { motion } from 'framer-motion';
+import { resetAuthFetchInvalidation } from '../services/authFetch';
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -12,14 +13,26 @@ export default function Login({ onLogin }) {
   const handleLogin = async (e) => {
     e.preventDefault(); setLoading(true); setError('');
     try {
+      resetAuthInvalidation();
+      resetAuthFetchInvalidation();
+      localStorage.removeItem('becker_token');
+      localStorage.removeItem('becker_user');
       const res = await api.post('/api/auth/login', { username, password });
-      if (res.data.token) {
-        localStorage.setItem('becker_token', res.data.token);
-        localStorage.setItem('becker_user', JSON.stringify(res.data.user));
-        onLogin(res.data.token, res.data.user);
-        window.location.href = '/';
+      const token = res.data?.accessToken || res.data?.token || '';
+      if (!res.data?.user || !token) {
+        throw new Error('login-incompleto');
       }
-    } catch (err) { setError('Credenciais inválidas. Acesso negado.'); }
+
+      resetAuthInvalidation();
+      resetAuthFetchInvalidation();
+      localStorage.setItem('becker_token', token);
+      localStorage.setItem('becker_user', JSON.stringify(res.data.user));
+      onLogin(res.data.user);
+    } catch (err) {
+      localStorage.removeItem('becker_token');
+      localStorage.removeItem('becker_user');
+      setError('Sessão não iniciada. Verifique backend/proxy.');
+    }
     finally { setLoading(false); }
   };
 

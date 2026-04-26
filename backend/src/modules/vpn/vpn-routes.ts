@@ -5,10 +5,19 @@ import { Pool } from 'pg';
 const router = Router();
 const pool = new Pool({ connectionString: 'postgres://postgres:becker_admin_secure@localhost:5432/controlebeckercorp_v8' });
 
+const respondVpnError = (res: any, area: string, error: unknown) => {
+    console.error(`[VPN MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 // Listar Peers
 router.get('/', async (req, res) => {
-    try { const r = await pool.query("SELECT * FROM vpn_wg_peers ORDER BY id ASC"); res.json(r.rows); } 
-    catch { res.json([]); }
+    try {
+        const r = await pool.query("SELECT * FROM vpn_wg_peers ORDER BY id ASC");
+        res.json(r.rows);
+    } catch (error) {
+        respondVpnError(res, 'peers VPN', error);
+    }
 });
 
 // Criar Peer
@@ -33,7 +42,9 @@ router.post('/create', async (req, res) => {
         // await execCmd(`wg set wg0 peer ${pub} allowed-ips ${ip}/32`);
 
         res.json({ success: true, config });
-    } catch (e) { res.status(500).json({ error: "Erro ao criar VPN Peer" }); }
+    } catch (error) {
+        respondVpnError(res, 'criação de peer VPN', error);
+    }
 });
 
 // Remover Peer
@@ -41,7 +52,9 @@ router.post('/delete', async (req, res) => {
     try {
         await pool.query("DELETE FROM vpn_wg_peers WHERE id=$1", [req.body.id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao remover" }); }
+    } catch (error) {
+        respondVpnError(res, 'remoção de peer VPN', error);
+    }
 });
 
 export default router;

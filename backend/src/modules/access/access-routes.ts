@@ -4,6 +4,11 @@ import { pool } from '../../config/db';
 
 const router = Router();
 
+const respondAccessError = (res: any, area: string, error: unknown) => {
+    console.error(`[ACCESS MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 // DEFINIÇÃO EXPLÍCITA DAS REDES (CIDR)
 const TARGET_SUBNETS = [
     '192.168.10.0/24', // VLAN 10
@@ -27,7 +32,12 @@ const enforceBlock = async (type: string, value: string, add: boolean) => {
 
 // --- ROTAS CRUD (MANTER IGUAL) ---
 router.get('/', async (req, res) => {
-    try { const r = await pool.query("SELECT * FROM net_blocklist ORDER BY created_at DESC"); res.json(r.rows); } catch { res.json([]); }
+    try {
+        const r = await pool.query("SELECT * FROM net_blocklist ORDER BY created_at DESC");
+        res.json(r.rows);
+    } catch (error) {
+        respondAccessError(res, 'lista de bloqueios', error);
+    }
 });
 
 router.post('/block', async (req, res) => {
@@ -36,7 +46,9 @@ router.post('/block', async (req, res) => {
         await pool.query("INSERT INTO net_blocklist (target_type, target_value, vendor, reason) VALUES ($1, $2, $3, $4) ON CONFLICT (target_value) DO NOTHING", [type, value, vendor || 'Manual', reason || 'Admin']);
         await enforceBlock(type, value, true);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro Block" }); }
+    } catch (error) {
+        respondAccessError(res, 'bloqueio de alvo', error);
+    }
 });
 
 router.post('/unblock', async (req, res) => {
@@ -45,7 +57,9 @@ router.post('/unblock', async (req, res) => {
         await pool.query("DELETE FROM net_blocklist WHERE id=$1", [id]);
         await enforceBlock(type, value, false);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro Unblock" }); }
+    } catch (error) {
+        respondAccessError(res, 'desbloqueio de alvo', error);
+    }
 });
 
 // --- SCANNER NMAP (AGRESSIVO E PRECISO) ---

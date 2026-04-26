@@ -6,6 +6,11 @@ import { env } from '../../config/env';
 
 const router = Router();
 
+const respondConnectivityError = (res: any, area: string, error: unknown) => {
+    console.error(`[CONNECTIVITY MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 // VPN
 router.post('/vpn/create', async (req, res) => {
     const { name } = req.body;
@@ -38,7 +43,9 @@ AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`;
 
         res.json({ success: true, config });
-    } catch (e) { res.status(500).json({ error: "Erro VPN" }); }
+    } catch (error) {
+        respondConnectivityError(res, 'criação de credencial VPN', error);
+    }
 });
 
 router.post('/vpn/delete', async (req, res) => {
@@ -51,7 +58,9 @@ router.post('/vpn/delete', async (req, res) => {
         }
         await pool.query("DELETE FROM vpn_wg_peers WHERE id=$1", [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro Delete VPN" }); }
+    } catch (error) {
+        respondConnectivityError(res, 'remoção de credencial VPN', error);
+    }
 });
 
 router.post('/vpn/download', async (req, res) => {
@@ -72,7 +81,9 @@ Endpoint = ${env.appDomain}:51820
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25`;
         res.json({ success: true, config, filename: `vpn-${p.name}.conf` });
-    } catch (e) { res.status(500).json({ error: "Erro Download" }); }
+    } catch (error) {
+        respondConnectivityError(res, 'download de credencial VPN', error);
+    }
 });
 
 // STORAGE
@@ -92,7 +103,9 @@ router.post('/storage/create', async (req, res) => {
         }
         await pool.query("INSERT INTO sys_ftp_users (username, path, has_smb) VALUES ($1, $2, $3)", [username, path, has_smb]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro User" }); }
+    } catch (error) {
+        respondConnectivityError(res, 'criação de usuário de storage', error);
+    }
 });
 
 router.post('/storage/delete', async (req, res) => {
@@ -102,15 +115,25 @@ router.post('/storage/delete', async (req, res) => {
         await execCmd(`sudo userdel "${username}"`).catch(()=>{});
         await pool.query("DELETE FROM sys_ftp_users WHERE id=$1", [id]);
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro Delete User" }); }
+    } catch (error) {
+        respondConnectivityError(res, 'remoção de usuário de storage', error);
+    }
 });
 
 router.get('/list', async (req, res) => {
-    const v = await pool.query("SELECT * FROM vpn_wg_peers ORDER BY id DESC");
-    const s = await pool.query("SELECT * FROM sys_ftp_users ORDER BY id DESC");
-    const vs = (await execCmd(`systemctl is-active ${env.wireguardService}`)).trim() === 'active';
-    const ss = (await execCmd("systemctl is-active smbd")).trim() === 'active';
-    res.json({ vpn: v.rows, storage: s.rows, status: { vpn: vs, storage: ss } });
+    try {
+        const [v, s, vpnStatusRaw, storageStatusRaw] = await Promise.all([
+            pool.query("SELECT * FROM vpn_wg_peers ORDER BY id DESC"),
+            pool.query("SELECT * FROM sys_ftp_users ORDER BY id DESC"),
+            execCmd(`systemctl is-active ${env.wireguardService}`),
+            execCmd("systemctl is-active smbd"),
+        ]);
+        const vs = vpnStatusRaw.trim() === 'active';
+        const ss = storageStatusRaw.trim() === 'active';
+        res.json({ vpn: v.rows, storage: s.rows, status: { vpn: vs, storage: ss } });
+    } catch (error) {
+        respondConnectivityError(res, 'inventário de conectividade', error);
+    }
 });
 
 export default router;

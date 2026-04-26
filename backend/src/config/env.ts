@@ -19,7 +19,7 @@ export const env = {
     corePort: toNumber(process.env.CORE_PORT, 6778),
     databaseUrl: process.env.DATABASE_URL || 'postgres://postgres:change_me@127.0.0.1:5432/controlebeckercorp_v8',
     jwtSecret: process.env.JWT_SECRET || 'change_me',
-    jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
+    jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30m',
     corsOrigin: process.env.CORS_ORIGIN || '*',
     projectRoot: process.env.PROJECT_ROOT || '/opt/controlebeckercorp-v8',
     dbName: process.env.DB_NAME || 'controlebeckercorp_v8',

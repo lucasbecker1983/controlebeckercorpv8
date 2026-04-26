@@ -5,6 +5,7 @@ import { env } from '../../config/env';
 
 const proxyablePrefixes = [
     '/api/bloqueios-liberacoes',
+    '/api/data-governance',
     '/api/proxy',
     '/api/cert',
     '/api/dns/radar',
@@ -24,7 +25,7 @@ const shouldProxy = (path: string) => proxyablePrefixes.some((prefix) => path ==
 
 const sanitizeHeaders = (req: Request, bodyBuffer?: Buffer) => {
     const headers: Record<string, string> = {};
-    const forwardable = ['authorization', 'content-type', 'accept', 'x-user', 'user-agent'];
+    const forwardable = ['authorization', 'content-type', 'accept', 'x-user', 'user-agent', 'cookie'];
 
     for (const headerName of forwardable) {
         const value = req.headers[headerName];

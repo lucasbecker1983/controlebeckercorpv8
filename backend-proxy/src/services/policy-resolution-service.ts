@@ -136,9 +136,9 @@ export class PolicyResolutionService {
         const blockGlobal = managedClient ? bestMatch(normalizedDomain, state.blocks.filter((row) => row.scope_type === 'global')) : null;
         const blockVlan = managedClient ? bestMatch(normalizedDomain, state.blocks.filter((row) => row.scope_type === 'vlan' && Number(row.scope_value) === vlanId)) : null;
         const matchedException = state.exceptions.find((row) => cidrContainsIp(row.ip, String(clientIp || ''))) || null;
-        const blockedRule = blockGlobal || blockVlan;
+        const blockedRule = blockVlan || blockGlobal;
 
-        if (matchedException && (blockedRule || matchedException.bypass_total)) {
+        if (matchedException && matchedException.bypass_total) {
             return {
                 normalizedDomain,
                 vlan_id: vlanId,
@@ -152,17 +152,17 @@ export class PolicyResolutionService {
             } satisfies ResolvedPolicyDecision;
         }
 
-        if (allowGlobal) {
+        if (matchedException && blockedRule) {
             return {
                 normalizedDomain,
                 vlan_id: vlanId,
                 vlan_label: vlan?.label || null,
-                action: 'allowed',
-                policy_source: 'global',
-                category: allowGlobal.category || null,
-                rule_id: allowGlobal.id,
-                matched_rule: `release_policies:${allowGlobal.id}`,
-                matched_policy_kind: 'allow',
+                action: 'bypassed',
+                policy_source: 'vip',
+                category: blockedRule.category || null,
+                rule_id: matchedException.id,
+                matched_rule: `policy_exceptions:${matchedException.id}`,
+                matched_policy_kind: 'exception',
             } satisfies ResolvedPolicyDecision;
         }
 
@@ -180,20 +180,6 @@ export class PolicyResolutionService {
             } satisfies ResolvedPolicyDecision;
         }
 
-        if (blockGlobal) {
-            return {
-                normalizedDomain,
-                vlan_id: vlanId,
-                vlan_label: vlan?.label || null,
-                action: 'blocked',
-                policy_source: 'global',
-                category: blockGlobal.category || null,
-                rule_id: blockGlobal.id,
-                matched_rule: `blocking_policies:${blockGlobal.id}`,
-                matched_policy_kind: 'block',
-            } satisfies ResolvedPolicyDecision;
-        }
-
         if (blockVlan) {
             return {
                 normalizedDomain,
@@ -204,6 +190,34 @@ export class PolicyResolutionService {
                 category: blockVlan.category || null,
                 rule_id: blockVlan.id,
                 matched_rule: `blocking_policies:${blockVlan.id}`,
+                matched_policy_kind: 'block',
+            } satisfies ResolvedPolicyDecision;
+        }
+
+        if (allowGlobal) {
+            return {
+                normalizedDomain,
+                vlan_id: vlanId,
+                vlan_label: vlan?.label || null,
+                action: 'allowed',
+                policy_source: 'global',
+                category: allowGlobal.category || null,
+                rule_id: allowGlobal.id,
+                matched_rule: `release_policies:${allowGlobal.id}`,
+                matched_policy_kind: 'allow',
+            } satisfies ResolvedPolicyDecision;
+        }
+
+        if (blockGlobal) {
+            return {
+                normalizedDomain,
+                vlan_id: vlanId,
+                vlan_label: vlan?.label || null,
+                action: 'blocked',
+                policy_source: 'global',
+                category: blockGlobal.category || null,
+                rule_id: blockGlobal.id,
+                matched_rule: `blocking_policies:${blockGlobal.id}`,
                 matched_policy_kind: 'block',
             } satisfies ResolvedPolicyDecision;
         }

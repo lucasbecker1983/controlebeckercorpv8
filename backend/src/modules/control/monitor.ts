@@ -4,7 +4,8 @@ import { pool } from '../../config/db';
 
 const CRITICAL_SERVICES = [
     'squid', 'postgresql', 'nginx', 'ufw', 'ssh', 
-    'fail2ban', 'wg-quick@wg0', 'isc-dhcp-server', 'smbd', 'unbound'
+    'fail2ban', 'wg-quick@wg0', 'isc-dhcp-server', 'smbd', 'unbound',
+    'clamav-daemon', 'clamav-freshclam', 'clamav-clamonacc'
 ];
 
 const CHECK_INTERVAL = 10 * 60 * 1000;    // 10 Minutos

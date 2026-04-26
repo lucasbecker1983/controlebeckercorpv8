@@ -7,6 +7,16 @@ import { env } from '../config/env';
 import { ensureProxySchema } from './proxy-schema-service';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
 import { policyResolutionService } from './policy-resolution-service';
+import { extractVlanIdFromIp } from './blocking-release-scope';
+
+const normalizeRadarScope = async (clientIp: string | null | undefined, fallbackVlanId: number | null | undefined) => {
+    const vlan = await policyResolutionService.resolveVlanByIp(clientIp);
+    const vlanId = vlan?.vlan_id || fallbackVlanId || null;
+    return {
+        vlanKey: vlanId ? `VLAN${vlanId}` : null,
+        interfaceName: vlan?.interface_name || null,
+    };
+};
 
 const LOG_FILE = '/var/log/squid/access.log';
 const LOCAL_NOISE = new Set(['127.0.0.1', '::1', '']);
@@ -54,6 +64,11 @@ export const parseSquidAccessLine = (line: string) => {
 };
 
 const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+const inferVlanKey = (clientIp: string | null | undefined, storedVlan: string | null | undefined) => {
+    const inferred = extractVlanIdFromIp(clientIp);
+    if (inferred !== null) return `VLAN${inferred}`;
+    return String(storedVlan || '').trim() || 'Sem classificação';
+};
 
 export class DnsLoggerService {
     readonly pidFile = path.join(env.proxyStateDir, 'dns-logger.pid');
@@ -69,6 +84,7 @@ export class DnsLoggerService {
         const parsed = parseSquidAccessLine(line);
         if (!parsed) return;
         const resolved = await policyResolutionService.resolveProxyDecision(parsed.clientIp, parsed.domain);
+        const radarScope = await normalizeRadarScope(parsed.clientIp, resolved.vlan_id);
         const fingerprint = sha256([
             parsed.clientIp,
             parsed.domain,
@@ -111,26 +127,28 @@ export class DnsLoggerService {
                 )
                 VALUES (
                     NOW(),
-                    'VLAN10',
-                    'enp6s0.10',
                     $1,
                     $2,
-                    'squid-access',
                     $3,
                     $4,
+                    'squid-access',
                     $5,
                     $6,
-                    $7::jsonb
+                    $7,
+                    $8,
+                    $9::jsonb
                 )
             `,
             [
+                radarScope.vlanKey,
+                radarScope.interfaceName,
                 parsed.clientIp,
                 parsed.domain,
                 parsed.evidence,
                 parsed.hierarchyStatus,
                 parsed.blocked,
                 parsed.source,
-                JSON.stringify(parsed),
+                JSON.stringify({ ...parsed, resolved, radar_scope: radarScope }),
             ],
         );
 
@@ -282,7 +300,7 @@ export class DnsLoggerService {
 
         if (vlan && vlan !== 'todas') {
             params.push(vlan);
-            filters.push(`vlan_id = $${params.length}`);
+            filters.push(`COALESCE(NULLIF(vlan_id, ''), CONCAT('VLAN', CAST(substring(client_ip from '^192\\.168\\.([0-9]{1,3})\\.') AS integer))) = $${params.length}`);
         }
 
         const { rows } = await pool.query(
@@ -311,7 +329,7 @@ export class DnsLoggerService {
             entries: rows.map((row) => ({
                 id: row.id,
                 timestamp: row.occurred_at,
-                vlan: row.vlan_id || 'VLAN10',
+                vlan: inferVlanKey(row.client_ip, row.vlan_id),
                 client_ip: row.client_ip,
                 domain: row.domain,
                 query_type: row.event_type,

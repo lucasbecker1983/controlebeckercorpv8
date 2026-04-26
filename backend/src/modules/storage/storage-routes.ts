@@ -7,6 +7,11 @@ const router = Router();
 const pool = new Pool({ connectionString: 'postgres://postgres:becker_admin_secure@localhost:5432/controlebeckercorp_v8' });
 const SMB_CONF = "/etc/samba/smb.conf";
 
+const respondStorageError = (res: any, area: string, error: unknown) => {
+    console.error(`[STORAGE MODULE] Falha em ${area}:`, error);
+    return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
 // Sincroniza Banco -> smb.conf
 const syncSamba = async () => {
     try {
@@ -25,8 +30,12 @@ const syncSamba = async () => {
 };
 
 router.get('/', async (req, res) => {
-    try { const r = await pool.query("SELECT * FROM storage_smb_shares"); res.json(r.rows); } 
-    catch { res.json([]); }
+    try {
+        const r = await pool.query("SELECT * FROM storage_smb_shares");
+        res.json(r.rows);
+    } catch (error) {
+        respondStorageError(res, 'shares SMB', error);
+    }
 });
 
 router.post('/add', async (req, res) => {
@@ -36,7 +45,9 @@ router.post('/add', async (req, res) => {
         await pool.query("INSERT INTO storage_smb_shares (name, path, public, writable) VALUES ($1, $2, $3, $4)", [name, path, isPublic, isWritable]);
         await syncSamba();
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao criar share" }); }
+    } catch (error) {
+        respondStorageError(res, 'criação de share SMB', error);
+    }
 });
 
 router.post('/delete', async (req, res) => {
@@ -44,7 +55,9 @@ router.post('/delete', async (req, res) => {
         await pool.query("DELETE FROM storage_smb_shares WHERE id=$1", [req.body.id]);
         await syncSamba();
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: "Erro ao deletar" }); }
+    } catch (error) {
+        respondStorageError(res, 'remoção de share SMB', error);
+    }
 });
 
 export default router;

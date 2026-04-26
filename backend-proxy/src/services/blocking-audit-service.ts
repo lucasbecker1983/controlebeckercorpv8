@@ -10,8 +10,20 @@ type AuditFilters = Record<string, any>;
 
 const DHCP_LEASES_FILE = process.env.DHCP_LEASES_FILE || '/var/lib/dhcp/dhcpd.leases';
 const UNKNOWN_HOSTNAME = 'hostname não identificado';
+const REPORT_ORG = 'Secretaria de Comércio, Indústria, Serviços e Inovação';
+const REPORT_ENTITY = 'Prefeitura Municipal de Jacarezinho - PR';
+const REPORT_SYSTEM = 'SGCG - Sistema de Governança e Controle Governamental';
 
 const normalizeText = (value: unknown) => String(value || '').trim().toLowerCase();
+const INTERNAL_DOMAIN_PATTERNS = [
+    /\.vlan\d+\.local$/i,
+];
+
+const isInternalReportDomain = (value: unknown) => {
+    const domain = normalizeText(value);
+    if (!domain) return false;
+    return INTERNAL_DOMAIN_PATTERNS.some((pattern) => pattern.test(domain));
+};
 
 const periodToInterval = (period: string) => {
     if (period === '7d') return '7 days';
@@ -141,6 +153,10 @@ export class BlockingAuditService {
         }));
     }
 
+    private removeInternalDomains(events: any[]) {
+        return events.filter((event) => !isInternalReportDomain(event.domain));
+    }
+
     async listEvents(filters: AuditFilters = {}) {
         await this.ensureReady();
         const params: any[] = [];
@@ -225,7 +241,8 @@ export class BlockingAuditService {
         );
 
         const enriched = await this.enrichHostnames(rows, filters.hostname);
-        const withDurations = this.applyDuration(enriched);
+        const withoutInternalDomains = this.removeInternalDomains(enriched);
+        const withDurations = this.applyDuration(withoutInternalDomains);
         const events = withDurations.sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime());
 
         const summary = {
@@ -305,7 +322,8 @@ export class BlockingAuditService {
             params,
         );
 
-        const events = await this.enrichHostnames(rows);
+        const enriched = await this.enrichHostnames(rows);
+        const events = this.removeInternalDomains(enriched);
         const summary = {
             window_minutes: windowMinutes,
             total: events.length,
@@ -330,8 +348,9 @@ export class BlockingAuditService {
 
     private drawPdfHeader(doc: PDFKit.PDFDocument, title: string, subtitle: string) {
         doc.rect(0, 0, doc.page.width, 88).fill('#0f172a');
-        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text('Controle Becker Corp - V8', 42, 26);
-        doc.fillColor('#cbd5e1').font('Helvetica').fontSize(9).text('Bloqueios & Liberações', 42, 52);
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(14).text(REPORT_ORG, 42, 20, { width: 430 });
+        doc.fillColor('#cbd5e1').font('Helvetica').fontSize(9).text(REPORT_ENTITY, 42, 40);
+        doc.fillColor('#cbd5e1').font('Helvetica').fontSize(9).text(REPORT_SYSTEM, 42, 54);
         doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(17).text(title, 42, 116);
         doc.fillColor('#475569').font('Helvetica').fontSize(10).text(subtitle, 42, 140, { width: 510 });
         doc.moveTo(42, 164).lineTo(553, 164).strokeColor('#e2e8f0').stroke();
@@ -341,16 +360,17 @@ export class BlockingAuditService {
         doc.moveTo(42, 760).lineTo(553, 760).strokeColor('#e2e8f0').stroke();
         doc.fillColor('#64748b').font('Helvetica').fontSize(8)
             .text(`Gerado em ${formatDate(new Date())}`, 42, 772)
+            .text(`${REPORT_ORG} • ${REPORT_ENTITY}`, 180, 772, { width: 220, align: 'center' })
             .text(`Página ${page}`, 500, 772, { align: 'right', width: 53 });
     }
 
     async exportPdf(filters: AuditFilters = {}) {
         const data = await this.listEvents({ ...filters, limit: filters.limit || 600 });
         const title = filters.domain
-            ? `Relatório LGPD por domínio: ${filters.domain}`
+            ? `Relatório governamental de acessos por domínio: ${filters.domain}`
             : filters.ip || filters.client_ip
-                ? `Relatório LGPD por IP: ${filters.ip || filters.client_ip}`
-                : 'Relatório LGPD de acessos';
+                ? `Relatório governamental de acessos por IP: ${filters.ip || filters.client_ip}`
+                : 'Relatório governamental de acessos';
 
         return new Promise<Buffer>((resolve, reject) => {
             const doc = new PDFDocument({ size: 'A4', margin: 42, bufferPages: true });
@@ -360,7 +380,7 @@ export class BlockingAuditService {
             doc.on('error', reject);
 
             let page = 1;
-            this.drawPdfHeader(doc, title, 'Diagnóstico de quem acessou o quê, com IP, hostname, domínio, ação aplicada, política correspondente e tempo estimado.');
+            this.drawPdfHeader(doc, title, 'Documento institucional para evidenciar acessos observados, decisão aplicada, política correspondente e trilha operacional consolidada.');
 
             doc.fillColor('#334155').font('Helvetica-Bold').fontSize(11).text('Resumo executivo', 42, 184);
             const stats = [
@@ -390,6 +410,11 @@ export class BlockingAuditService {
             doc.fillColor('#475569').font('Helvetica').fontSize(9).text(filterText, 42, y, { width: 510 });
 
             y += 36;
+            doc.fillColor('#334155').font('Helvetica-Bold').fontSize(11).text('Destinatário institucional', 42, y);
+            y += 18;
+            doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`${REPORT_ORG} • ${REPORT_ENTITY}`, 42, y, { width: 510 });
+            y += 28;
+
             const columns = [
                 { label: 'Data/Hora', width: 82 },
                 { label: 'IP / Hostname', width: 104 },

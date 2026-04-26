@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import { pool } from '../config/db';
 import { proxyEngineService } from '../services/proxy-module';
+import { ensureBlockingReleaseSchema } from '../services/blocking-release-schema-service';
+import { runCommand } from '../utils/process';
 
 const router = Router();
 const policyWriteMoved = (_req: any, res: any) => res.status(410).json({
@@ -7,28 +10,150 @@ const policyWriteMoved = (_req: any, res: any) => res.status(410).json({
     owner: 'bloqueios-liberacoes',
 });
 
+const DNS_HEALTH_DOMAIN = 'gov.br';
+const DNS_LATENCY_PROBE_DOMAINS = [
+    'gov.br',
+    'www.gov.br',
+    'planalto.gov.br',
+    'receita.fazenda.gov.br',
+    'dados.gov.br',
+];
+const VLAN_META = new Map<number, { name: string; ip: string }>([
+    [10, { name: 'VLAN 10 (Secretaria)', ip: '192.168.10.1/24' }],
+    [30, { name: 'VLAN 30 (Celulares)', ip: '192.168.30.1/24' }],
+    [40, { name: 'VLAN 40 (CFTV)', ip: '192.168.40.1/24' }],
+    [50, { name: 'VLAN 50 (SINE)', ip: '192.168.50.1/24' }],
+    [70, { name: 'VLAN 70 (Visitantes)', ip: '192.168.70.1/24' }],
+    [80, { name: 'VLAN 80 (VOiP)', ip: '192.168.80.1/24' }],
+]);
+
+const parseUnboundCounter = (raw: string, metric: string) => {
+    const match = raw.match(new RegExp(`${metric}=([\\d.]+)`));
+    return match ? Number(match[1]) : 0;
+};
+
+const getUnboundHealth = async () => {
+    const [service, probe] = await Promise.all([
+        runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true }),
+        runCommand('dig', ['+time=2', '+tries=1', '@127.0.0.1', DNS_HEALTH_DOMAIN, 'A', '+short'], {
+            elevated: true,
+            allowFailure: true,
+        }),
+    ]);
+
+    const isRunning = service.stdout.trim() === 'active';
+    const answers = probe.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+
+    return {
+        is_running: isRunning,
+        is_resolving: answers.length > 0,
+        health_domain: DNS_HEALTH_DOMAIN,
+        probe_answers: answers,
+    };
+};
+
+const getUnboundOperationalStats = async () => {
+    const result = await runCommand('unbound-control', ['stats_noreset'], {
+        elevated: true,
+        allowFailure: true,
+    });
+
+    const raw = result.stdout || '';
+
+    return {
+        total_queries: parseUnboundCounter(raw, 'total\\.num\\.queries'),
+        cache_hits: parseUnboundCounter(raw, 'total\\.num\\.cachehits'),
+        avg_latency: parseUnboundCounter(raw, 'total\\.requestlist\\.avg'),
+    };
+};
+
+const probeLatency = async (domain: string) => {
+    const result = await runCommand('dig', ['+time=2', '+tries=1', '@127.0.0.1', domain, 'A', '+stats'], {
+        elevated: true,
+        allowFailure: true,
+    });
+    const combined = `${result.stdout}\n${result.stderr}`;
+    const match = combined.match(/Query time:\s*(\d+)\s*msec/i);
+    return match ? Number(match[1]) : null;
+};
+
 router.get('/stats', async (_req, res) => {
     try {
-        res.json(await proxyEngineService.dnsLoggerService.stats());
+        const [telemetryResult, unboundResult, statsResult] = await Promise.allSettled([
+            proxyEngineService.dnsLoggerService.stats(),
+            getUnboundHealth(),
+            getUnboundOperationalStats(),
+        ]);
+        const telemetry = telemetryResult.status === 'fulfilled' ? telemetryResult.value : null;
+        const unbound = unboundResult.status === 'fulfilled' ? unboundResult.value : {
+            is_running: false,
+            is_resolving: false,
+            health_domain: DNS_HEALTH_DOMAIN,
+        };
+        const operational = statsResult.status === 'fulfilled' ? statsResult.value : {
+            total_queries: 0,
+            cache_hits: 0,
+            avg_latency: 0,
+        };
+        const telemetryTotal = Number(telemetry?.total_hoje || telemetry?.totalQueries || 0);
+
+        res.json({
+            ...(telemetry || {}),
+            is_running: unbound.is_running,
+            is_resolving: unbound.is_resolving,
+            health_domain: unbound.health_domain,
+            stats: {
+                total_queries: telemetryTotal || operational.total_queries || 0,
+                cache_hits: operational.cache_hits || 0,
+                avg_latency: operational.avg_latency || Number(telemetry?.avgLatency || 0),
+            },
+        });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
 });
 
 router.get('/latency-breakdown', async (_req, res) => {
-    res.json([
-        { name: '< 10ms', value: 0 },
-        { name: '10ms - 50ms', value: 0 },
-        { name: '> 50ms', value: 0 },
-    ]);
+    try {
+        const probeResults = await Promise.allSettled(
+            DNS_LATENCY_PROBE_DOMAINS.map((domain) => probeLatency(domain)),
+        );
+
+        const samples = probeResults
+            .map((result) => (result.status === 'fulfilled' ? result.value : null))
+            .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+
+        const payload = [
+            { name: '< 10ms', value: samples.filter((value) => value < 10).length },
+            { name: '10ms - 50ms', value: samples.filter((value) => value >= 10 && value <= 50).length },
+            { name: '> 50ms', value: samples.filter((value) => value > 50).length },
+        ];
+
+        res.json({
+            generated_at: new Date().toISOString(),
+            probe_domains: DNS_LATENCY_PROBE_DOMAINS,
+            samples_ms: samples,
+            buckets: payload,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 router.get('/status', async (_req, res) => {
     try {
-        const services = await proxyEngineService.getServicesStatus();
+        const [services, unbound] = await Promise.all([
+            proxyEngineService.getServicesStatus(),
+            getUnboundHealth(),
+        ]);
         res.json({
-            unbound_active: true,
+            unbound_active: unbound.is_running,
+            unbound_resolving: unbound.is_resolving,
             logger_active: services.dns_logger_active,
+            health_domain: unbound.health_domain,
         });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -61,19 +186,45 @@ router.post('/radar/clear', async (req, res) => {
 
 router.get('/vlan-summary', async (_req, res) => {
     try {
-        const radar = await proxyEngineService.dnsLoggerService.getRadar(500, 'VLAN10', false);
-        const total = radar.entries.length;
-        const blocked = radar.entries.filter((entry: any) => entry.blocked).length;
-        const uniqueIps = new Set(radar.entries.map((entry: any) => entry.client_ip).filter(Boolean)).size;
-        res.json([
-            {
-                vlan: 'VLAN10',
-                total_queries: total,
-                blocked_queries: blocked,
-                unique_ips: uniqueIps,
-                block_pct: total > 0 ? ((blocked / total) * 100).toFixed(1) : '0.0',
-            },
-        ]);
+        await ensureBlockingReleaseSchema();
+        const { rows } = await pool.query(`
+            SELECT
+                vlan_id,
+                COUNT(*)::int AS total_queries,
+                COUNT(*) FILTER (WHERE action = 'blocked')::int AS blocked_queries,
+                COUNT(DISTINCT client_ip)::int AS unique_ips
+            FROM dns_policy_events
+            WHERE occurred_at >= NOW() - INTERVAL '24 hours'
+              AND client_ip IS NOT NULL
+              AND vlan_id IS NOT NULL
+            GROUP BY vlan_id
+            ORDER BY vlan_id ASC
+        `);
+
+        const rowByVlan = new Map<number, any>(
+            rows.map((row: any) => [Number(row.vlan_id), row]),
+        );
+
+        const payload = Array.from(VLAN_META.entries())
+            .map(([vlanId, meta]) => {
+                const row = rowByVlan.get(vlanId) || {};
+                const totalQueries = Number(row.total_queries || 0);
+                const blockedQueries = Number(row.blocked_queries || 0);
+
+                return {
+                    id: `vlan${vlanId}`,
+                    vlan: `VLAN${vlanId}`,
+                    name: meta.name,
+                    ip: meta.ip,
+                    queries: totalQueries,
+                    total_queries: totalQueries,
+                    blocked_queries: blockedQueries,
+                    unique_ips: Number(row.unique_ips || 0),
+                    block_pct: totalQueries > 0 ? ((blockedQueries / totalQueries) * 100).toFixed(1) : '0.0',
+                };
+            });
+
+        res.json(payload);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }
@@ -101,7 +252,29 @@ router.get('/top-blocked', async (_req, res) => {
 });
 
 router.post('/restart-unbound', async (_req, res) => {
-    res.json({ success: true, message: 'Integração com Unbound permanece preparada pelo backend.' });
+    try {
+        const restart = await runCommand('systemctl', ['restart', 'unbound'], {
+            elevated: true,
+            allowFailure: true,
+        });
+        const health = await getUnboundHealth();
+
+        if (restart.code !== 0 || !health.is_running) {
+            return res.status(500).json({
+                success: false,
+                error: restart.stderr || restart.stdout || 'Falha ao reiniciar o Unbound.',
+                health,
+            });
+        }
+
+        res.json({
+            success: true,
+            message: 'Unbound reiniciado.',
+            health,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 router.post('/reload-rules', async (_req, res) => {

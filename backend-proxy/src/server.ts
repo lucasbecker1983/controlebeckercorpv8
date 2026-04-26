@@ -17,6 +17,7 @@ import dnsRoutes from './routes/dns-routes';
 import vipRoutes from './routes/vip-routes';
 import whitelistRoutes from './routes/whitelist-routes';
 import blockingReleaseRoutes from './routes/blocking-release-routes';
+import dataGovernanceRoutes from './routes/data-governance-routes';
 import { blockingReleaseService } from './services/blocking-release-service';
 import { dnsContingencyService } from './services/dns-contingency-service';
 import { dnsRadarService } from './services/dns-radar-service';
@@ -112,6 +113,7 @@ app.use('/api/dns/vip', vipRoutes);
 app.use('/api/dns/whitelist', whitelistRoutes);
 app.use('/api/dns', dnsRoutes);
 app.use('/api/bloqueios-liberacoes', blockingReleaseRoutes);
+app.use('/api/data-governance', dataGovernanceRoutes);
 
 const options = {
     key: fs.readFileSync(env.letsencryptPrivkey),

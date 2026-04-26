@@ -6,6 +6,21 @@ import { isManagedBlockingVlan } from './blocking-release-scope';
 type PolicyType = 'allow' | 'block';
 type ScopeType = 'global' | 'vlan';
 
+type GovernanceMetadata = {
+    summary: string;
+    legal_basis: string | null;
+    requested_by: string | null;
+    approval_scope: string | null;
+    lifecycle_status: string | null;
+    review_date: string | null;
+    approved_by: string | null;
+    approved_at: string | null;
+    effective_from: string | null;
+    expires_at: string | null;
+    revoked_by: string | null;
+    revoked_at: string | null;
+};
+
 const normalizeDomain = (value: string) => String(value || '')
     .trim()
     .toLowerCase()
@@ -19,6 +34,109 @@ const isValidDomain = (domain: string) => {
     if (!domain || domain.length > 255) return false;
     if (domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) return false;
     return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain);
+};
+
+const normalizeTextKey = (value: string) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+const parseGovernanceText = (value: unknown) => {
+    const raw = String(value || '').trim();
+    if (!raw) return { summary: '', metadata: {} as Record<string, string> };
+    const marker = '\n[Governanca]\n';
+    const [summaryPart, metaPart] = raw.includes(marker)
+        ? raw.split(marker)
+        : [raw, ''];
+    const metadata: Record<string, string> = {};
+    metaPart.split('\n').forEach((line) => {
+        const match = line.match(/^([^:]+):\s*(.+)$/);
+        if (!match) return;
+        metadata[normalizeTextKey(match[1])] = match[2].trim();
+    });
+    return {
+        summary: summaryPart.trim(),
+        metadata,
+    };
+};
+
+const normalizeOptionalText = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    return normalized || null;
+};
+
+const normalizeOptionalTimestamp = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) throw new Error(`Data/hora inválida: ${normalized}`);
+    return date.toISOString();
+};
+
+const normalizeOptionalDate = (value: unknown) => {
+    const normalized = String(value ?? '').trim();
+    if (!normalized) return null;
+    const date = new Date(`${normalized}T00:00:00.000Z`);
+    if (Number.isNaN(date.getTime())) throw new Error(`Data inválida: ${normalized}`);
+    return normalized;
+};
+
+const resolveGovernanceMetadata = (payload: any, fallback?: any): GovernanceMetadata => {
+    const parsedPayload = parseGovernanceText(payload?.description);
+    const parsedFallback = parseGovernanceText(fallback?.description);
+    return {
+        summary: String(
+            payload?.governance_summary
+            ?? payload?.governanceSummary
+            ?? parsedPayload.summary
+            ?? fallback?.governance_summary
+            ?? parsedFallback.summary
+            ?? '',
+        ).trim(),
+        legal_basis: normalizeOptionalText(
+            payload?.legal_basis
+            ?? payload?.legalBasis
+            ?? parsedPayload.metadata['base-legal']
+            ?? fallback?.legal_basis
+            ?? parsedFallback.metadata['base-legal'],
+        ),
+        requested_by: normalizeOptionalText(
+            payload?.requested_by
+            ?? payload?.requestedBy
+            ?? parsedPayload.metadata.solicitante
+            ?? fallback?.requested_by
+            ?? parsedFallback.metadata.solicitante,
+        ),
+        approval_scope: normalizeOptionalText(
+            payload?.approval_scope
+            ?? payload?.approvalScope
+            ?? parsedPayload.metadata['alcada-de-aprovacao']
+            ?? fallback?.approval_scope
+            ?? parsedFallback.metadata['alcada-de-aprovacao'],
+        ),
+        lifecycle_status: normalizeOptionalText(
+            payload?.lifecycle_status
+            ?? payload?.lifecycleStatus
+            ?? parsedPayload.metadata['status-institucional']
+            ?? fallback?.lifecycle_status
+            ?? parsedFallback.metadata['status-institucional'],
+        ),
+        review_date: normalizeOptionalDate(
+            payload?.review_date
+            ?? payload?.reviewDate
+            ?? parsedPayload.metadata['revisao-prevista']
+            ?? fallback?.review_date
+            ?? parsedFallback.metadata['revisao-prevista'],
+        ),
+        approved_by: normalizeOptionalText(payload?.approved_by ?? payload?.approvedBy ?? fallback?.approved_by),
+        approved_at: normalizeOptionalTimestamp(payload?.approved_at ?? payload?.approvedAt ?? fallback?.approved_at),
+        effective_from: normalizeOptionalTimestamp(payload?.effective_from ?? payload?.effectiveFrom ?? fallback?.effective_from),
+        expires_at: normalizeOptionalTimestamp(payload?.expires_at ?? payload?.expiresAt ?? fallback?.expires_at),
+        revoked_by: normalizeOptionalText(payload?.revoked_by ?? payload?.revokedBy ?? fallback?.revoked_by),
+        revoked_at: normalizeOptionalTimestamp(payload?.revoked_at ?? payload?.revokedAt ?? fallback?.revoked_at),
+    };
 };
 
 const normalizeDomainList = (raw: unknown) => {
@@ -101,11 +219,26 @@ export class DomainPolicyManagerService {
         const scopeValues = row.scope_type === 'vlan'
             ? String(row.scope_value || '').split(',').map((item) => item.trim()).filter(Boolean)
             : ['global'];
+        const governance = {
+            summary: row.governance_summary || '',
+            legal_basis: row.legal_basis || null,
+            requested_by: row.requested_by || null,
+            approval_scope: row.approval_scope || null,
+            lifecycle_status: row.lifecycle_status || null,
+            review_date: row.review_date || null,
+            approved_by: row.approved_by || null,
+            approved_at: row.approved_at || null,
+            effective_from: row.effective_from || null,
+            expires_at: row.expires_at || null,
+            revoked_by: row.revoked_by || null,
+            revoked_at: row.revoked_at || null,
+        };
         return {
             ...row,
             scope_values: scopeValues,
             vlan_ids: row.scope_type === 'vlan' ? scopeValues.map(Number).filter(Number.isFinite) : [],
             domains: (row.entries || []).map((entry: any) => entry.normalized_domain || entry.domain),
+            governance,
         };
     }
 
@@ -173,7 +306,7 @@ export class DomainPolicyManagerService {
         const table = policy.policy_type === 'block' ? 'blocking_policies' : 'release_policies';
         const scopeValues = policy.scope_type === 'global' ? ['global'] : policy.scope_values;
         const category = policy.name;
-        const description = policy.description || `Política nomeada: ${policy.name}`;
+        const description = policy.description || policy.governance_summary || `Política nomeada: ${policy.name}`;
         const originRule = `domain_policy:${policy.id}`;
 
         for (const scopeValue of scopeValues) {
@@ -327,6 +460,7 @@ export class DomainPolicyManagerService {
         const policyType = normalizePolicyType(payload?.policy_type || payload?.policyType || payload?.type);
         const scope = normalizeScope(payload);
         const domains = normalizeDomainList(payload?.domains ?? payload?.entries);
+        const governance = resolveGovernanceMetadata(payload);
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -339,10 +473,22 @@ export class DomainPolicyManagerService {
                         scope_value,
                         enabled,
                         description,
+                        governance_summary,
+                        legal_basis,
+                        requested_by,
+                        approval_scope,
+                        lifecycle_status,
+                        review_date,
+                        approved_by,
+                        approved_at,
+                        effective_from,
+                        expires_at,
+                        revoked_by,
+                        revoked_at,
                         created_by,
                         updated_by
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
                     RETURNING *
                 `,
                 [
@@ -352,6 +498,18 @@ export class DomainPolicyManagerService {
                     scope.scopeValue,
                     payload?.enabled ?? true,
                     payload?.description || null,
+                    governance.summary || null,
+                    governance.legal_basis,
+                    governance.requested_by,
+                    governance.approval_scope,
+                    governance.lifecycle_status,
+                    governance.review_date,
+                    governance.approved_by,
+                    governance.approved_at,
+                    governance.effective_from,
+                    governance.expires_at,
+                    governance.revoked_by,
+                    governance.revoked_at,
                     requestedBy,
                 ],
             );
@@ -391,6 +549,7 @@ export class DomainPolicyManagerService {
             const domains = payload?.domains !== undefined || payload?.entries !== undefined
                 ? normalizeDomainList(payload?.domains ?? payload?.entries)
                 : current.domains;
+            const governance = resolveGovernanceMetadata(payload, current);
 
             await client.query(
                 `
@@ -401,9 +560,21 @@ export class DomainPolicyManagerService {
                         scope_value = $4,
                         enabled = $5,
                         description = $6,
-                        updated_by = $7,
+                        governance_summary = $7,
+                        legal_basis = $8,
+                        requested_by = $9,
+                        approval_scope = $10,
+                        lifecycle_status = $11,
+                        review_date = $12,
+                        approved_by = $13,
+                        approved_at = $14,
+                        effective_from = $15,
+                        expires_at = $16,
+                        revoked_by = $17,
+                        revoked_at = $18,
+                        updated_by = $19,
                         updated_at = NOW()
-                    WHERE id = $8
+                    WHERE id = $20
                 `,
                 [
                     name,
@@ -412,6 +583,18 @@ export class DomainPolicyManagerService {
                     scope.scopeValue,
                     payload?.enabled ?? current.enabled,
                     payload?.description ?? current.description,
+                    governance.summary || null,
+                    governance.legal_basis,
+                    governance.requested_by,
+                    governance.approval_scope,
+                    governance.lifecycle_status,
+                    governance.review_date,
+                    governance.approved_by,
+                    governance.approved_at,
+                    governance.effective_from,
+                    governance.expires_at,
+                    governance.revoked_by,
+                    governance.revoked_at,
                     requestedBy,
                     id,
                 ],
@@ -447,6 +630,18 @@ export class DomainPolicyManagerService {
             scope_value: source.scope_value,
             enabled: false,
             description: source.description,
+            governance_summary: source.governance_summary,
+            legal_basis: source.legal_basis,
+            requested_by: source.requested_by,
+            approval_scope: source.approval_scope,
+            lifecycle_status: source.lifecycle_status,
+            review_date: source.review_date,
+            approved_by: source.approved_by,
+            approved_at: source.approved_at,
+            effective_from: source.effective_from,
+            expires_at: source.expires_at,
+            revoked_by: source.revoked_by,
+            revoked_at: source.revoked_at,
             domains: source.domains,
         }, requestedBy);
     }

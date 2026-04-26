@@ -9,7 +9,7 @@ router.get('/logs', async (req, res) => {
         // Verifica se a tabela existe antes de consultar para evitar crash
         const tableCheck = await pool.query("SELECT to_regclass('public.proxy_audit_log')");
         if (!tableCheck.rows[0].to_regclass) {
-            return res.json([]); // Retorna vazio se a tabela não existir ainda
+            return res.status(503).json({ error: 'Tabela proxy_audit_log indisponível.' });
         }
 
         const result = await pool.query(`
@@ -28,16 +28,21 @@ router.get('/logs', async (req, res) => {
 router.get('/stats', async (req, res) => {
     try {
         const tableCheck = await pool.query("SELECT to_regclass('public.proxy_audit_log')");
-        if (!tableCheck.rows[0].to_regclass) return res.json({ total: 0, blocked: 0 });
+        if (!tableCheck.rows[0].to_regclass) {
+            return res.status(503).json({ error: 'Tabela proxy_audit_log indisponível.' });
+        }
 
         const total = await pool.query('SELECT COUNT(*) FROM proxy_audit_log');
         const blocked = await pool.query("SELECT COUNT(*) FROM proxy_audit_log WHERE action = 'BLOCK'");
         
-        res.json({ 
+        res.json({
             total: parseInt(total.rows[0].count),
             blocked: parseInt(blocked.rows[0].count)
         });
-    } catch (e) { res.json({ total: 0, blocked: 0 }); }
+    } catch (error) {
+        console.error("Proxy Stats Error:", error);
+        res.status(500).json({ error: 'Erro ao calcular estatísticas do proxy.' });
+    }
 });
 
 export default router;

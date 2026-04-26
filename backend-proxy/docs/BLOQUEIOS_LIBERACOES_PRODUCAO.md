@@ -1016,6 +1016,45 @@
 ### Pendência real remanescente
 - não foi feito flip destrutivo do serviço produtivo em `6779` durante esta rodada; a validação do código novo foi feita por build e por instância temporária autenticada em `6790`, justamente para validar o runtime novo sem derrubar o processo em produção
 
+## Atualização 2026-04-23 — VIP como bypass total real
+
+### Correção aplicada
+- VIP deixou de ser apenas exceção de DNS/proxy explícito e passou a furar todas as camadas gerenciadas pelo módulo.
+- A chain `DNS_EMERGENCY_V8` agora insere `ACCEPT` completo para cada VIP no encaminhamento da VLAN para a WAN antes dos bloqueios gerais.
+- O ACCEPT completo cobre também tráfego para DNS externo manual, DoH/443 e demais regras posteriores do `ufw-user-forward`.
+- A chain `V8_PROXY_ENGINE` agora insere `RETURN` por IP VIP antes de qualquer `REDIRECT` HTTP/HTTPS da interceptação seletiva.
+- O retorno por VIP impede que o IP seja forçado a passar pelo Squid quando o objetivo operacional é bypass total.
+- As regras ficam vinculadas à VLAN cadastrada do VIP quando `vlan_id` existe, evitando liberar o mesmo IP em interfaces de outras VLANs.
+
+### Arquivos alterados
+- `backend-proxy/src/services/dns-contingency-service.ts`
+- `backend-proxy/src/services/interception-service.ts`
+
+### Validação esperada para o IP `192.168.10.77`
+- `policy_exceptions`: ativo, VLAN `10`, `bypass_total = true`
+- `/etc/squid/acl/proxy_ip_bypass.acl`: contém `192.168.10.77`
+- `/etc/unbound/becker/vip-bypass.conf`: contém `32.77.10.168.192.rpz-client-ip CNAME rpz-passthru.`
+- `iptables-save -t filter`: deve conter `-A DNS_EMERGENCY_V8 -s 192.168.10.77/32 -i enp6s0.10 -o enp8s0 -j ACCEPT` antes dos drops DNS da VLAN 10
+- `iptables-save -t nat`: em modo de interceptação seletiva deve conter `-A PREROUTING -s 192.168.10.77/32 -i enp6s0.10 -j RETURN` antes dos REDIRECTs
+
+### Resultado objetivo
+- O aparelho pode usar DNS da Cloudflare diretamente sem passar pelo Unbound.
+- O IP VIP não deve ser submetido aos bloqueios de DNS externo, DoH, proxy explícito ou interceptação seletiva gerenciados por `Bloqueios & Liberações`.
+
+## Atualização 2026-04-23 — DNS operacional hardcoded do ponto
+
+### Correção aplicada
+- A chain `DNS_EMERGENCY_V8` passou a liberar permanentemente consultas DNS clássicas para OpenDNS/Cisco Umbrella:
+  - `208.67.222.222`
+  - `208.67.220.220`
+- A liberação é restrita a TCP/UDP porta `53` e é gerada para todas as VLANs cadastradas com interface.
+- O objetivo é atender aplicativos de ponto com DNS hardcoded sem transformar clientes comuns em VIP.
+
+### Resultado objetivo
+- VIPs continuam com bypass total.
+- Clientes comuns continuam obedecendo políticas e bloqueios gerais.
+- Apenas consultas DNS para os dois resolvedores OpenDNS acima são aceitas diretamente; demais DNS externos continuam bloqueados.
+
 ## Atualização 2026-04-15 — implementação final do CRUD de políticas e auditoria PDF
 
 ### Entrega desta rodada
@@ -1832,3 +1871,51 @@
 ### Validação realizada
 - build frontend executado com sucesso:
   - `npm run build`
+
+## Atualização 2026-04-23 — bloqueio ampliado de redes sociais e YouTube
+
+### Solicitação operacional
+- bloquear Facebook, Instagram, TikTok, YouTube e demais redes sociais para todos os IPs não VIP;
+- preservar WhatsApp liberado;
+- manter VLANs `40`, `50`, `80` e `99` desativadas/isentas.
+
+### Ajustes aplicados
+- política nomeada `Redes Sociais` atualizada para `75` domínios;
+- política nomeada `Bloquear YouTube` atualizada para `10` domínios;
+- escopo das duas políticas ajustado para VLANs ativas:
+  - `10`
+  - `30`
+  - `70`
+- VLANs desativadas/isentas confirmadas:
+  - `40`
+  - `50`
+  - `80`
+  - `99`
+- `WhatsApp` preservado como liberação global protegida com `5` domínios.
+
+### Runtime aplicado
+- `apply` executado pelo módulo `Bloqueios & Liberações`;
+- manifesto gerado em `acl-plus-dns`;
+- artefatos gerados apenas para VLANs operacionais `10`, `30` e `70`;
+- VIPs mantidos como bypass total antes dos bloqueios.
+
+### Validação realizada
+- `unbound-checkconf`: ok;
+- `squid -k parse`: ok;
+- serviços ativos:
+  - `unbound`
+  - `squid`
+  - `postgresql`
+- DNS por VLAN ativa:
+  - `facebook.com`: `NXDOMAIN`
+  - `instagram.com`: `NXDOMAIN`
+  - `tiktok.com`: `NXDOMAIN`
+  - `youtube.com`: `NXDOMAIN`
+  - `web.whatsapp.com`: `NOERROR`
+  - `whatsapp.com`: `NOERROR`
+- resolução de política:
+  - IP comum em VLAN `10` para `facebook.com`: `blocked`
+  - IP comum em VLAN `10` para `youtube.com`: `blocked`
+  - IP comum em VLAN `10` para `web.whatsapp.com`: `allowed`
+  - IP VIP em VLAN `10` para `facebook.com`: `bypassed`
+  - IP comum em VLAN `50` para `facebook.com`: `allowed default`, pois a VLAN está desativada/isenta.

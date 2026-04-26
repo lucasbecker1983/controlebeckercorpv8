@@ -1,4 +1,5 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   Ban,
@@ -178,11 +179,98 @@ function actionLabel(action) {
   return action || '—';
 }
 
+function governanceStatusTone(value) {
+  const normalized = normalizeText(value);
+  if (normalized.includes('aprov') || normalized.includes('vigor')) return 'success';
+  if (normalized.includes('analise') || normalized.includes('revis')) return 'warning';
+  if (normalized.includes('revog') || normalized.includes('expir')) return 'danger';
+  return 'neutral';
+}
+
 function splitDomains(value) {
   return Array.from(new Set(String(value || '')
     .split(/[\n,;\s]+/)
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean)));
+}
+
+function parseGovernanceText(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return {
+      summary: '',
+      metadata: {},
+    };
+  }
+
+  const marker = '\n[Governanca]\n';
+  const [summaryPart, metaPart] = raw.includes(marker)
+    ? raw.split(marker)
+    : [raw, ''];
+
+  const metadata = {};
+  metaPart.split('\n').forEach((line) => {
+    const match = line.match(/^([^:]+):\s*(.+)$/);
+    if (!match) return;
+    const key = normalizeText(match[1]);
+    metadata[key] = match[2].trim();
+  });
+
+  return {
+    summary: summaryPart.trim(),
+    metadata,
+  };
+}
+
+function buildGovernanceText(summary, metadata = {}) {
+  const cleanedSummary = String(summary || '').trim();
+  const entries = Object.entries(metadata)
+    .map(([key, value]) => [String(key || '').trim(), String(value || '').trim()])
+    .filter(([, value]) => value);
+
+  if (!entries.length) return cleanedSummary;
+
+  const formattedMetadata = entries
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('\n');
+
+  return `${cleanedSummary}${cleanedSummary ? '\n\n' : ''}[Governanca]\n${formattedMetadata}`.trim();
+}
+
+function toDateInputValue(value) {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function toDateTimeInputValue(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offset = date.getTimezoneOffset();
+  const local = new Date(date.getTime() - (offset * 60 * 1000));
+  return local.toISOString().slice(0, 16);
+}
+
+function governanceFromRecord(record, sourceText = '') {
+  const parsed = parseGovernanceText(sourceText);
+  return {
+    summary: record?.governance_summary || parsed.summary || '',
+    legal_basis: record?.legal_basis || parsed.metadata.baselegal || '',
+    requested_by: record?.requested_by || parsed.metadata.solicitante || '',
+    approval_scope: record?.approval_scope || parsed.metadata.alcadadeaprovacao || '',
+    lifecycle_status: record?.lifecycle_status || parsed.metadata.statusinstitucional || '',
+    review_date: toDateInputValue(record?.review_date || parsed.metadata.revisaoprevista || ''),
+    approved_by: record?.approved_by || '',
+    approved_at: toDateTimeInputValue(record?.approved_at || ''),
+    effective_from: toDateTimeInputValue(record?.effective_from || ''),
+    expires_at: toDateTimeInputValue(record?.expires_at || record?.valid_until || ''),
+    revoked_by: record?.revoked_by || '',
+    revoked_at: toDateTimeInputValue(record?.revoked_at || ''),
+  };
 }
 
 function TextInput({ value, onChange, placeholder, className = '', type = 'text', ...props }) {
@@ -550,18 +638,41 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
     vlan_ids: [],
     domainsText: '',
     description: '',
+    legal_basis: '',
+    requested_by: '',
+    approval_scope: '',
+    lifecycle_status: '',
+    review_date: '',
+    approved_by: '',
+    approved_at: '',
+    effective_from: '',
+    expires_at: '',
+    revoked_by: '',
+    revoked_at: '',
     enabled: true,
   });
 
   useEffect(() => {
     if (!open) return;
+    const governance = governanceFromRecord(item, item?.description || '');
     setForm({
       name: item?.name || '',
       policy_type: item?.policy_type || 'allow',
       scope_type: item?.scope_type || 'global',
       vlan_ids: (item?.vlan_ids || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
       domainsText: (item?.domains || item?.entries?.map((entry) => entry.normalized_domain || entry.domain) || []).join('\n'),
-      description: item?.description || '',
+      description: governance.summary || '',
+      legal_basis: governance.legal_basis || '',
+      requested_by: governance.requested_by || '',
+      approval_scope: governance.approval_scope || '',
+      lifecycle_status: governance.lifecycle_status || '',
+      review_date: governance.review_date || '',
+      approved_by: governance.approved_by || '',
+      approved_at: governance.approved_at || '',
+      effective_from: governance.effective_from || '',
+      expires_at: governance.expires_at || '',
+      revoked_by: governance.revoked_by || '',
+      revoked_at: governance.revoked_at || '',
       enabled: item?.enabled ?? true,
     });
   }, [open, item]);
@@ -584,7 +695,25 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
       ? form.vlan_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value)).sort((left, right) => left - right)
       : [],
     domains,
-    description: form.description.trim(),
+    description: buildGovernanceText(form.description, {
+      'Base legal': form.legal_basis,
+      Solicitante: form.requested_by,
+      'Alcada de aprovacao': form.approval_scope,
+      'Status institucional': form.lifecycle_status,
+      'Revisao prevista': form.review_date,
+    }),
+    governance_summary: form.description.trim(),
+    legal_basis: form.legal_basis.trim(),
+    requested_by: form.requested_by.trim(),
+    approval_scope: form.approval_scope.trim(),
+    lifecycle_status: form.lifecycle_status,
+    review_date: form.review_date || null,
+    approved_by: form.approved_by.trim(),
+    approved_at: form.approved_at || null,
+    effective_from: form.effective_from || null,
+    expires_at: form.expires_at || null,
+    revoked_by: form.revoked_by.trim(),
+    revoked_at: form.revoked_at || null,
     enabled: form.enabled,
   });
 
@@ -665,6 +794,61 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
               <TextArea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={4} placeholder="Motivo operacional ou chamado relacionado." />
               <p className="text-xs leading-5 text-on-surface/58">Explique por que a regra existe. Esse texto ajuda na revisão futura e na trilha administrativa.</p>
             </label>
+
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
+                <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Norma interna, política institucional ou diretriz vigente" />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
+                <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Gestão responsável ou unidade demandante" />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
+                <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Gestor, diretoria, comitê ou instância formal" />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
+                <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
+                  <option value="">Não definido</option>
+                  <option value="Em análise">Em análise</option>
+                  <option value="Aprovado">Aprovado</option>
+                  <option value="Em vigor">Em vigor</option>
+                  <option value="Em revisão">Em revisão</option>
+                  <option value="Revogado">Revogado</option>
+                  <option value="Expirado">Expirado</option>
+                </SelectInput>
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
+                <TextInput type="date" value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado por</span>
+                <TextInput value={form.approved_by} onChange={(event) => setForm((current) => ({ ...current, approved_by: event.target.value }))} placeholder="Autoridade aprovadora" />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado em</span>
+                <TextInput type="datetime-local" value={form.approved_at} onChange={(event) => setForm((current) => ({ ...current, approved_at: event.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência inicial</span>
+                <TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm((current) => ({ ...current, effective_from: event.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência final</span>
+                <TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm((current) => ({ ...current, expires_at: event.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado por</span>
+                <TextInput value={form.revoked_by} onChange={(event) => setForm((current) => ({ ...current, revoked_by: event.target.value }))} placeholder="Autoridade que revogou" />
+              </label>
+              <label className="flex flex-col gap-2.5">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado em</span>
+                <TextInput type="datetime-local" value={form.revoked_at} onChange={(event) => setForm((current) => ({ ...current, revoked_at: event.target.value }))} />
+              </label>
+            </div>
           </div>
 
           <div className="space-y-5">
@@ -900,14 +1084,41 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
 }
 
 function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
-  const [form, setForm] = useState({ ip: '', description: '', reason: '' });
+  const [form, setForm] = useState({
+    ip: '',
+    description: '',
+    reason: '',
+    legal_basis: '',
+    requested_by: '',
+    approval_scope: '',
+    lifecycle_status: '',
+    review_date: '',
+    approved_by: '',
+    approved_at: '',
+    effective_from: '',
+    expires_at: '',
+    revoked_by: '',
+    revoked_at: '',
+  });
 
   useEffect(() => {
     if (!open) return;
+    const governance = governanceFromRecord(item, item?.notes || item?.reason || '');
     setForm({
       ip: item?.ip || '',
       description: item?.description || item?.hostname || '',
-      reason: item?.notes || item?.reason || '',
+      reason: governance.summary || '',
+      legal_basis: governance.legal_basis || '',
+      requested_by: governance.requested_by || '',
+      approval_scope: governance.approval_scope || '',
+      lifecycle_status: governance.lifecycle_status || '',
+      review_date: governance.review_date || '',
+      approved_by: governance.approved_by || '',
+      approved_at: governance.approved_at || '',
+      effective_from: governance.effective_from || '',
+      expires_at: governance.expires_at || '',
+      revoked_by: governance.revoked_by || '',
+      revoked_at: governance.revoked_at || '',
     });
   }, [open, item]);
 
@@ -923,7 +1134,28 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
           <ActionButton onClick={onClose}>Cancelar</ActionButton>
           <ActionButton
             tone="primary"
-            onClick={() => onSubmit(form)}
+            onClick={() => onSubmit({
+              ...form,
+              reason: buildGovernanceText(form.reason, {
+                'Base legal': form.legal_basis,
+                Solicitante: form.requested_by,
+                'Alcada de aprovacao': form.approval_scope,
+                'Status institucional': form.lifecycle_status,
+                'Revisao prevista': form.review_date,
+              }),
+              governance_summary: form.reason.trim(),
+              legal_basis: form.legal_basis.trim(),
+              requested_by: form.requested_by.trim(),
+              approval_scope: form.approval_scope.trim(),
+              lifecycle_status: form.lifecycle_status,
+              review_date: form.review_date || null,
+              approved_by: form.approved_by.trim(),
+              approved_at: form.approved_at || null,
+              effective_from: form.effective_from || null,
+              expires_at: form.expires_at || null,
+              revoked_by: form.revoked_by.trim(),
+              revoked_at: form.revoked_at || null,
+            })}
             disabled={saving || !form.ip.trim()}
           >
             {saving ? 'Salvando...' : item ? 'Salvar VIP' : 'Criar VIP'}
@@ -957,6 +1189,60 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
           <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} placeholder="Justificativa operacional do VIP." />
         </label>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
+            <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Fundamento institucional da exceção" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
+            <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Autoridade ou unidade responsável" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
+            <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Nível de aprovação exigido" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
+            <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
+              <option value="">Não definido</option>
+              <option value="Em análise">Em análise</option>
+              <option value="Aprovado">Aprovado</option>
+              <option value="Em vigor">Em vigor</option>
+              <option value="Em revisão">Em revisão</option>
+              <option value="Revogado">Revogado</option>
+              <option value="Expirado">Expirado</option>
+            </SelectInput>
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
+            <TextInput type="date" value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado por</span>
+            <TextInput value={form.approved_by} onChange={(event) => setForm((current) => ({ ...current, approved_by: event.target.value }))} placeholder="Autoridade aprovadora" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado em</span>
+            <TextInput type="datetime-local" value={form.approved_at} onChange={(event) => setForm((current) => ({ ...current, approved_at: event.target.value }))} />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência inicial</span>
+            <TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm((current) => ({ ...current, effective_from: event.target.value }))} />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência final</span>
+            <TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm((current) => ({ ...current, expires_at: event.target.value }))} />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado por</span>
+            <TextInput value={form.revoked_by} onChange={(event) => setForm((current) => ({ ...current, revoked_by: event.target.value }))} placeholder="Autoridade que revogou" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado em</span>
+            <TextInput type="datetime-local" value={form.revoked_at} onChange={(event) => setForm((current) => ({ ...current, revoked_at: event.target.value }))} />
+          </label>
+        </div>
       </div>
     </DialogShell>
   );
@@ -1083,6 +1369,11 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
     providers: ['google', 'cloudflare', 'quad9'],
     duration_minutes: '15',
     reason: '',
+    legal_basis: '',
+    requested_by: '',
+    approval_scope: '',
+    lifecycle_status: '',
+    review_date: '',
   });
 
   useEffect(() => {
@@ -1094,6 +1385,11 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
       providers: ['google', 'cloudflare', 'quad9'],
       duration_minutes: '15',
       reason: '',
+      legal_basis: '',
+      requested_by: '',
+      approval_scope: '',
+      lifecycle_status: '',
+      review_date: '',
     }));
   }, [open, mode]);
 
@@ -1132,7 +1428,16 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
           <ActionButton onClick={onClose}>Cancelar</ActionButton>
           <ActionButton
             tone={mode === 'renew' ? 'warning' : 'danger'}
-            onClick={() => onSubmit(form)}
+            onClick={() => onSubmit({
+              ...form,
+              reason: buildGovernanceText(form.reason, {
+                'Base legal': form.legal_basis,
+                Solicitante: form.requested_by,
+                'Alcada de aprovacao': form.approval_scope,
+                'Status institucional': form.lifecycle_status,
+                'Revisao prevista': form.review_date,
+              }),
+            })}
             disabled={saving || !form.reason.trim() || (!form.providers.length && mode !== 'renew')}
           >
             {saving ? 'Processando...' : mode === 'renew' ? 'Renovar' : 'Ativar Contingência'}
@@ -1217,6 +1522,36 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
           <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} placeholder="Explique por que a contingência precisa ficar ativa." />
         </label>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
+            <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Fundamento institucional da contingência" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
+            <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Gestão ou unidade responsável" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
+            <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Diretoria, comitê ou instância formal" />
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
+            <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
+              <option value="">Não definido</option>
+              <option value="Em análise">Em análise</option>
+              <option value="Aprovado">Aprovado</option>
+              <option value="Em vigor">Em vigor</option>
+              <option value="Em revisão">Em revisão</option>
+              <option value="Revogado">Revogado</option>
+              <option value="Expirado">Expirado</option>
+            </SelectInput>
+          </label>
+          <label className="space-y-2">
+            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
+            <TextInput value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} placeholder="2026-12-31" />
+          </label>
+        </div>
       </div>
     </DialogShell>
   );
@@ -1322,9 +1657,23 @@ function useModuleData() {
   return { data, setData, loadAll, loading, loadingState, banner, flash };
 }
 
-export default function BlockingReleases() {
+const MODULE_CONTEXT = {
+  eyebrow: (
+    <span className="inline-flex items-center gap-2">
+      <ShieldCheck size={14} />
+      Governança de Bloqueios
+    </span>
+  ),
+  title: 'Políticas, exceções e enforcement em uma leitura institucional única',
+  description: 'Este módulo passa a organizar decisão administrativa, escopo de rede, conformidade e execução técnica na mesma linguagem visual. A leitura privilegia clareza para governança sem perder profundidade operacional.',
+};
+
+export default function BlockingReleases({ initialTab = 'overview', allowedTabs = null }) {
   const { data, setData, loadAll, loading, loadingState, banner, flash } = useModuleData();
-  const [activeTab, setActiveTab] = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromQuery = searchParams.get('tab');
+  const resolveTab = (candidate) => (TABS.some((tab) => tab.key === candidate) ? candidate : 'overview');
+  const [activeTab, setActiveTab] = useState(() => resolveTab(tabFromQuery || initialTab));
   const [scopeEditor, setScopeEditor] = useState({ open: false, scopeType: 'global', scopeValue: 'global' });
   const [policyEditor, setPolicyEditor] = useState({ open: false, item: null });
   const [auditPolicyAttach, setAuditPolicyAttach] = useState({ open: false, event: null });
@@ -1353,6 +1702,35 @@ export default function BlockingReleases() {
   const deferredVipSearch = useDeferredValue(vipSearch);
   const deferredAuditSearch = useDeferredValue(auditSearch);
   const deferredRadarSearch = useDeferredValue(radarSearch);
+  const currentContext = MODULE_CONTEXT;
+  const visibleTabs = Array.isArray(allowedTabs) && allowedTabs.length
+    ? TABS.filter((tab) => allowedTabs.includes(tab.key))
+    : TABS;
+  const firstVisibleTab = visibleTabs[0]?.key || 'overview';
+  const initialVisibleTab = visibleTabs.some((tab) => tab.key === initialTab) ? initialTab : firstVisibleTab;
+
+  useEffect(() => {
+    const desiredTab = visibleTabs.some((tab) => tab.key === tabFromQuery)
+      ? tabFromQuery
+      : initialVisibleTab;
+    if (desiredTab !== activeTab) {
+      setActiveTab(desiredTab);
+    }
+    if (searchParams.get('tab') !== desiredTab) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.set('tab', desiredTab);
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [activeTab, initialVisibleTab, searchParams, setSearchParams, tabFromQuery, visibleTabs]);
+
+  const handleTabChange = (tabKey) => {
+    if (!visibleTabs.some((tab) => tab.key === tabKey)) return;
+    setActiveTab(tabKey);
+    if (searchParams.get('tab') === tabKey) return;
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('tab', tabKey);
+    setSearchParams(nextParams, { replace: true });
+  };
 
   const requestAction = async (endpoint, method = 'POST', body) => {
     const response = await authFetch(`${API}/api/bloqueios-liberacoes/${endpoint}`, {
@@ -1456,6 +1834,11 @@ export default function BlockingReleases() {
         return [
           policy.name,
           policy.description,
+          policy.governance_summary,
+          policy.legal_basis,
+          policy.requested_by,
+          policy.approval_scope,
+          policy.lifecycle_status,
           policy.policy_type,
           policy.scope_value,
           ...(policy.domains || []),
@@ -1510,7 +1893,7 @@ export default function BlockingReleases() {
       .sort((a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)) || new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime())
       .filter((row) => {
         if (!search) return true;
-        return [row.ip, row.description, row.hostname, row.notes, row.reason]
+        return [row.ip, row.description, row.hostname, row.notes, row.reason, row.governance_summary, row.legal_basis, row.requested_by, row.approval_scope, row.lifecycle_status]
           .some((value) => normalizeText(value).includes(search));
       });
   }, [data.exceptions, deferredVipSearch]);
@@ -1559,6 +1942,57 @@ export default function BlockingReleases() {
   const globalBlockedCount = namedPolicies.filter((item) => item.enabled && item.scope_type === 'global' && item.policy_type === 'block').length;
   const vlansWithOwnPolicy = vlanPolicies.filter((item) => item.allowedCategories.length || item.blockedCategories.length || item.conflictCategories.length).length;
   const healthTone = toneFromStatus(data.status?.engine?.health_status || data.health?.integrity_score || data.health?.services?.policy_compiler);
+
+  const headerBadges = (
+    <>
+      <StateBadge label="Padrão SGCG" tone="primary" title="O módulo segue a linguagem institucional consolidada do sistema." />
+      <StateBadge label="Governança + Controle" tone="success" title="Decisão, exceção, auditoria e enforcement técnico no mesmo fluxo." />
+      <StateBadge label={`${managedVlanIds.length} VLANs no módulo`} tone="neutral" title="A lista operacional é dinâmica e vem do cadastro do produto." />
+      <StateBadge label="VIP = exceção total" tone="danger" title="VIP sai livre pelo firewall e não segue bloqueios comuns." />
+      <StateBadge label="DNS interno preservado" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
+      <StateBadge label="DNS interno por VLAN" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
+      <StateBadge label={contingencyActive ? 'Contingência ativa' : 'Contingência pronta'} tone={contingencyActive ? 'danger' : 'success'} />
+    </>
+  );
+
+  const quickActionItems = [
+    {
+      label: 'Editar global',
+      tone: 'primary',
+      icon: Layers3,
+      onClick: () => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' }),
+    },
+    {
+      label: 'Nova política',
+      tone: 'success',
+      icon: Plus,
+      onClick: () => setPolicyEditor({ open: true, item: null }),
+    },
+    {
+      label: 'Adicionar VIP',
+      tone: 'warning',
+      icon: Plus,
+      onClick: () => setVipEditor({ open: true, item: null }),
+    },
+    {
+      label: 'Contingência',
+      tone: contingencyActive ? 'danger' : 'neutral',
+      icon: Flame,
+      onClick: () => startTransition(() => handleTabChange('contingency')),
+    },
+    {
+      label: 'Apply',
+      tone: 'success',
+      icon: Power,
+      onClick: () => runEngineAction('apply', 'Políticas aplicadas.'),
+    },
+    {
+      label: 'Atualizar',
+      tone: 'ghost',
+      icon: RefreshCcw,
+      onClick: () => loadAll().then(() => flash('Status atualizado.', 'success')).catch((error) => flash(error.message || 'Falha ao atualizar.', 'danger')),
+    },
+  ];
 
   const overviewCards = [
     {
@@ -1909,7 +2343,7 @@ export default function BlockingReleases() {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `relatorio-dados-acessos-${new Date().toISOString().slice(0, 10)}.pdf`;
+      link.download = `relatorio-governamental-acessos-${new Date().toISOString().slice(0, 10)}.pdf`;
       link.click();
       window.URL.revokeObjectURL(url);
       flash('PDF do relatório de dados gerado.', 'success');
@@ -2160,7 +2594,7 @@ export default function BlockingReleases() {
     }
   };
 
-  const runEngineAction = async (endpoint, successText) => {
+  async function runEngineAction(endpoint, successText) {
     setWorking((current) => ({ ...current, engine: true }));
     try {
       await runAction(endpoint);
@@ -2170,7 +2604,7 @@ export default function BlockingReleases() {
     } finally {
       setWorking((current) => ({ ...current, engine: false }));
     }
-  };
+  }
 
   useEffect(() => {
     if (activeTab !== 'radar' || loading) return undefined;
@@ -2257,69 +2691,15 @@ export default function BlockingReleases() {
       />
 
       <ModuleHero
-        eyebrow={(
-          <span className="inline-flex items-center gap-2">
-            <ShieldCheck size={14} />
-            Governança de Bloqueios
-          </span>
-        )}
-        title="Políticas, exceções e enforcement em uma leitura institucional única"
-        description="Este módulo passa a organizar decisão administrativa, escopo de rede, conformidade e execução técnica na mesma linguagem visual. A leitura privilegia clareza para governança sem perder profundidade operacional."
-        badges={(
-          <>
-            <StateBadge label="Padrão SGCG" tone="primary" title="O módulo segue a linguagem institucional consolidada do sistema." />
-            <StateBadge label="Governança + Controle" tone="success" title="Decisão, exceção, auditoria e enforcement técnico no mesmo fluxo." />
-            <StateBadge label={`${managedVlanIds.length} VLANs no módulo`} tone="neutral" title="A lista operacional é dinâmica e vem do cadastro do produto." />
-            <StateBadge label="VIP = exceção total" tone="danger" title="VIP sai livre pelo firewall e não segue bloqueios comuns." />
-            <StateBadge label="DNS interno preservado" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
-            <StateBadge label="DNS interno por VLAN" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
-            <StateBadge label={contingencyActive ? 'Contingência ativa' : 'Contingência pronta'} tone={contingencyActive ? 'danger' : 'success'} />
-          </>
-        )}
+        eyebrow={currentContext.eyebrow}
+        title={currentContext.title}
+        description={currentContext.description}
+        badges={headerBadges}
         aside={(
           <ThemeAwareSurface className="p-[var(--spacing-card)]">
             <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Ações rápidas</div>
             <div className="mt-3.5">
-              <QuickActionBar
-                items={[
-                  {
-                    label: 'Editar global',
-                    tone: 'primary',
-                    icon: Layers3,
-                    onClick: () => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' }),
-                  },
-                  {
-                    label: 'Nova política',
-                    tone: 'success',
-                    icon: Plus,
-                    onClick: () => setPolicyEditor({ open: true, item: null }),
-                  },
-                  {
-                    label: 'Adicionar VIP',
-                    tone: 'warning',
-                    icon: Plus,
-                    onClick: () => setVipEditor({ open: true, item: null }),
-                  },
-                  {
-                    label: 'Contingência',
-                    tone: contingencyActive ? 'danger' : 'neutral',
-                    icon: Flame,
-                    onClick: () => startTransition(() => setActiveTab('contingency')),
-                  },
-                  {
-                    label: 'Apply',
-                    tone: 'success',
-                    icon: Power,
-                    onClick: () => runEngineAction('apply', 'Políticas aplicadas.'),
-                  },
-                  {
-                    label: 'Atualizar',
-                    tone: 'ghost',
-                    icon: RefreshCcw,
-                    onClick: () => loadAll().then(() => flash('Status atualizado.', 'success')).catch((error) => flash(error.message || 'Falha ao atualizar.', 'danger')),
-                  },
-                ]}
-              />
+              <QuickActionBar items={quickActionItems} />
             </div>
             <div className="mt-4 grid gap-2.5 sm:grid-cols-3 2xl:grid-cols-1">
               <InlineStat label="Motor" value={MODE_LABELS[engineMode] || engineMode} tone="primary" />
@@ -2351,9 +2731,9 @@ export default function BlockingReleases() {
       ) : null}
 
       <SegmentedTabs
-        tabs={TABS}
+        tabs={visibleTabs}
         value={activeTab}
-        onChange={(tabKey) => startTransition(() => setActiveTab(tabKey))}
+        onChange={(tabKey) => startTransition(() => handleTabChange(tabKey))}
       />
 
       {loading ? (
@@ -2539,6 +2919,7 @@ export default function BlockingReleases() {
               <div className="space-y-2.5">
                 {filteredDomainPolicies.length ? filteredDomainPolicies.map((policy) => {
                   const domains = policy.domains || (policy.entries || []).map((entry) => entry.normalized_domain || entry.domain);
+                  const governance = governanceFromRecord(policy, policy.description || '');
                   return (
                     <ListRow key={policy.id}>
                       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
@@ -2550,8 +2931,21 @@ export default function BlockingReleases() {
                             <StateBadge label={policy.scope_type === 'vlan' ? `VLAN ${(policy.vlan_ids || []).join(', ')}` : 'Global'} tone="primary" />
                           </div>
                           <div className="mt-2 text-sm leading-6 text-on-surface/62">
-                            {policy.description || 'Sem motivo informado.'}
+                            {governance.summary || 'Sem motivo informado.'}
                           </div>
+                          {(governance.legal_basis || governance.requested_by || governance.approval_scope || governance.review_date || governance.approved_by || governance.effective_from || governance.expires_at || governance.revoked_by) ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {governance.legal_basis ? <StateBadge label={`Base legal: ${governance.legal_basis}`} tone="neutral" /> : null}
+                              {governance.requested_by ? <StateBadge label={`Solicitante: ${governance.requested_by}`} tone="primary" /> : null}
+                              {governance.approval_scope ? <StateBadge label={`Aprovação: ${governance.approval_scope}`} tone="warning" /> : null}
+                              {governance.lifecycle_status ? <StateBadge label={`Status: ${governance.lifecycle_status}`} tone={governanceStatusTone(governance.lifecycle_status)} /> : null}
+                              {governance.review_date ? <StateBadge label={`Revisão: ${governance.review_date}`} tone="success" /> : null}
+                              {governance.approved_by ? <StateBadge label={`Aprovado por: ${governance.approved_by}`} tone="success" /> : null}
+                              {governance.effective_from ? <StateBadge label={`Vigência: ${formatDate(governance.effective_from)}`} tone="primary" /> : null}
+                              {governance.expires_at ? <StateBadge label={`Expira: ${formatDate(governance.expires_at)}`} tone="warning" /> : null}
+                              {governance.revoked_by ? <StateBadge label={`Revogado por: ${governance.revoked_by}`} tone="danger" /> : null}
+                            </div>
+                          ) : null}
                           <div className="mt-3 flex flex-wrap gap-2.5">
                             {domains.slice(0, 8).map((domain) => <StateBadge key={`${policy.id}-${domain}`} label={domain} tone={policyTypeTone(policy.policy_type)} className="px-3.5 py-1.5" />)}
                             {domains.length > 8 ? <StateBadge label={`+${domains.length - 8} domínio(s)`} tone="neutral" className="px-3.5 py-1.5" /> : null}
@@ -2739,7 +3133,7 @@ export default function BlockingReleases() {
                         <VlanOverflowMenu
                           vlan={vlan}
                           onEditVlan={() => setVlanEditor({ open: true, item: vlan })}
-                          onViewVips={() => startTransition(() => setActiveTab('vips'))}
+                          onViewVips={() => startTransition(() => handleTabChange('vips'))}
                           onToggleStandard={() => (vlan.inStandard ? openVlanConfirmation({ item: vlan, mode: 'standard-off' }) : setVlanStandard(vlan, true))}
                           onDelete={() => openVlanConfirmation({ item: vlan, mode: 'delete' })}
                         />
@@ -2775,7 +3169,7 @@ export default function BlockingReleases() {
                       <VlanOverflowMenu
                         vlan={vlan}
                         onEditVlan={() => setVlanEditor({ open: true, item: vlan })}
-                        onViewVips={() => startTransition(() => setActiveTab('vips'))}
+                        onViewVips={() => startTransition(() => handleTabChange('vips'))}
                         onToggleStandard={() => (vlan.inStandard ? openVlanConfirmation({ item: vlan, mode: 'standard-off' }) : setVlanStandard(vlan, true))}
                         onDelete={() => openVlanConfirmation({ item: vlan, mode: 'delete' })}
                       />
@@ -2838,6 +3232,9 @@ export default function BlockingReleases() {
 
                 <div className="space-y-2.5">
                   {filteredVips.length ? filteredVips.map((item) => (
+                    (() => {
+                      const governance = governanceFromRecord(item, item.notes || item.reason || '');
+                      return (
                     <ListRow key={item.id}>
                       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                         <div className="min-w-0 flex-1">
@@ -2849,7 +3246,20 @@ export default function BlockingReleases() {
                             ))}
                           </div>
                           <div className="mt-2 text-sm font-semibold text-on-surface">{item.description || item.hostname || 'Sem descrição'}</div>
-                          <div className="mt-2 text-sm leading-6 text-on-surface/62">{item.notes || item.reason || 'Sem motivo informado.'}</div>
+                          <div className="mt-2 text-sm leading-6 text-on-surface/62">{governance.summary || 'Sem motivo informado.'}</div>
+                          {(governance.legal_basis || governance.requested_by || governance.approval_scope || governance.review_date || governance.approved_by || governance.effective_from || governance.expires_at || governance.revoked_by) ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {governance.legal_basis ? <StateBadge label={`Base legal: ${governance.legal_basis}`} tone="neutral" /> : null}
+                              {governance.requested_by ? <StateBadge label={`Solicitante: ${governance.requested_by}`} tone="primary" /> : null}
+                              {governance.approval_scope ? <StateBadge label={`Aprovação: ${governance.approval_scope}`} tone="warning" /> : null}
+                              {governance.lifecycle_status ? <StateBadge label={`Status: ${governance.lifecycle_status}`} tone={governanceStatusTone(governance.lifecycle_status)} /> : null}
+                              {governance.review_date ? <StateBadge label={`Revisão: ${governance.review_date}`} tone="success" /> : null}
+                              {governance.approved_by ? <StateBadge label={`Aprovado por: ${governance.approved_by}`} tone="success" /> : null}
+                              {governance.effective_from ? <StateBadge label={`Vigência: ${formatDate(governance.effective_from)}`} tone="primary" /> : null}
+                              {governance.expires_at ? <StateBadge label={`Expira: ${formatDate(governance.expires_at)}`} tone="warning" /> : null}
+                              {governance.revoked_by ? <StateBadge label={`Revogado por: ${governance.revoked_by}`} tone="danger" /> : null}
+                            </div>
+                          ) : null}
                           <div className="mt-3 text-xs uppercase tracking-[0.16em] text-on-surface/45">
                             Última alteração {formatDate(item.updated_at || item.created_at)}{item.vlan_id ? ` • VLAN ${item.vlan_id}` : ''}
                           </div>
@@ -2863,6 +3273,8 @@ export default function BlockingReleases() {
                         </div>
                       </div>
                     </ListRow>
+                      );
+                    })()
                   )) : (
                     <EmptyStateBlock
                       icon={ShieldAlert}
@@ -3017,7 +3429,7 @@ export default function BlockingReleases() {
                     label: 'Relatório de Dados',
                     tone: 'ghost',
                     icon: ScrollText,
-                    onClick: () => startTransition(() => setActiveTab('audit')),
+                    onClick: () => startTransition(() => handleTabChange('audit')),
                   },
                 ]}
               />
@@ -3060,6 +3472,9 @@ export default function BlockingReleases() {
               <SectionCard title="Auditoria da contingência" subtitle="Ativações, renovações e retorno ao normal.">
                 <div className="space-y-2.5">
                   {(data.contingencyAudit || []).length ? (data.contingencyAudit || []).map((item, index) => (
+                    (() => {
+                      const governance = parseGovernanceText(item.reason || '');
+                      return (
                     <ListRow key={`${item.created_at}-${index}`}>
                       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
                         <div>
@@ -3068,13 +3483,24 @@ export default function BlockingReleases() {
                             <StateBadge label={item.success ? 'OK' : 'Erro'} tone={item.success ? 'success' : 'danger'} />
                             <StateBadge label={item.scope_type === 'vlan' ? `VLAN ${(item.vlan_ids || []).join(', ')}` : 'Global'} tone="neutral" />
                           </div>
-                          <div className="mt-2 text-sm text-on-surface/60">{item.reason || 'Sem motivo informado.'}</div>
+                          <div className="mt-2 text-sm text-on-surface/60">{governance.summary || 'Sem motivo informado.'}</div>
+                          {(governance.metadata.baselegal || governance.metadata.solicitante || governance.metadata.alcadadeaprovacao || governance.metadata.revisaoprevista) ? (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {governance.metadata.baselegal ? <StateBadge label={`Base legal: ${governance.metadata.baselegal}`} tone="neutral" /> : null}
+                              {governance.metadata.solicitante ? <StateBadge label={`Solicitante: ${governance.metadata.solicitante}`} tone="primary" /> : null}
+                              {governance.metadata.alcadadeaprovacao ? <StateBadge label={`Aprovação: ${governance.metadata.alcadadeaprovacao}`} tone="warning" /> : null}
+                              {governance.metadata.statusinstitucional ? <StateBadge label={`Status: ${governance.metadata.statusinstitucional}`} tone={governanceStatusTone(governance.metadata.statusinstitucional)} /> : null}
+                              {governance.metadata.revisaoprevista ? <StateBadge label={`Revisão: ${governance.metadata.revisaoprevista}`} tone="success" /> : null}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="text-sm text-on-surface/52">
                           {formatDate(item.created_at)} • {item.requested_by || '—'}
                         </div>
                       </div>
                     </ListRow>
+                      );
+                    })()
                   )) : (
                     <EmptyStateBlock icon={Clock3} title="Sem auditoria de contingência" description="Nenhuma ativação ou renovação foi registrada ainda." />
                   )}
@@ -3117,7 +3543,7 @@ export default function BlockingReleases() {
               <QuickActionBar
                 items={[
                   { label: 'Atualizar', tone: 'primary', icon: RefreshCcw, onClick: () => loadRealtimeRadar(false) },
-                  { label: 'Dados', tone: 'ghost', icon: ScrollText, onClick: () => startTransition(() => setActiveTab('audit')) },
+                  { label: 'Dados', tone: 'ghost', icon: ScrollText, onClick: () => startTransition(() => handleTabChange('audit')) },
                 ]}
               />
             )}
@@ -3203,7 +3629,7 @@ export default function BlockingReleases() {
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain || item.client_ip || ''); startTransition(() => setActiveTab('audit')); }}>
+                        <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain || item.client_ip || ''); startTransition(() => handleTabChange('audit')); }}>
                           Investigar
                         </ActionButton>
                         {item.action === 'blocked' && item.domain ? (

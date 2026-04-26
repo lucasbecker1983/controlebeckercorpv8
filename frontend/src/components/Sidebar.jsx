@@ -1,25 +1,31 @@
-import { Database, Eye, LayoutDashboard, LockKeyhole, Network, Server, Settings2, Shield, ShieldAlert, Users } from 'lucide-react';
+import { Boxes, Eye, FileCheck2, Fingerprint, Landmark, LayoutDashboard, Network, ScanEye, ScrollText, ServerCog, Settings2, ShieldCheck, UserCog, Waypoints } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
   {
     section: 'Governança',
+    tone: 'governance',
     items: [
-      { label: 'Centro de Governança', icon: LayoutDashboard, path: '/' },
-      { label: 'Políticas & Exceções', icon: LockKeyhole, path: '/bloqueios-liberacoes' },
-      { label: 'Identidades & Perfis', icon: Users, path: '/users' },
+      { label: 'Centro de Governança', icon: Landmark, path: '/' },
+      { label: 'Políticas Institucionais', icon: Fingerprint, path: '/bloqueios-liberacoes?tab=policies' },
+      { label: 'LGPD & Proteção de Dados', icon: ShieldCheck, path: '/lgpd' },
+      { label: 'Governança de Dados', icon: ScrollText, path: '/governanca-dados' },
+      { label: 'Aprovações & Exceções', icon: FileCheck2, path: '/aprovacoes-excecoes' },
+      { label: 'Trilha Institucional', icon: ScanEye, path: '/trilha-institucional' },
+      { label: 'Identidades & Perfis', icon: UserCog, path: '/users' },
       { label: 'Configurações Institucionais', icon: Settings2, path: '/settings' },
     ],
   },
   {
     section: 'Controle',
+    tone: 'control',
     items: [
-      { label: 'Controle de Rede', icon: Network, path: '/network' },
-      { label: 'Infraestrutura', icon: Server, path: '/server' },
-      { label: 'Observabilidade DNS/Proxy', icon: Eye, path: '/proxy' },
-      { label: 'Segurança Operacional', icon: Shield, path: '/security' },
-      { label: 'Operações Técnicas', icon: ShieldAlert, path: '/control' },
-      { label: 'Continuidade & Backup', icon: Database, path: '/backups' },
+      { label: 'Controle de Rede', icon: Waypoints, path: '/network' },
+      { label: 'Infraestrutura', icon: ServerCog, path: '/server' },
+      { label: 'Radar Operacional & Observabilidade', icon: Eye, path: '/proxy' },
+      { label: 'Segurança Operacional', icon: Network, path: '/security' },
+      { label: 'Operações Técnicas', icon: Boxes, path: '/control' },
+      { label: 'Continuidade & Backup', icon: LayoutDashboard, path: '/backups' },
     ],
   },
 ];

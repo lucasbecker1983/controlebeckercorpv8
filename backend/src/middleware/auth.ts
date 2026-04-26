@@ -1,29 +1,31 @@
 import { NextFunction, Request, Response } from 'express';
-import jwt from 'jsonwebtoken';
-import { env } from '../config/env';
+import { authSecurityService } from '../modules/auth/auth-security-service';
 
 const PUBLIC_ROUTES = new Set([
     '/api/auth/login',
+    '/api/auth/refresh',
+    '/api/auth/logout',
     '/api/ping',
 ]);
 
 export type AuthenticatedRequest = Request & {
     auth?: {
         id?: number;
+        username?: string;
         role?: string;
+        name?: string;
     };
 };
 
 export const requireJwt = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization || '';
-    const [, token] = authHeader.split(' ');
+    const token = authSecurityService.readAccessToken(req);
 
     if (!token) {
         return res.status(401).json({ error: 'Token ausente.' });
     }
 
     try {
-        const decoded = jwt.verify(token, env.jwtSecret) as { id?: number; role?: string };
+        const decoded = authSecurityService.verifyAccessToken(token);
         req.auth = decoded;
         next();
     } catch {

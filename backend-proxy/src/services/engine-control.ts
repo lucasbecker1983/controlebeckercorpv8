@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { pool } from '../config/db';
 import { env } from '../config/env';
+import { extractVlanIdFromIp } from './blocking-release-scope';
 import { execCmd } from '../utils/sys';
 
 export const VLAN_GATEWAYS: Record<string, string> = {
@@ -251,7 +252,7 @@ export const getEngineStatus = async () => {
             localNoiseClients.add(clientIp);
             continue;
         }
-        if (clientIp.startsWith('192.168.10.') || clientIp.startsWith('192.168.30.') || clientIp.startsWith('192.168.50.') || clientIp.startsWith('192.168.70.')) {
+        if (extractVlanIdFromIp(clientIp) !== null) {
             realClients.add(clientIp);
         }
     }
@@ -327,4 +328,3 @@ export const stopEngine = async () => {
         message: 'REDIRECTs removidos. Squid parado. Internet em modo direto.',
     };
 };
-

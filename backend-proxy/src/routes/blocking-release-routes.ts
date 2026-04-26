@@ -557,7 +557,7 @@ router.get('/audit/export.pdf', async (req, res) => {
         const pdf = await blockingAuditService.exportPdf(req.query);
         const suffix = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="lgpd-acessos-${suffix}.pdf"`);
+        res.setHeader('Content-Disposition', `attachment; filename="relatorio-governamental-acessos-${suffix}.pdf"`);
         res.send(pdf);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
