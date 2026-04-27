@@ -12,7 +12,7 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'ping', pattern: /^ping( -4)? -c 1 -W 1( -I [\w.@-]+)? [0-9.]+( > \/dev\/null 2>&1 && echo true \|\| echo false)?$/ },
     { name: 'ip-read', pattern: /^(ip -o -4 addr show|ip -o link show|ip( -4)? (a|addr|o link|o -4 addr show)( .+)?)$/ },
     { name: 'proc-read', pattern: /^(cat \/proc\/uptime \| awk '\{print \$1\}'|cat \/proc\/uptime|cat \/proc\/cpuinfo \| grep 'cpu MHz' \| head -1 \| awk '\{print \$4\}'|cat \/proc\/net\/dev)$/ },
-    { name: 'host-read', pattern: /^(uname -r|grep PRETTY_NAME \/etc\/os-release \| cut -d'"' -f2|lscpu \| grep 'CPU max MHz' \| awk '\{print \$4\}'|vmstat 1 2 \| tail -1 \| awk '\{print 100-\$15\}'|free \| grep Mem \| awk '\{print \$3\/\$2 \* 100\}')$/ },
+    { name: 'host-read', pattern: /^(uname -r|grep PRETTY_NAME \/etc\/os-release \| cut -d'"' -f2|lscpu \| grep 'CPU max MHz' \| awk '\{print \$4\}'|vmstat 1 2 \| tail -1 \| awk '\{print 100-\$15\}'|free \| grep Mem \| awk '\{print \$3\/\$2 \* 100\}'|free -m \| awk '\/\^Mem:\/ \{print \$3, \$2, \$3\/\$2 \* 100\}'|free -m \| awk '\/\^Mem:\/ \{print \$3, \$2, \$3\/\$2 \* 100\}')$/ },
     { name: 'filesystem-read', pattern: /^(mount \| grep "on .+ " \|\| echo ""|df -B1 --output=size,used,pcent .+ \| tail -1|chmod \+x .+)$/ },
     { name: 'postgres-dump', pattern: new RegExp(`^sudo -u postgres pg_dump ${env.dbName} > ${env.projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/db_dump\\.sql$`) },
     { name: 'tar-backup', pattern: /^tar -czf .+$/ },

@@ -402,6 +402,47 @@ Camada de execucao tecnica, enforcement, observabilidade, monitoramento, servico
 - o resumo `Redes Monitoradas` e o filtro por VLAN deixam de depender do carimbo fixo legado e passam a refletir a origem real do cliente
 - a heuristica de `clientes reais` no `engine-control` foi alinhada a essa mesma inferencia, evitando reconhecer apenas um subconjunto antigo de VLANs
 
+## Atualizacao operacional LGPD - 2026-04-26
+
+- corrigida falha parcial no modulo `LGPD & Proteção de Dados` que afetava `painel LGPD`, `estrutura institucional` e `atividades de tratamento`
+- causa confirmada: concorrencia no `ensureSchema()` do backend LGPD quando a tela disparava varias requisicoes simultaneas no carregamento inicial
+- erro reproduzido via HTTP local como `tuple concurrently updated`
+- `backend/src/modules/lgpd/lgpd-service.ts` passou a inicializar o schema LGPD em modo `single-flight`, compartilhando a mesma promise entre chamadas concorrentes
+- isso impede DDL simultaneo no caminho quente de leitura e estabiliza os endpoints:
+  - `GET /api/lgpd/dashboard`
+  - `GET /api/lgpd/program-settings`
+  - `GET /api/lgpd/processing-activities`
+  - `GET /api/lgpd/requests`
+  - `GET /api/lgpd/incidents`
+  - `GET /api/lgpd/audit`
+- `npm run build` do backend foi executado com sucesso
+- `bcc-backend` foi reiniciado no `PM2`
+- validacao paralela pos-restart confirmou `200` em todos os endpoints LGPD listados
+- alteracoes paralelas existentes em `backend-proxy/regras/listas/blocked_domains.txt`, `backend/src/modules/control/control-routes.ts` e `frontend/src/pages/Control.jsx` foram preservadas e nao fizeram parte desta correcao
+
+## Atualizacao operacional DNS Institucional - 2026-04-26
+
+- corrigida falha parcial no modulo `DNS Institucional` dentro de `Controle de Rede`
+- causa confirmada: o frontend chamava `/api/dns/zones`, mas o Nginx encaminha `/api/dns/*` para o `backend-proxy`, que ainda nao expunha as rotas legadas de zonas DNS
+- `backend-proxy/src/routes/dns-routes.ts` passou a expor compatibilidade para:
+  - `GET /api/dns/zones`
+  - `POST /api/dns/zones/add`
+  - `POST /api/dns/zones/delete`
+  - `POST /api/dns/zones/verify`
+  - `POST /api/dns/cache/flush`
+- as rotas usam a tabela `net_dns_rules`, sincronizam `/etc/unbound/unbound.conf.d/custom-zones.conf` e recarregam o `Unbound` quando necessario
+- `npm run build` do `backend-proxy` foi executado com sucesso
+- `backend-proxy` foi reiniciado no `PM2`
+- validacao local no backend-proxy confirmou `200` para:
+  - `GET /api/dns/stats`
+  - `GET /api/dns/vlan-summary`
+  - `GET /api/dns/zones`
+- corrigida tambem a leitura de latencia do card do modulo:
+  - `/api/dns/stats` passou a calcular `stats.avg_latency` a partir de probes reais com `dig @127.0.0.1`
+  - quando o `dig` retorna `Query time: 0 msec` por resposta em cache local, o backend usa o tempo real decorrido da probe como fallback
+  - isso impede o card de latencia de permanecer artificialmente em `0 ms`
+  - validacao pos-restart confirmou `avg_latency` retornando valor positivo e `latency_samples_ms` populado
+
 ## Proximo passo recomendado
 
 - executar validacao em ambiente real com eventos novos do `Squid` e do `Unbound` para confirmar:
@@ -417,6 +458,47 @@ Ao final de cada sessao:
 2. registrar o que mudou
 3. registrar o estado atual
 4. registrar o proximo passo recomendado
+
+## Atualizacao operacional de enforcement - 2026-04-27
+
+- sistema versionado nesta rodada:
+  - `frontend`: `8.1.0`
+  - `backend`: `1.1.0`
+  - `backend-proxy`: `1.1.0`
+- regra institucional consolidada: `VIP` e `Exceção Esporádica` sao excecoes especiais e nao devem ser apagadas nem afetadas por expurgos automaticos de conexao
+- clientes fora de `VIP` e fora de `Exceção Esporádica` ativa passam a compor o `oceano` operacional
+- o `backend-proxy` passou a filtrar clientes com bypass ativo antes de derrubar conexoes persistentes
+- o expurgo automatico de sessoes sociais atua somente no `oceano` e remove estados `conntrack` de:
+  - `TCP/80`
+  - `TCP/443`
+  - `UDP/443` para QUIC/HTTP3
+  - `TCP/853` para DoT
+- o objetivo e impedir que apps Android mantenham sessoes abertas de Instagram, Facebook, TikTok e CDNs correlatas apos a politica bloquear o DNS
+- o fluxo de aplicacao de politicas passou a executar fechamento automatico de sessoes sociais recentes, salvo quando explicitamente desativado por opcao tecnica
+- a revogacao de `VIP` e `Exceção Esporádica` passou a derrubar sessoes persistentes do IP revogado depois da remocao formal do bypass
+- a remocao de VIP foi endurecida para exclusao logica com auditoria:
+  - `active = false`
+  - `lifecycle_status = revoked`
+  - `revoked_by`
+  - `revoked_at`
+- o `DELETE /api/bloqueios-liberacoes/exceptions/:id` passou a ser idempotente, retornando sucesso quando o registro ja estiver ausente para evitar erro falso na UI
+- a rota `POST /api/bloqueios-liberacoes/sporadic-exceptions` foi validada no `backend-proxy` e deixou de responder `404` apos rebuild/restart
+- a regra operacional do `PontoRH` foi preservada:
+  - OpenDNS `208.67.220.220` e `208.67.222.222` liberados para DNS classico `TCP/UDP 53` na VLAN 10
+  - DoH/DoT e demais DNS externos continuam bloqueados
+- `sso.acesso.gov.br`, `acesso.gov.br`, `gov.br` e subdominios `*.gov.br` foram protegidos contra bloqueio por politica institucional
+- o diagnostico do IP `192.168.10.134` confirmou que a falha no Chrome vinha de `DNS Seguro` apontando para `chrome.cloudflare-dns.com`
+- `chrome.cloudflare-dns.com` permanece bloqueado por seguranca, pois representa DoH externo capaz de burlar RPZ, LGPD e politicas institucionais
+- VLANs `30` e `70` tiveram escopo corrigido para remover `redes_sociais` da allowlist antiga
+- VLANs `10`, `30`, `50` e `70` agora convergem para a regra: redes sociais somente via `VIP` ou `Exceção Esporádica`
+- validacao operacional executada:
+  - `cd backend-proxy && npm run build`
+  - `pm2 restart backend-proxy --update-env`
+  - recompilacao de politicas via `policyCompilerService.compile`
+  - `unbound-control reload`
+  - `systemctl reload squid`
+  - expurgo manual inicial de sessoes sociais recentes do `oceano`
+  - confirmacao de que VIPs ativos permaneceram preservados
 
 ## Proximo passo recomendado
 

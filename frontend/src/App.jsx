@@ -147,12 +147,12 @@ export default function App() {
             href="https://jmbtecnologia.com.br"
             target="_blank"
             rel="noreferrer"
-            className="group inline-flex items-center gap-2 rounded-full border border-outline/12 bg-surface-high/68 px-3 py-2 text-[11px] font-medium tracking-tight text-on-surface/66 transition-all duration-200 hover:border-primary/18 hover:text-on-surface/86"
+            className="group inline-flex items-center gap-2 rounded-full border border-outline/12 bg-surface-high/64 px-3 py-1.5 text-[11px] font-medium tracking-tight text-on-surface/60 transition-all duration-200 hover:border-primary/18 hover:text-on-surface/82"
             title="JMB Tecnologia"
           >
             <span>Plataforma mantida por</span>
-            <span className="inline-flex items-center rounded-md border border-primary/16 bg-primary/10 px-2 py-1 text-[10px] font-semibold tracking-tight text-primary transition-colors duration-200 group-hover:border-primary/24">
-              JMB TECNOLOGIA
+            <span className="inline-flex h-6 items-center rounded-md border border-primary/12 bg-primary/10 px-1.5 transition-colors duration-200 group-hover:border-primary/22">
+              <img src="/jmb-logo-clean.png" alt="JMB Tecnologia" className="h-[18px] w-auto object-contain" />
             </span>
           </a>
         )}

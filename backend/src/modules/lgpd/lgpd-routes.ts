@@ -1,13 +1,19 @@
 import { Router } from 'express';
 import type { AuthenticatedRequest } from '../../middleware/auth';
 import { lgpdService } from './lgpd-service';
+import { getRequestActor } from '../../utils/request-context';
 
 const router = Router();
 
-const actorFromRequest = (req: AuthenticatedRequest) => ({
-    username: req.auth?.username || null,
-    userId: req.auth?.id || null,
-});
+const actorFromRequest = (req: AuthenticatedRequest) => {
+    const actor = getRequestActor(req);
+    return {
+        username: actor.username || 'sistema',
+        userId: actor.userId,
+        ipAddress: actor.ipAddress || null,
+        userAgent: actor.userAgent,
+    };
+};
 
 router.get('/dashboard', async (_req, res) => {
     try {

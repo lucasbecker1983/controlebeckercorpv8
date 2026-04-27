@@ -328,6 +328,12 @@ ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS effective_from TIMESTAMPTZ;
 ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
 ALTER TABLE domain_policies ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS actor_user_id BIGINT;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS actor_ip TEXT;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS actor_user_agent TEXT;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS route TEXT;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS method TEXT;
+ALTER TABLE action_audit_logs ADD COLUMN IF NOT EXISTS status_code INTEGER;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS governance_summary TEXT;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS legal_basis TEXT;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS requested_by VARCHAR(128);
@@ -450,6 +456,26 @@ FROM unified
 WHERE domain IS NOT NULL
   AND domain <> ''
 GROUP BY domain;
+
+CREATE TABLE IF NOT EXISTS sporadic_exceptions (
+    id BIGSERIAL PRIMARY KEY,
+    ip INET NOT NULL,
+    requested_by VARCHAR(128) NOT NULL,
+    approved_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+    custom_domains TEXT[] NOT NULL DEFAULT '{}',
+    justification TEXT NOT NULL,
+    duration_minutes INTEGER NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    revoked_by VARCHAR(128),
+    revoked_at TIMESTAMPTZ,
+    created_by VARCHAR(128) NOT NULL DEFAULT 'system',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sporadic_exceptions_active_expires ON sporadic_exceptions (active, expires_at);
+CREATE INDEX IF NOT EXISTS idx_sporadic_exceptions_ip ON sporadic_exceptions (ip);
 `;
 
 const DEFAULT_VLANS = MANAGED_BLOCKING_VLAN_IDS.map((vlanId) => ({

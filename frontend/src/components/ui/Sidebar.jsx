@@ -30,10 +30,7 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose })
         <div className="border-b border-outline/10 px-[var(--sidebar-padding)] py-[var(--sidebar-padding)]">
           <div className="relative">
             <div className="flex min-w-0 flex-col items-center text-center">
-              <div className="flex w-full justify-center rounded-[24px] border border-outline/12 bg-surface-high/72 px-3 py-3.5 shadow-[var(--shadow-soft)]">
-                <img src="/logotipo-jmb.png" alt="JMB Tecnologia" className="h-auto w-full max-w-[160px] object-contain" />
-              </div>
-              <div className="mt-2.5 inline-flex rounded-full border border-primary/16 bg-primary/10 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-primary">
+              <div className="inline-flex rounded-full border border-primary/16 bg-primary/10 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-primary">
                 SGCG
               </div>
               <h2 className="mt-2 text-sm font-black leading-tight tracking-tight text-on-surface xl:text-base">

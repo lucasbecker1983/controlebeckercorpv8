@@ -3,10 +3,12 @@ import { pool } from '../../config/db';
 type LgpdActor = {
     username?: string | null;
     userId?: number | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
 };
 
 type LgpdAuditInput = {
-    entityType: 'processing' | 'request' | 'incident';
+    entityType: 'processing' | 'request' | 'incident' | 'program' | 'domain_policy';
     entityId?: number | null;
     action: string;
     actor?: LgpdActor;
@@ -111,47 +113,54 @@ const requireFields = (payload: Record<string, any>, fields: string[]) => {
     if (missing) throw new Error(`Campo obrigatório ausente: ${missing}`);
 };
 
+let schemaReady = false;
+let schemaPromise: Promise<void> | null = null;
+
 export const lgpdService = {
     async ensureSchema() {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS lgpd_processing_activities (
-                id BIGSERIAL PRIMARY KEY,
-                process_name TEXT NOT NULL,
-                purpose TEXT NOT NULL,
-                legal_basis TEXT NOT NULL,
-                controller_name TEXT,
-                operator_name TEXT,
-                data_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
-                data_subject_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
-                shared_with JSONB NOT NULL DEFAULT '[]'::jsonb,
-                storage_location TEXT,
-                retention_period TEXT,
-                security_measures TEXT,
-                international_transfer BOOLEAN NOT NULL DEFAULT FALSE,
-                transfer_details TEXT,
-                risk_level TEXT NOT NULL DEFAULT 'medio',
-                status TEXT NOT NULL DEFAULT 'mapeado',
-                created_by TEXT,
-                updated_by TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
+        if (schemaReady) return;
+        if (schemaPromise) return schemaPromise;
 
-            CREATE TABLE IF NOT EXISTS lgpd_data_subject_requests (
-                id BIGSERIAL PRIMARY KEY,
-                requester_name TEXT NOT NULL,
-                requester_email TEXT,
-                requester_document TEXT,
-                request_type TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'recebido',
-                due_date DATE,
-                response_summary TEXT,
-                notes TEXT,
-                created_by TEXT,
-                updated_by TEXT,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
+        schemaPromise = (async () => {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS lgpd_processing_activities (
+                    id BIGSERIAL PRIMARY KEY,
+                    process_name TEXT NOT NULL,
+                    purpose TEXT NOT NULL,
+                    legal_basis TEXT NOT NULL,
+                    controller_name TEXT,
+                    operator_name TEXT,
+                    data_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    data_subject_categories JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    shared_with JSONB NOT NULL DEFAULT '[]'::jsonb,
+                    storage_location TEXT,
+                    retention_period TEXT,
+                    security_measures TEXT,
+                    international_transfer BOOLEAN NOT NULL DEFAULT FALSE,
+                    transfer_details TEXT,
+                    risk_level TEXT NOT NULL DEFAULT 'medio',
+                    status TEXT NOT NULL DEFAULT 'mapeado',
+                    created_by TEXT,
+                    updated_by TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS lgpd_data_subject_requests (
+                    id BIGSERIAL PRIMARY KEY,
+                    requester_name TEXT NOT NULL,
+                    requester_email TEXT,
+                    requester_document TEXT,
+                    request_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'recebido',
+                    due_date DATE,
+                    response_summary TEXT,
+                    notes TEXT,
+                    created_by TEXT,
+                    updated_by TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
 
             CREATE TABLE IF NOT EXISTS lgpd_incidents (
                 id BIGSERIAL PRIMARY KEY,
@@ -185,6 +194,8 @@ export const lgpdService = {
                 message TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            ALTER TABLE lgpd_audit_logs ADD COLUMN IF NOT EXISTS actor_ip TEXT;
+            ALTER TABLE lgpd_audit_logs ADD COLUMN IF NOT EXISTS actor_user_agent TEXT;
 
             CREATE TABLE IF NOT EXISTS lgpd_program_settings (
                 id SMALLINT PRIMARY KEY DEFAULT 1,
@@ -223,20 +234,30 @@ export const lgpdService = {
             VALUES (1)
             ON CONFLICT (id) DO NOTHING;
         `);
+        })();
+
+        try {
+            await schemaPromise;
+            schemaReady = true;
+        } finally {
+            schemaPromise = null;
+        }
     },
 
     async logAudit(input: LgpdAuditInput) {
         await this.ensureSchema();
         await pool.query(
             `INSERT INTO lgpd_audit_logs
-                (entity_type, entity_id, action, actor_username, actor_user_id, payload, success, message)
-             VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8)`,
+                (entity_type, entity_id, action, actor_username, actor_user_id, actor_ip, actor_user_agent, payload, success, message)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
             [
                 input.entityType,
                 input.entityId || null,
                 input.action,
-                input.actor?.username || null,
+                input.actor?.username || 'sistema',
                 input.actor?.userId || null,
+                input.actor?.ipAddress || null,
+                input.actor?.userAgent || null,
                 JSON.stringify(input.payload || {}),
                 input.success !== false,
                 input.message || null,

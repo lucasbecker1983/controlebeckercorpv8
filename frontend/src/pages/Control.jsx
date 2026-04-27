@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X } from 'lucide-react';
+import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
@@ -9,6 +9,8 @@ export default function ControlPage() {
     const [clamav, setClamav] = useState(null);
     const [selectedService, setSelectedService] = useState(null);
     const [actionLoading, setActionLoading] = useState(false);
+    const [tacticalLoading, setTacticalLoading] = useState('');
+    const [findingLoading, setFindingLoading] = useState('');
     const [servicesError, setServicesError] = useState('');
     const [clamavError, setClamavError] = useState('');
     
@@ -39,7 +41,35 @@ export default function ControlPage() {
     // Ações táticas globais
     const runTactical = async (action, label) => {
         if(!confirm(`Executar comando tático: ${label}?`)) return;
-        try { await api.post('/api/control/tactical', { action }); alert(`Executado com sucesso!`); loadData(); } catch { alert("Falha na ação."); }
+        setTacticalLoading(action);
+        try {
+            const res = await api.post('/api/control/tactical', { action });
+            if (action === 'clamav_scan') {
+                if (res?.data?.queued) {
+                    alert('Varredura institucional iniciada em segundo plano. Acompanhe o status nas últimas execuções do ClamAV.');
+                    loadData();
+                    return;
+                }
+                const infectedFiles = Number(res?.data?.infected_files || 0);
+                alert(infectedFiles > 0
+                    ? `Varredura concluída com ${infectedFiles} possível(is) achado(s). Verifique o histórico do ClamAV.`
+                    : 'Varredura antimalware concluída sem achados.');
+            } else if (action === 'clamav_update') {
+                alert('Assinaturas do ClamAV atualizadas.');
+            } else {
+                alert('Executado com sucesso!');
+            }
+            loadData();
+        } catch (error) {
+            const message = error?.response?.data?.error || '';
+            if (action === 'clamav_scan' && error?.response?.status === 409) {
+                alert('Já existe uma varredura antimalware em execução. Aguarde a conclusão antes de iniciar outra.');
+            } else {
+                alert(message || 'Falha na ação.');
+            }
+        } finally {
+            setTacticalLoading('');
+        }
     };
 
     // Ações individuais no Modal
@@ -53,6 +83,28 @@ export default function ControlPage() {
         } catch (e) {
             alert("Erro ao enviar comando ao serviço.");
             setActionLoading(false);
+        }
+    };
+
+    const decideFinding = async (finding, action) => {
+        if (action === 'clean') {
+            alert('Limpeza automática indisponível: o ClamAV não oferece desinfecção genérica confiável neste fluxo. Use quarentena ou exclusão.');
+            return;
+        }
+        const label = action === 'quarantine' ? 'colocar em quarentena' : 'excluir definitivamente';
+        if (!confirm(`Confirmar decisão: ${label}?\n\nArquivo: ${finding.file_path}`)) return;
+        setFindingLoading(`${finding.id}:${action}`);
+        try {
+            await api.post(`/api/control/clamav/findings/${finding.id}/decision`, {
+                action,
+                decided_by: 'operador',
+            });
+            alert(action === 'quarantine' ? 'Arquivo enviado para quarentena.' : 'Arquivo excluído.');
+            loadData();
+        } catch (error) {
+            alert('Falha ao executar a decisão sobre o achado.');
+        } finally {
+            setFindingLoading('');
         }
     };
 
@@ -137,6 +189,19 @@ export default function ControlPage() {
                         <StatusChip label={`Daemon ${clamav?.services?.daemon || '—'}`} tone={clamav?.services?.daemon === 'active' ? 'success' : 'warning'} />
                         <StatusChip label={`Assinaturas ${clamav?.services?.freshclam || '—'}`} tone={clamav?.services?.freshclam === 'active' ? 'success' : 'warning'} />
                         <StatusChip label={`On-access ${clamav?.services?.clamonacc || '—'}`} tone={clamav?.services?.clamonacc === 'active' ? 'success' : 'warning'} />
+                        {clamav?.running_scan ? <StatusChip label="Varredura em execução" tone="warning" /> : null}
+                        <ActionButton
+                            tone="primary"
+                            icon={ScanSearch}
+                            disabled={tacticalLoading === 'clamav_scan' || Boolean(clamav?.running_scan)}
+                            onClick={() => runTactical('clamav_scan', 'Verificar vírus e malwares')}
+                        >
+                            {tacticalLoading === 'clamav_scan'
+                                ? 'Solicitando varredura...'
+                                : clamav?.running_scan
+                                    ? 'Varredura em execução'
+                                    : 'Verificar vírus e malwares'}
+                        </ActionButton>
                     </div>
                 </div>
 
@@ -187,7 +252,10 @@ export default function ControlPage() {
                                         <div className="mt-1 text-xs text-on-surface/62">{new Date(run.created_at).toLocaleString('pt-BR')}</div>
                                     </div>
                                     <div className="flex flex-wrap gap-2">
-                                        <StatusChip label={run.success ? 'Concluído' : 'Falha'} tone={run.success ? 'success' : 'danger'} />
+                                        <StatusChip
+                                            label={run.status === 'running' ? 'Em execução' : run.success ? 'Concluído' : 'Falha'}
+                                            tone={run.status === 'running' ? 'warning' : run.success ? 'success' : 'danger'}
+                                        />
                                         <StatusChip label={`${run.infected_files || 0} achados`} tone={Number(run.infected_files || 0) > 0 ? 'warning' : 'primary'} />
                                     </div>
                                 </div>
@@ -195,6 +263,85 @@ export default function ControlPage() {
                         )) : (
                             <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
                                 Ainda não há execução registrada do ClamAV nesta camada institucional.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <div className="text-sm font-bold text-on-surface">Achados e decisão operacional</div>
+                            <div className="mt-1 text-xs text-on-surface/62">
+                                Esta camada permite decisão real sobre cada arquivo detectado. Limpeza automática permanece indisponível por limitação técnica do engine.
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            <StatusChip label={`${(clamav?.findings || []).filter((item) => item.decision_status === 'pending').length} pendentes`} tone="warning" />
+                            <StatusChip label={`${(clamav?.findings || []).filter((item) => item.decision_status === 'quarantined').length} em quarentena`} tone="primary" />
+                            <StatusChip label={`${(clamav?.findings || []).filter((item) => item.decision_status === 'deleted').length} excluídos`} tone="danger" />
+                        </div>
+                    </div>
+                    <div className="mt-3 grid gap-3">
+                        {(clamav?.findings || []).length ? clamav.findings.map((finding) => (
+                            <Surface key={finding.id} stripe={false} className="p-4">
+                                <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <StatusChip
+                                                label={finding.decision_status === 'pending'
+                                                    ? 'Pendente'
+                                                    : finding.decision_status === 'quarantined'
+                                                        ? 'Em quarentena'
+                                                        : finding.decision_status === 'deleted'
+                                                            ? 'Excluído'
+                                                            : finding.decision_status}
+                                                tone={finding.decision_status === 'pending' ? 'warning' : finding.decision_status === 'deleted' ? 'danger' : 'primary'}
+                                            />
+                                            {finding.signature ? <StatusChip label={finding.signature} tone="danger" /> : null}
+                                        </div>
+                                        <div className="mt-3 break-all text-sm font-bold text-on-surface">{finding.file_path}</div>
+                                        <div className="mt-2 text-xs text-on-surface/62">
+                                            Detectado em {new Date(finding.created_at).toLocaleString('pt-BR')}
+                                            {finding.quarantined_path ? ` • quarentena: ${finding.quarantined_path}` : ''}
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {finding.decision_status === 'pending' ? (
+                                            <>
+                                                <ActionButton
+                                                    tone="primary"
+                                                    icon={Archive}
+                                                    disabled={findingLoading === `${finding.id}:quarantine`}
+                                                    onClick={() => decideFinding(finding, 'quarantine')}
+                                                >
+                                                    {findingLoading === `${finding.id}:quarantine` ? 'Quarentenando...' : 'Quarentena'}
+                                                </ActionButton>
+                                                <ActionButton
+                                                    tone="danger"
+                                                    icon={Trash2}
+                                                    disabled={findingLoading === `${finding.id}:delete`}
+                                                    onClick={() => decideFinding(finding, 'delete')}
+                                                >
+                                                    {findingLoading === `${finding.id}:delete` ? 'Excluindo...' : 'Excluir'}
+                                                </ActionButton>
+                                                <ActionButton
+                                                    tone="ghost"
+                                                    icon={ShieldBan}
+                                                    onClick={() => decideFinding(finding, 'clean')}
+                                                >
+                                                    Limpar indisponível
+                                                </ActionButton>
+                                            </>
+                                        ) : (
+                                            <StatusChip label={`Decisão: ${finding.decided_action || 'registrada'}`} tone="success" />
+                                        )}
+                                    </div>
+                                </div>
+                            </Surface>
+                        )) : (
+                            <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
+                                Nenhum achado antimalware pendente de decisão foi registrado até o momento.
                             </div>
                         )}
                     </div>

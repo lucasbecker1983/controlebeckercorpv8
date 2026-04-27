@@ -164,13 +164,15 @@ router.post('/refresh', refreshLimiter, async (req, res) => {
 router.post('/logout', async (req: AuthenticatedRequest, res) => {
     const meta = authSecurityService.requestMeta(req);
     const refreshToken = authSecurityService.readRefreshToken(req);
+    let sessionUser: any = null;
     if (refreshToken) {
+        sessionUser = await authSecurityService.findSessionByRefreshToken(refreshToken);
         await authSecurityService.revokeByRefreshToken(refreshToken, 'logout');
     }
     authSecurityService.clearAuthCookies(req, res);
     await authSecurityService.logActivity({
-        userId: req.auth?.id,
-        username: undefined,
+        userId: req.auth?.id || sessionUser?.user_id || null,
+        username: req.auth?.username || sessionUser?.username || 'sistema',
         action: 'auth.logout',
         route: meta.route,
         method: meta.method,

@@ -43,8 +43,7 @@ export default function Login({ onLogin }) {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.2),transparent_24%),linear-gradient(135deg,color-mix(in_srgb,var(--color-primary)_28%,#08111c)_0%,color-mix(in_srgb,var(--color-secondary)_24%,#0f172a)_55%,#07111b_100%)]" />
         <div className="absolute inset-0 opacity-[0.12]" style={{ backgroundImage: 'linear-gradient(rgba(255,255,255,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.16) 1px, transparent 1px)', backgroundSize: '28px 28px' }} />
         <div className="relative z-10 mx-auto max-w-xl">
-          <img src="/jmb-logo.png" alt="JMB Tecnologia" className="h-11 w-auto" />
-          <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-white/14 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/84 backdrop-blur-md">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/14 bg-white/10 px-3 py-2 text-[10px] font-black uppercase tracking-[0.2em] text-white/84 backdrop-blur-md">
             <Building2 size={13} />
             SGCG
           </div>
@@ -65,8 +64,7 @@ export default function Login({ onLogin }) {
 
         <div className="relative z-10 flex w-full max-w-5xl flex-col justify-between p-16 xl:p-20">
           <div>
-            <img src="/jmb-logo.png" alt="JMB Tecnologia" className="h-14 w-auto" />
-            <div className="mt-8 inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-white/84 backdrop-blur-md">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/16 bg-white/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.22em] text-white/84 backdrop-blur-md">
               <Building2 size={14} />
               SGCG
             </div>
@@ -97,9 +95,8 @@ export default function Login({ onLogin }) {
 
       <div className="relative z-20 flex w-full flex-1 flex-col bg-surface px-5 pb-8 pt-6 transition-colors duration-300 sm:px-8 sm:pb-10 md:px-10 lg:w-[540px] lg:flex-none lg:border-l lg:border-outline/10 lg:px-12 lg:py-10 lg:shadow-[-20px_0_50px_rgba(0,0,0,0.08)] xl:px-16">
         <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center lg:max-w-sm">
-            <div className="mb-8 text-center lg:mb-10 lg:text-left">
-                <img src="/jmb-logo.png" alt="JMB Tecnologia" className="mx-auto h-10 w-auto sm:h-12 lg:mx-0" />
-                <div className="mx-auto mb-5 mt-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 sm:h-16 sm:w-16 lg:mx-0 lg:mb-6 lg:mt-6">
+            <div className="mb-8 text-center lg:mb-10">
+                <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 sm:h-16 sm:w-16 lg:mb-6">
                     <ShieldCheck size={32} className="text-primary" />
                 </div>
                 <div className="text-[11px] font-black uppercase tracking-[0.22em] text-primary">SGCG</div>
@@ -148,6 +145,18 @@ export default function Login({ onLogin }) {
                 </button>
             </form>
         </div>
+        <footer className="mt-8 flex w-full justify-end">
+          <a
+            href="https://jmbtecnologia.com.br"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-xs font-semibold text-on-surface/54 transition hover:text-primary"
+            aria-label="Abrir site da JMB Tecnologia"
+          >
+            <span>Desenvolvido por</span>
+            <img src="/jmb-logo-clean.png" alt="JMB Tecnologia" className="h-7 w-auto" />
+          </a>
+        </footer>
       </div>
     </div>
   );

@@ -6,6 +6,13 @@ import { isManagedBlockingVlan } from './blocking-release-scope';
 type PolicyType = 'allow' | 'block';
 type ScopeType = 'global' | 'vlan';
 
+type AuditContext = {
+    username?: string | null;
+    userId?: number | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+};
+
 type GovernanceMetadata = {
     summary: string;
     legal_basis: string | null;
@@ -211,8 +218,32 @@ const policyRowSelect = `
 `;
 
 export class DomainPolicyManagerService {
+    private lgpdAuditReady = false;
+
     async ensureReady() {
         await ensureBlockingReleaseSchema();
+        await this.ensureLgpdAuditSchema();
+    }
+
+    private async ensureLgpdAuditSchema() {
+        if (this.lgpdAuditReady) return;
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS lgpd_audit_logs (
+                id BIGSERIAL PRIMARY KEY,
+                entity_type TEXT NOT NULL,
+                entity_id BIGINT,
+                action TEXT NOT NULL,
+                actor_username TEXT,
+                actor_user_id BIGINT,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                success BOOLEAN NOT NULL DEFAULT TRUE,
+                message TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE lgpd_audit_logs ADD COLUMN IF NOT EXISTS actor_ip TEXT`);
+        await pool.query(`ALTER TABLE lgpd_audit_logs ADD COLUMN IF NOT EXISTS actor_user_agent TEXT`);
+        this.lgpdAuditReady = true;
     }
 
     private mapRow(row: any) {
@@ -259,6 +290,7 @@ export class DomainPolicyManagerService {
         policyId?: number | null;
         action: string;
         requestedBy: string;
+        auditContext?: AuditContext;
         payload?: any;
         result?: any;
         success: boolean;
@@ -275,6 +307,36 @@ export class DomainPolicyManagerService {
                 input.requestedBy,
                 JSON.stringify(input.payload || {}),
                 JSON.stringify(input.result || {}),
+                input.success,
+                input.message || null,
+            ],
+        );
+
+        await client.query(
+            `
+                INSERT INTO lgpd_audit_logs (
+                    entity_type,
+                    entity_id,
+                    action,
+                    actor_username,
+                    actor_user_id,
+                    actor_ip,
+                    actor_user_agent,
+                    payload,
+                    success,
+                    message
+                )
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)
+            `,
+            [
+                'domain_policy',
+                input.policyId || null,
+                input.action,
+                input.auditContext?.username || input.requestedBy || 'api',
+                input.auditContext?.userId || null,
+                input.auditContext?.ipAddress || null,
+                input.auditContext?.userAgent || null,
+                JSON.stringify(input.payload || {}),
                 input.success,
                 input.message || null,
             ],
@@ -453,14 +515,17 @@ export class DomainPolicyManagerService {
         }
     }
 
-    async create(payload: any, requestedBy = 'system') {
+    async create(payload: any, requestedBy = 'system', auditContext: AuditContext = {}) {
         await this.ensureReady();
         const name = String(payload?.name || '').trim();
         if (!name) throw new Error('Nome da política obrigatório');
         const policyType = normalizePolicyType(payload?.policy_type || payload?.policyType || payload?.type);
         const scope = normalizeScope(payload);
         const domains = normalizeDomainList(payload?.domains ?? payload?.entries);
-        const governance = resolveGovernanceMetadata(payload);
+        const governance = resolveGovernanceMetadata({
+            ...payload,
+            requested_by: payload?.requested_by || requestedBy,
+        });
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -488,7 +553,7 @@ export class DomainPolicyManagerService {
                         created_by,
                         updated_by
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $18)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19)
                     RETURNING *
                 `,
                 [
@@ -519,6 +584,7 @@ export class DomainPolicyManagerService {
                 policyId: rows[0].id,
                 action: 'domain_policy:create',
                 requestedBy,
+                auditContext,
                 payload,
                 result: synced,
                 success: true,
@@ -534,7 +600,7 @@ export class DomainPolicyManagerService {
         }
     }
 
-    async update(id: number, payload: any, requestedBy = 'system') {
+    async update(id: number, payload: any, requestedBy = 'system', auditContext: AuditContext = {}) {
         await this.ensureReady();
         const client = await pool.connect();
         try {
@@ -549,7 +615,10 @@ export class DomainPolicyManagerService {
             const domains = payload?.domains !== undefined || payload?.entries !== undefined
                 ? normalizeDomainList(payload?.domains ?? payload?.entries)
                 : current.domains;
-            const governance = resolveGovernanceMetadata(payload, current);
+            const governance = resolveGovernanceMetadata({
+                ...payload,
+                requested_by: payload?.requested_by || current.requested_by || requestedBy,
+            }, current);
 
             await client.query(
                 `
@@ -605,6 +674,7 @@ export class DomainPolicyManagerService {
                 policyId: id,
                 action: 'domain_policy:update',
                 requestedBy,
+                auditContext,
                 payload,
                 result: synced,
                 success: true,
@@ -620,7 +690,7 @@ export class DomainPolicyManagerService {
         }
     }
 
-    async duplicate(id: number, requestedBy = 'system') {
+    async duplicate(id: number, requestedBy = 'system', auditContext: AuditContext = {}) {
         await this.ensureReady();
         const source = await this.get(id);
         return this.create({
@@ -643,10 +713,10 @@ export class DomainPolicyManagerService {
             revoked_by: source.revoked_by,
             revoked_at: source.revoked_at,
             domains: source.domains,
-        }, requestedBy);
+        }, requestedBy, auditContext);
     }
 
-    async toggle(id: number, requestedBy = 'system') {
+    async toggle(id: number, requestedBy = 'system', auditContext: AuditContext = {}) {
         await this.ensureReady();
         const client = await pool.connect();
         try {
@@ -660,6 +730,7 @@ export class DomainPolicyManagerService {
                 policyId: id,
                 action: 'domain_policy:toggle',
                 requestedBy,
+                auditContext,
                 payload: { id },
                 result: synced,
                 success: true,
@@ -675,7 +746,7 @@ export class DomainPolicyManagerService {
         }
     }
 
-    async delete(id: number, requestedBy = 'system') {
+    async delete(id: number, requestedBy = 'system', auditContext: AuditContext = {}) {
         await this.ensureReady();
         const client = await pool.connect();
         try {
@@ -688,6 +759,7 @@ export class DomainPolicyManagerService {
                 policyId: id,
                 action: 'domain_policy:delete',
                 requestedBy,
+                auditContext,
                 payload: { id },
                 result: current,
                 success: true,

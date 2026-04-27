@@ -10,13 +10,13 @@ function HeaderChip({ icon: Icon, label, value, tone = 'default' }) {
       : 'border-outline/15 bg-surface-high/88 text-on-surface/88';
 
   return (
-    <div className={`inline-flex min-h-[var(--control-height)] min-w-[11rem] items-center gap-3 rounded-[20px] border px-[var(--chip-padding-x)] py-2 text-[11px] xl:text-[12px] ${toneClass}`}>
+    <div className={`flex h-11 min-w-0 items-center gap-2 rounded-2xl border px-3 text-[11px] ${toneClass}`}>
       <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/55 text-current dark:bg-white/8">
         <Icon size={15} className="shrink-0" />
       </div>
       <div className="min-w-0 leading-tight">
         <div className="truncate text-[10px] font-semibold tracking-tight opacity-72">{label}</div>
-        <div className="truncate text-sm font-semibold tracking-tight text-current">{value}</div>
+        <div className="truncate text-[12px] font-semibold tracking-tight text-current 2xl:text-sm">{value}</div>
       </div>
     </div>
   );
@@ -65,7 +65,7 @@ export default function Topbar({
 
   return (
     <header className="sticky top-0 z-30 border-b border-outline/10 bg-surface-low/78 px-[var(--app-shell-gutter-x)] py-2.5 backdrop-blur-[18px]">
-      <div className="mx-auto flex max-w-[var(--app-shell-content-max)] flex-wrap items-center justify-between gap-3">
+      <div className="mx-auto flex max-w-[var(--app-shell-content-max)] items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
           <button
             type="button"
@@ -75,11 +75,11 @@ export default function Topbar({
           >
             <Menu size={20} />
           </button>
-          <div className="hidden min-w-0 lg:block">
+          <div className="hidden w-64 shrink-0 min-w-0 xl:block 2xl:w-80">
             <div className="text-[11px] font-semibold tracking-tight text-primary">SGCG</div>
             <div className="mt-1 truncate text-sm font-semibold text-on-surface">Sistema de governança e controle governamental</div>
           </div>
-          <div className="hidden min-w-0 flex-1 flex-wrap items-center gap-2 lg:flex">
+          <div className="hidden min-w-0 flex-1 grid-cols-4 items-stretch gap-2 lg:grid">
             <HeaderChip icon={NetworkIcon} label="Gateway" value="186.251.14.25" tone={headerTone} />
             <HeaderChip icon={ShieldCheck} label="Status" value={gatewayOnline ? 'Online' : 'Offline'} tone={headerTone} />
             <HeaderChip icon={Clock3} label="Hora" value={currentTime} />

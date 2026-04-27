@@ -2,6 +2,7 @@ import https from 'https';
 import { URL } from 'url';
 import type { Request, Response, NextFunction } from 'express';
 import { env } from '../../config/env';
+import { getClientIp } from '../../utils/request-context';
 
 const proxyablePrefixes = [
     '/api/bloqueios-liberacoes',
@@ -21,17 +22,32 @@ const proxyablePrefixes = [
     '/api/dns/vip',
 ];
 
-const shouldProxy = (path: string) => proxyablePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+const proxyLocalRoutes = ['/api/proxy/stats', '/api/proxy/logs'];
 
-const sanitizeHeaders = (req: Request, bodyBuffer?: Buffer) => {
+const shouldProxy = (path: string) =>
+    !proxyLocalRoutes.some((local) => path === local || path.startsWith(`${local}/`)) &&
+    proxyablePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+
+const sanitizeHeaders = (req: Request & { auth?: { id?: number; username?: string } }, bodyBuffer?: Buffer) => {
     const headers: Record<string, string> = {};
-    const forwardable = ['authorization', 'content-type', 'accept', 'x-user', 'user-agent', 'cookie'];
+    const forwardable = ['authorization', 'content-type', 'accept', 'user-agent', 'cookie'];
 
     for (const headerName of forwardable) {
         const value = req.headers[headerName];
         if (typeof value === 'string' && value.length > 0) {
             headers[headerName] = value;
         }
+    }
+
+    const clientIp = getClientIp(req);
+    if (req.auth?.username) headers['x-user'] = req.auth.username;
+    if (req.auth?.id) headers['x-user-id'] = String(req.auth.id);
+    if (clientIp) headers['x-client-ip'] = clientIp;
+    const forwardedFor = req.headers['x-forwarded-for'];
+    if (typeof forwardedFor === 'string' && forwardedFor.length > 0) {
+        headers['x-forwarded-for'] = forwardedFor;
+    } else if (clientIp) {
+        headers['x-forwarded-for'] = clientIp;
     }
 
     if (bodyBuffer) {

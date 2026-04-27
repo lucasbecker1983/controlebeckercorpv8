@@ -5,11 +5,29 @@ import bcrypt from 'bcrypt';
 import argon2 from 'argon2';
 import { pool } from '../../config/db';
 import { env } from '../../config/env';
+import { getClientIp, getUserAgent } from '../../utils/request-context';
 
 export const ACCESS_COOKIE = 'sgcg_access';
 export const REFRESH_COOKIE = 'sgcg_refresh';
-const ACCESS_EXPIRES_IN = '30m';
+const ACCESS_EXPIRES_IN = env.jwtExpiresIn || '12h';
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const durationToMs = (value: string, fallbackMs: number) => {
+    const match = String(value || '').trim().match(/^(\d+)\s*(ms|s|m|h|d)?$/i);
+    if (!match) return fallbackMs;
+    const amount = Number(match[1]);
+    const unit = String(match[2] || 'ms').toLowerCase();
+    const multipliers: Record<string, number> = {
+        ms: 1,
+        s: 1000,
+        m: 60 * 1000,
+        h: 60 * 60 * 1000,
+        d: 24 * 60 * 60 * 1000,
+    };
+    return amount * (multipliers[unit] || 1);
+};
+
+const ACCESS_TTL_MS = durationToMs(ACCESS_EXPIRES_IN, 12 * 60 * 60 * 1000);
 
 type AppUser = {
     id: number;
@@ -85,15 +103,6 @@ const randomToken = () => crypto.randomBytes(48).toString('base64url');
 const randomId = () => crypto.randomUUID();
 
 const tokenExpiryDate = () => new Date(Date.now() + REFRESH_TTL_MS);
-
-const clientIp = (req: Request) => {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length) return forwarded.split(',')[0].trim();
-    if (Array.isArray(forwarded) && forwarded.length) return forwarded[0];
-    return req.ip || req.socket.remoteAddress || '';
-};
-
-const userAgent = (req: Request) => String(req.headers['user-agent'] || '');
 
 const normalizeUser = (user: AppUser): AuthUserPayload => ({
     id: Number(user.id),
@@ -255,6 +264,19 @@ export const authSecurityService = {
         );
     },
 
+    async findSessionByRefreshToken(refreshToken: string) {
+        const refreshHash = hashToken(refreshToken);
+        const result = await pool.query<SessionRow & AppUser>(
+            `SELECT s.*, u.username, u.role, u.display_name
+             FROM auth_refresh_sessions s
+             JOIN app_users u ON u.id = s.user_id
+             WHERE s.refresh_token_hash = $1
+             LIMIT 1`,
+            [refreshHash],
+        );
+        return result.rows[0] || null;
+    },
+
     async revokeByRefreshToken(refreshToken: string, reason: string) {
         const refreshHash = hashToken(refreshToken);
         await pool.query(
@@ -344,7 +366,7 @@ export const authSecurityService = {
     },
 
     setAuthCookies(req: Request, res: Response, accessToken: string, refreshToken: string) {
-        res.cookie(ACCESS_COOKIE, accessToken, makeCookieOptions(30 * 60 * 1000, req));
+        res.cookie(ACCESS_COOKIE, accessToken, makeCookieOptions(ACCESS_TTL_MS, req));
         res.cookie(REFRESH_COOKIE, refreshToken, makeCookieOptions(REFRESH_TTL_MS, req));
     },
 
@@ -355,8 +377,8 @@ export const authSecurityService = {
 
     requestMeta(req: Request): SessionMeta {
         return {
-            ipAddress: clientIp(req),
-            userAgent: userAgent(req),
+            ipAddress: getClientIp(req),
+            userAgent: getUserAgent(req),
             route: req.originalUrl || req.path,
             method: req.method,
         };
@@ -364,9 +386,22 @@ export const authSecurityService = {
 
     async listActivity(limit = 200) {
         const result = await pool.query(
-            `SELECT id, user_id, username, action, module_name, route, method, ip_address, user_agent, success, status, detail, created_at
-             FROM auth_activity_logs
-             ORDER BY created_at DESC
+            `SELECT l.id,
+                    l.user_id,
+                    COALESCE(l.username, u.username, 'sistema') AS username,
+                    l.action,
+                    l.module_name,
+                    l.route,
+                    l.method,
+                    l.ip_address,
+                    l.user_agent,
+                    l.success,
+                    l.status,
+                    l.detail,
+                    l.created_at
+             FROM auth_activity_logs l
+             LEFT JOIN app_users u ON u.id = l.user_id
+             ORDER BY l.created_at DESC
              LIMIT $1`,
             [limit],
         );

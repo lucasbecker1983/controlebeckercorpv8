@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import fs from 'fs';
 import { pool } from '../config/db';
 import { proxyEngineService } from '../services/proxy-module';
 import { ensureBlockingReleaseSchema } from '../services/blocking-release-schema-service';
@@ -26,6 +27,42 @@ const VLAN_META = new Map<number, { name: string; ip: string }>([
     [70, { name: 'VLAN 70 (Visitantes)', ip: '192.168.70.1/24' }],
     [80, { name: 'VLAN 80 (VOiP)', ip: '192.168.80.1/24' }],
 ]);
+
+const ensureNetDnsRulesSchema = async () => {
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS net_dns_rules (
+            id BIGSERIAL PRIMARY KEY,
+            domain TEXT NOT NULL UNIQUE,
+            target_ip TEXT NOT NULL,
+            type TEXT NOT NULL DEFAULT 'A',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+};
+
+const syncUnboundCustomZones = async () => {
+    await ensureNetDnsRulesSchema();
+    const { rows } = await pool.query('SELECT * FROM net_dns_rules ORDER BY id ASC');
+    let serverBlock = 'server:\n';
+    let forwardBlocks = '';
+
+    rows.forEach((row: any) => {
+        const type = String(row.type || 'A').toUpperCase();
+        const domain = String(row.domain || '').trim();
+        const targetIp = String(row.target_ip || '').trim();
+        if (!domain || !targetIp) return;
+
+        if (type === 'FWD') {
+            forwardBlocks += `\nforward-zone:\n    name: "${domain}"\n    forward-addr: ${targetIp}\n`;
+            return;
+        }
+
+        serverBlock += `    local-zone: "${domain}" redirect\n    local-data: "${domain} A ${targetIp}"\n`;
+    });
+
+    fs.writeFileSync('/etc/unbound/unbound.conf.d/custom-zones.conf', serverBlock + forwardBlocks);
+    await runCommand('systemctl', ['reload', 'unbound'], { elevated: true, allowFailure: true });
+};
 
 const parseUnboundCounter = (raw: string, metric: string) => {
     const match = raw.match(new RegExp(`${metric}=([\\d.]+)`));
@@ -71,21 +108,27 @@ const getUnboundOperationalStats = async () => {
 };
 
 const probeLatency = async (domain: string) => {
+    const startedAt = Date.now();
     const result = await runCommand('dig', ['+time=2', '+tries=1', '@127.0.0.1', domain, 'A', '+stats'], {
         elevated: true,
         allowFailure: true,
     });
+    const elapsedMs = Math.max(1, Date.now() - startedAt);
     const combined = `${result.stdout}\n${result.stderr}`;
     const match = combined.match(/Query time:\s*(\d+)\s*msec/i);
-    return match ? Number(match[1]) : null;
+    if (!match) return result.code === 0 ? elapsedMs : null;
+
+    const queryTime = Number(match[1]);
+    return queryTime > 0 ? queryTime : elapsedMs;
 };
 
 router.get('/stats', async (_req, res) => {
     try {
-        const [telemetryResult, unboundResult, statsResult] = await Promise.allSettled([
+        const [telemetryResult, unboundResult, statsResult, latencyResult] = await Promise.allSettled([
             proxyEngineService.dnsLoggerService.stats(),
             getUnboundHealth(),
             getUnboundOperationalStats(),
+            Promise.allSettled(DNS_LATENCY_PROBE_DOMAINS.map((domain) => probeLatency(domain))),
         ]);
         const telemetry = telemetryResult.status === 'fulfilled' ? telemetryResult.value : null;
         const unbound = unboundResult.status === 'fulfilled' ? unboundResult.value : {
@@ -98,6 +141,14 @@ router.get('/stats', async (_req, res) => {
             cache_hits: 0,
             avg_latency: 0,
         };
+        const latencySamples = latencyResult.status === 'fulfilled'
+            ? latencyResult.value
+                .map((result) => (result.status === 'fulfilled' ? result.value : null))
+                .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+            : [];
+        const measuredLatency = latencySamples.length
+            ? Math.round(latencySamples.reduce((sum, value) => sum + value, 0) / latencySamples.length)
+            : 0;
         const telemetryTotal = Number(telemetry?.total_hoje || telemetry?.totalQueries || 0);
 
         res.json({
@@ -108,8 +159,9 @@ router.get('/stats', async (_req, res) => {
             stats: {
                 total_queries: telemetryTotal || operational.total_queries || 0,
                 cache_hits: operational.cache_hits || 0,
-                avg_latency: operational.avg_latency || Number(telemetry?.avgLatency || 0),
+                avg_latency: measuredLatency || operational.avg_latency || Number(telemetry?.avgLatency || 0),
             },
+            latency_samples_ms: latencySamples,
         });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -236,6 +288,79 @@ router.get('/listas', async (_req, res) => {
         res.json(rows.map((row) => row.domain));
     } catch (error: any) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/zones', async (_req, res) => {
+    try {
+        await ensureNetDnsRulesSchema();
+        const { rows } = await pool.query('SELECT * FROM net_dns_rules ORDER BY id DESC');
+        res.json(rows);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao listar zonas DNS.' });
+    }
+});
+
+router.post('/zones/add', async (req, res) => {
+    const domain = String(req.body?.domain || '').trim();
+    const ip = String(req.body?.ip || req.body?.target_ip || '').trim();
+    const type = String(req.body?.type || 'A').trim().toUpperCase();
+
+    if (!domain || !ip) {
+        return res.status(400).json({ error: 'Domínio e IP de destino são obrigatórios.' });
+    }
+
+    try {
+        await ensureNetDnsRulesSchema();
+        await pool.query('DELETE FROM net_dns_rules WHERE domain = $1', [domain]);
+        await pool.query(
+            'INSERT INTO net_dns_rules (domain, target_ip, type) VALUES ($1, $2, $3)',
+            [domain, ip, type || 'A'],
+        );
+        await syncUnboundCustomZones();
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao criar zona DNS.' });
+    }
+});
+
+router.post('/zones/delete', async (req, res) => {
+    try {
+        await ensureNetDnsRulesSchema();
+        await pool.query('DELETE FROM net_dns_rules WHERE id = $1', [Number(req.body?.id || 0)]);
+        await syncUnboundCustomZones();
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao remover zona DNS.' });
+    }
+});
+
+router.post('/zones/verify', async (req, res) => {
+    const domain = String(req.body?.domain || '').trim();
+    const targetIp = String(req.body?.target_ip || req.body?.ip || '').trim();
+
+    if (!domain) {
+        return res.status(400).json({ error: 'Domínio é obrigatório.' });
+    }
+
+    try {
+        const result = await runCommand('dig', ['@127.0.0.1', domain, '+short'], {
+            elevated: true,
+            allowFailure: true,
+        });
+        const resolvedIp = result.stdout.split('\n').map((line) => line.trim()).find(Boolean) || null;
+        res.json({ match: targetIp ? resolvedIp === targetIp : Boolean(resolvedIp), resolved_to: resolvedIp });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao verificar zona DNS.' });
+    }
+});
+
+router.post('/cache/flush', async (_req, res) => {
+    try {
+        await runCommand('unbound-control', ['flush_zone', '.'], { elevated: true, allowFailure: true });
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao limpar cache DNS.' });
     }
 });
 

@@ -26,7 +26,13 @@ export const requireJwt = (req: Request, res: Response, next: NextFunction) => {
     }
 
     try {
-        jwt.verify(token, env.jwtSecret);
+        const decoded = jwt.verify(token, env.jwtSecret) as any;
+        (req as any).auth = {
+            id: decoded?.id,
+            username: decoded?.username,
+            role: decoded?.role,
+            name: decoded?.name,
+        };
         next();
     } catch {
         return res.status(401).json({ error: 'Token invalido.' });

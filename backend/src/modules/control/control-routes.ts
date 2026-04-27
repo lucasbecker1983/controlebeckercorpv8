@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { execCmd } from '../../utils/sys';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
+import { execFile } from 'child_process';
+import fs from 'fs';
+import path from 'path';
 
 const router = Router();
 
@@ -12,10 +15,37 @@ const ALLOWED_SERVICES = [
 ];
 
 const CLAMAV_SCAN_PATHS = [
+    env.cftvMount,
+    env.nextcloudMount,
+].filter(Boolean);
+const CLAMAV_ALLOWED_SCAN_ROOTS = [
     env.projectRoot,
     env.cftvMount,
     env.nextcloudMount,
 ].filter(Boolean);
+const CLAMAV_QUARANTINE_DIR = '/root/quarantine';
+let clamavScanPromise: Promise<void> | null = null;
+
+type ClamExecResult = {
+    code: number;
+    stdout: string;
+    stderr: string;
+};
+
+const execClam = (command: string, args: string[]) => new Promise<ClamExecResult>((resolve, reject) => {
+    execFile(command, args, { timeout: 30 * 60 * 1000, maxBuffer: 32 * 1024 * 1024 }, (error: any, stdout, stderr) => {
+        if (error && typeof error.code !== 'number') {
+            reject(error);
+            return;
+        }
+
+        resolve({
+            code: typeof error?.code === 'number' ? error.code : 0,
+            stdout: String(stdout || ''),
+            stderr: String(stderr || ''),
+        });
+    });
+});
 
 async function ensureAntimalwareSchema() {
     await pool.query(`
@@ -23,36 +53,197 @@ async function ensureAntimalwareSchema() {
             id BIGSERIAL PRIMARY KEY,
             action TEXT NOT NULL,
             target_paths JSONB NOT NULL DEFAULT '[]'::jsonb,
+            status TEXT NOT NULL DEFAULT 'completed',
             success BOOLEAN NOT NULL DEFAULT FALSE,
             infected_files INTEGER NOT NULL DEFAULT 0,
             output TEXT,
+            started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            finished_at TIMESTAMPTZ,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
 
         CREATE INDEX IF NOT EXISTS idx_control_antimalware_runs_created_at
             ON control_antimalware_runs(created_at DESC);
+        ALTER TABLE control_antimalware_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'completed';
+        ALTER TABLE control_antimalware_runs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+        ALTER TABLE control_antimalware_runs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMPTZ;
+
+        CREATE TABLE IF NOT EXISTS control_antimalware_findings (
+            id BIGSERIAL PRIMARY KEY,
+            run_id BIGINT NOT NULL REFERENCES control_antimalware_runs(id) ON DELETE CASCADE,
+            file_path TEXT NOT NULL,
+            signature TEXT,
+            decision_status TEXT NOT NULL DEFAULT 'pending',
+            decided_action TEXT,
+            decided_by TEXT,
+            decision_notes TEXT,
+            quarantined_path TEXT,
+            decided_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_control_antimalware_findings_created_at
+            ON control_antimalware_findings(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_control_antimalware_findings_status
+            ON control_antimalware_findings(decision_status, created_at DESC);
     `);
 }
 
 async function recordAntimalwareRun(payload: {
     action: string;
     targetPaths?: string[];
+    status?: string;
     success: boolean;
     infectedFiles?: number;
     output?: string;
+    findings?: Array<{ filePath: string; signature: string | null }>;
+    startedAt?: string | Date;
+    finishedAt?: string | Date | null;
 }) {
     await ensureAntimalwareSchema();
-    await pool.query(
-        `INSERT INTO control_antimalware_runs (action, target_paths, success, infected_files, output)
-         VALUES ($1, $2::jsonb, $3, $4, $5)`,
-        [
-            payload.action,
-            JSON.stringify(payload.targetPaths || []),
-            payload.success,
-            payload.infectedFiles || 0,
-            payload.output || null,
-        ],
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const runResult = await client.query(
+            `INSERT INTO control_antimalware_runs (action, target_paths, status, success, infected_files, output, started_at, finished_at)
+             VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8)
+             RETURNING id`,
+            [
+                payload.action,
+                JSON.stringify(payload.targetPaths || []),
+                payload.status || 'completed',
+                payload.success,
+                payload.infectedFiles || 0,
+                payload.output || null,
+                payload.startedAt || new Date().toISOString(),
+                payload.finishedAt || null,
+            ],
+        );
+        const runId = Number(runResult.rows[0]?.id || 0);
+        for (const finding of payload.findings || []) {
+            await client.query(
+                `INSERT INTO control_antimalware_findings (run_id, file_path, signature)
+                 VALUES ($1, $2, $3)`,
+                [runId, finding.filePath, finding.signature || null],
+            );
+        }
+        await client.query('COMMIT');
+        return runId;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+async function updateAntimalwareRun(runId: number, payload: {
+    status: string;
+    success: boolean;
+    infectedFiles?: number;
+    output?: string;
+    findings?: Array<{ filePath: string; signature: string | null }>;
+}) {
+    await ensureAntimalwareSchema();
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            `UPDATE control_antimalware_runs
+             SET status = $2,
+                 success = $3,
+                 infected_files = $4,
+                 output = $5,
+                 finished_at = NOW()
+             WHERE id = $1`,
+            [runId, payload.status, payload.success, payload.infectedFiles || 0, payload.output || null],
+        );
+        await client.query(`DELETE FROM control_antimalware_findings WHERE run_id = $1`, [runId]);
+        for (const finding of payload.findings || []) {
+            await client.query(
+                `INSERT INTO control_antimalware_findings (run_id, file_path, signature)
+                 VALUES ($1, $2, $3)`,
+                [runId, finding.filePath, finding.signature || null],
+            );
+        }
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
+
+const parseInfectedFiles = (output: string) => Number(output.match(/Infected files:\s*(\d+)/i)?.[1] || 0);
+const parseScannedFiles = (output: string) => Number(output.match(/Scanned files:\s*(\d+)/i)?.[1] || 0);
+const parseFindings = (output: string) => output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith('FOUND'))
+    .map((line) => {
+        const match = line.match(/^(.*?):\s+(.+?)\s+FOUND$/);
+        return {
+            filePath: match?.[1]?.trim() || line,
+            signature: match?.[2]?.trim() || null,
+        };
+    });
+
+const moveToQuarantine = async (filePath: string) => {
+    await fs.promises.mkdir(CLAMAV_QUARANTINE_DIR, { recursive: true });
+    const safeName = `${Date.now()}-${path.basename(filePath)}`;
+    const targetPath = path.join(CLAMAV_QUARANTINE_DIR, safeName);
+    try {
+        await fs.promises.rename(filePath, targetPath);
+    } catch (error: any) {
+        if (error?.code !== 'EXDEV') throw error;
+        await fs.promises.copyFile(filePath, targetPath);
+        await fs.promises.unlink(filePath);
+    }
+    return targetPath;
+};
+
+const resolveRequestedScanPaths = (rawPaths: unknown) => {
+    const requested = Array.isArray(rawPaths)
+        ? rawPaths.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+    if (!requested.length) return CLAMAV_SCAN_PATHS;
+    return requested.filter((candidate) => CLAMAV_ALLOWED_SCAN_ROOTS.some((allowed) => candidate === allowed || candidate.startsWith(`${allowed}/`)));
+};
+
+async function hasRunningClamdscanProcess() {
+    const result = await execClam('bash', ['-lc', "pgrep -fa 'clamdscan --multiscan --fdpass'"]);
+    return result.code === 0 && Boolean(result.stdout.trim());
+}
+
+async function getRunningAntimalwareRun() {
+    await ensureAntimalwareSchema();
+    const result = await pool.query(
+        `SELECT id, action, target_paths, status, success, infected_files, output, started_at, finished_at, created_at
+         FROM control_antimalware_runs
+         WHERE status = 'running'
+         ORDER BY started_at DESC
+         LIMIT 1`,
     );
+    return result.rows[0] || null;
+}
+
+async function reconcileRunningAntimalwareRun() {
+    const runningRun = await getRunningAntimalwareRun();
+    if (!runningRun) return null;
+    if (clamavScanPromise) return runningRun;
+    const processRunning = await hasRunningClamdscanProcess();
+    if (processRunning) return runningRun;
+
+    await updateAntimalwareRun(Number(runningRun.id), {
+        status: 'failed',
+        success: false,
+        infectedFiles: Number(runningRun.infected_files || 0),
+        output: String(runningRun.output || 'Varredura anterior interrompida antes da conclusão.'),
+        findings: [],
+    });
+    return null;
 }
 
 // --- STATUS DOS SERVIÇOS EM TEMPO REAL COM TELEMETRIA ---
@@ -111,11 +302,18 @@ router.get('/clamav', async (_req, res) => {
         const freshclam = await execCmd('systemctl is-active clamav-freshclam || echo "inactive"');
         const clamonacc = await execCmd('systemctl is-active clamav-clamonacc || echo "inactive"');
         const recentRuns = await pool.query(
-            `SELECT id, action, target_paths, success, infected_files, output, created_at
+            `SELECT id, action, target_paths, status, success, infected_files, output, started_at, finished_at, created_at
              FROM control_antimalware_runs
              ORDER BY created_at DESC
              LIMIT 8`,
         );
+        const findings = await pool.query(
+            `SELECT id, run_id, file_path, signature, decision_status, decided_action, decided_by, decision_notes, quarantined_path, decided_at, created_at, updated_at
+             FROM control_antimalware_findings
+             ORDER BY created_at DESC
+             LIMIT 30`,
+        );
+        const runningRun = await reconcileRunningAntimalwareRun();
 
         res.json({
             services: {
@@ -123,6 +321,7 @@ router.get('/clamav', async (_req, res) => {
                 freshclam: freshclam.trim(),
                 clamonacc: clamonacc.trim(),
             },
+            healthy: [daemon, freshclam, clamonacc].every((item) => item.trim() === 'active'),
             coverage: [
                 { label: 'VLAN 10', subnet: '192.168.10.0/24', scope: 'borda e serviços vinculados ao gateway' },
                 { label: 'VLAN 30', subnet: '192.168.30.0/24', scope: 'borda e serviços vinculados ao gateway' },
@@ -131,9 +330,94 @@ router.get('/clamav', async (_req, res) => {
             ],
             scan_paths: CLAMAV_SCAN_PATHS,
             recent_runs: recentRuns.rows,
+            findings: findings.rows,
+            running_scan: runningRun,
+            supported_decisions: ['quarantine', 'delete'],
+            unsupported_decisions: [{ action: 'clean', reason: 'ClamAV não oferece desinfecção genérica confiável para esta superfície operacional.' }],
         });
     } catch (error: any) {
         res.status(500).json({ error: error.message || 'Falha ao consultar ClamAV.' });
+    }
+});
+
+router.post('/clamav/findings/:id/decision', async (req, res) => {
+    try {
+        await ensureAntimalwareSchema();
+        const findingId = Number(req.params.id);
+        const action = String(req.body?.action || '').trim().toLowerCase();
+        const decidedBy = String(req.body?.decided_by || req.body?.requested_by || 'operador');
+        const decisionNotes = String(req.body?.notes || '').trim() || null;
+
+        if (!Number.isFinite(findingId) || findingId <= 0) {
+            return res.status(400).json({ error: 'Achado inválido.' });
+        }
+
+        if (action === 'clean') {
+            return res.status(400).json({ error: 'Limpeza automática indisponível: o ClamAV não oferece desinfecção genérica confiável neste fluxo. Use quarentena ou exclusão.' });
+        }
+
+        if (!['quarantine', 'delete'].includes(action)) {
+            return res.status(400).json({ error: 'Ação de decisão inválida.' });
+        }
+
+        const findingResult = await pool.query(
+            `SELECT * FROM control_antimalware_findings WHERE id = $1`,
+            [findingId],
+        );
+        const finding = findingResult.rows[0];
+        if (!finding) {
+            return res.status(404).json({ error: 'Achado não encontrado.' });
+        }
+        if (finding.decision_status !== 'pending') {
+            return res.status(409).json({ error: 'Este achado já recebeu decisão.' });
+        }
+
+        const currentPath = String(finding.file_path || '');
+        const exists = currentPath ? fs.existsSync(currentPath) : false;
+        if (!exists) {
+            await pool.query(
+                `UPDATE control_antimalware_findings
+                 SET decision_status = 'missing',
+                     decided_action = $2,
+                     decided_by = $3,
+                     decision_notes = $4,
+                     decided_at = NOW(),
+                     updated_at = NOW()
+                 WHERE id = $1`,
+                [findingId, action, decidedBy, decisionNotes || 'Arquivo não encontrado no momento da decisão.'],
+            );
+            return res.status(410).json({ error: 'Arquivo não encontrado para decisão.' });
+        }
+
+        let quarantinedPath: string | null = null;
+        if (action === 'quarantine') {
+            quarantinedPath = await moveToQuarantine(currentPath);
+        }
+        if (action === 'delete') {
+            await fs.promises.unlink(currentPath);
+        }
+
+        await pool.query(
+            `UPDATE control_antimalware_findings
+             SET decision_status = $2,
+                 decided_action = $3,
+                 decided_by = $4,
+                 decision_notes = $5,
+                 quarantined_path = $6,
+                 decided_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = $1`,
+            [findingId, action === 'quarantine' ? 'quarantined' : 'deleted', action, decidedBy, decisionNotes, quarantinedPath],
+        );
+
+        return res.json({
+            success: true,
+            finding_id: findingId,
+            action,
+            quarantined_path: quarantinedPath,
+        });
+    } catch (error: any) {
+        return res.status(500).json({ error: error.message || 'Falha ao decidir sobre o achado antimalware.' });
     }
 });
 
@@ -163,25 +447,74 @@ router.post('/tactical', async (req, res) => {
         if (action === 'db_restart') await execCmd('sudo systemctl restart postgresql');
         if (action === 'clear_cache') { await execCmd('sync'); await execCmd('sudo sysctl -w vm.drop_caches=3'); }
         if (action === 'clamav_update') {
-            const output = await execCmd('sudo freshclam --stdout');
+            const result = await execClam('sudo', ['freshclam', '--stdout']);
+            const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+            if (result.code > 1) {
+                throw new Error(output || 'Falha ao atualizar assinaturas do ClamAV.');
+            }
             await recordAntimalwareRun({
                 action,
-                success: true,
+                success: result.code === 0,
                 targetPaths: [],
                 output,
             });
+            return res.json({ success: true, action, output });
         }
         if (action === 'clamav_scan') {
-            const targetPaths = CLAMAV_SCAN_PATHS;
-            const output = await execCmd(`sudo clamscan -ri --max-filesize=256M --max-scansize=512M ${targetPaths.join(' ')}`);
-            const infectedMatch = output.match(/Infected files:\s*(\d+)/i);
-            const infectedFiles = Number(infectedMatch?.[1] || 0);
-            await recordAntimalwareRun({
+            const targetPaths = resolveRequestedScanPaths(req.body?.target_paths);
+            if (!targetPaths.length) {
+                return res.status(400).json({ error: 'Nenhum caminho autorizado foi informado para a varredura.' });
+            }
+            const runningRun = await reconcileRunningAntimalwareRun();
+            if (clamavScanPromise || runningRun) {
+                return res.status(409).json({
+                    error: 'Já existe uma varredura antimalware em execução.',
+                    running: true,
+                    run_id: Number(runningRun?.id || 0) || null,
+                });
+            }
+            const runId = await recordAntimalwareRun({
                 action,
-                success: infectedFiles === 0,
-                infectedFiles,
+                status: 'running',
+                success: false,
+                infectedFiles: 0,
                 targetPaths,
-                output,
+                output: 'Varredura em execução.',
+                startedAt: new Date().toISOString(),
+                finishedAt: null,
+            });
+            clamavScanPromise = (async () => {
+                try {
+                    const result = await execClam('sudo', ['clamdscan', '--multiscan', '--fdpass', ...targetPaths]);
+                    const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+                    const infectedFiles = parseInfectedFiles(output);
+                    const findings = parseFindings(output);
+                    const commandFailed = result.code > 1;
+                    await updateAntimalwareRun(runId, {
+                        status: commandFailed ? 'failed' : infectedFiles > 0 ? 'completed-with-findings' : 'completed',
+                        success: !commandFailed,
+                        infectedFiles,
+                        output,
+                        findings,
+                    });
+                } catch (error: any) {
+                    await updateAntimalwareRun(runId, {
+                        status: 'failed',
+                        success: false,
+                        infectedFiles: 0,
+                        output: error?.message || 'Falha ao executar varredura antimalware.',
+                        findings: [],
+                    }).catch(() => null);
+                } finally {
+                    clamavScanPromise = null;
+                }
+            })();
+            return res.status(202).json({
+                success: true,
+                queued: true,
+                run_id: runId,
+                action,
+                target_paths: targetPaths,
             });
         }
         res.json({ success: true });

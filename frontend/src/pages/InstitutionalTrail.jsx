@@ -18,24 +18,28 @@ export default function InstitutionalTrail() {
   const [error, setError] = useState('');
   const [authEvents, setAuthEvents] = useState([]);
   const [adminTrail, setAdminTrail] = useState([]);
+  const [lgpdTrail, setLgpdTrail] = useState([]);
   const [proxyLogs, setProxyLogs] = useState([]);
 
   const load = async () => {
     setLoading(true);
     setError('');
-    const [authRes, adminRes, proxyRes] = await Promise.allSettled([
+    const [authRes, adminRes, lgpdRes, proxyRes] = await Promise.allSettled([
       api.get('/api/auth/activity?limit=180'),
       api.get('/api/bloqueios-liberacoes/audit?period=7d'),
+      api.get('/api/lgpd/audit?limit=120'),
       api.get('/api/proxy/action-logs?limit=80'),
     ]);
 
     if (authRes.status === 'fulfilled') setAuthEvents(Array.isArray(authRes.value.data) ? authRes.value.data : []);
     if (adminRes.status === 'fulfilled') setAdminTrail(Array.isArray(adminRes.value.data) ? adminRes.value.data : []);
+    if (lgpdRes.status === 'fulfilled') setLgpdTrail(Array.isArray(lgpdRes.value.data) ? lgpdRes.value.data : []);
     if (proxyRes.status === 'fulfilled') setProxyLogs(Array.isArray(proxyRes.value.data) ? proxyRes.value.data : []);
 
     const failures = [
       authRes.status === 'rejected' ? 'autenticação' : null,
       adminRes.status === 'rejected' ? 'trilha administrativa' : null,
+      lgpdRes.status === 'rejected' ? 'trilha LGPD' : null,
       proxyRes.status === 'rejected' ? 'operações DNS/Proxy' : null,
     ].filter(Boolean);
 
@@ -58,16 +62,34 @@ export default function InstitutionalTrail() {
     const operators = new Set([
       ...authEvents.map((item) => item.username).filter(Boolean),
       ...adminTrail.map((item) => item.requested_by).filter(Boolean),
+      ...lgpdTrail.map((item) => item.actor_username).filter(Boolean),
       ...proxyLogs.map((item) => item.requested_by).filter(Boolean),
     ]).size;
     return {
       authSuccess,
       authFailure,
-      adminSuccess,
+      adminSuccess: adminSuccess + lgpdTrail.filter((item) => item.success).length,
       adminFailure,
       operators,
     };
-  }, [authEvents, adminTrail, proxyLogs]);
+  }, [authEvents, adminTrail, lgpdTrail, proxyLogs]);
+
+  const institutionalActions = useMemo(() => [
+    ...adminTrail.map((item) => ({
+      ...item,
+      source: 'Admin',
+      operator: item.requested_by,
+      ip: item.actor_ip || item.ip,
+      description: item.message || item.route || 'Ação institucional',
+    })),
+    ...lgpdTrail.map((item) => ({
+      ...item,
+      source: 'LGPD',
+      operator: item.actor_username,
+      ip: item.actor_ip,
+      description: item.message || item.entity_type || 'Evento LGPD',
+    })),
+  ].sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0)), [adminTrail, lgpdTrail]);
 
   return (
     <div className="space-y-8 pb-10 animate-in fade-in duration-500">
@@ -117,7 +139,7 @@ export default function InstitutionalTrail() {
             <FileCheck2 size={20} />
           </div>
           <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Ações administrativas</div>
-          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{adminTrail.length}</div>
+          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{institutionalActions.length}</div>
         </Surface>
 
         <Surface className="p-6">
@@ -157,7 +179,7 @@ export default function InstitutionalTrail() {
                   <StatusChip label={item.status || 'observado'} tone={item.success ? 'primary' : 'warning'} />
                 </div>
                 <div className="mt-3 text-sm font-bold text-on-surface">{item.action}</div>
-                <div className="mt-2 text-sm text-on-surface/68">{item.username || 'Operador não identificado'}</div>
+                <div className="mt-2 text-sm text-on-surface/68">{item.username || 'sistema'}</div>
                 <div className="mt-1 text-xs text-on-surface/56">IP {item.ip_address || '—'} • {formatDate(item.created_at)}</div>
               </Surface>
             )) : (
@@ -180,15 +202,16 @@ export default function InstitutionalTrail() {
               <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">
                 Carregando trilha administrativa...
               </div>
-            ) : adminTrail.length ? adminTrail.slice(0, 16).map((item) => (
+            ) : institutionalActions.length ? institutionalActions.slice(0, 16).map((item) => (
               <Surface key={`admin-${item.id}`} stripe={false} className="p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <StatusChip label={item.success ? 'Executado' : 'Falhou'} tone={toneFromSuccess(item.success)} />
+                  <StatusChip label={item.source || 'Admin'} tone="primary" />
                   {item.vlan_id ? <StatusChip label={`VLAN ${item.vlan_id}`} tone="neutral" /> : null}
                 </div>
                 <div className="mt-3 text-sm font-bold text-on-surface">{item.action}</div>
-                <div className="mt-2 text-sm text-on-surface/68">{item.message || item.requested_by || 'Ação institucional'}</div>
-                <div className="mt-1 text-xs text-on-surface/56">{item.requested_by || 'system'} • {formatDate(item.created_at)}</div>
+                <div className="mt-2 text-sm text-on-surface/68">{item.description}</div>
+                <div className="mt-1 text-xs text-on-surface/56">{item.operator || 'sistema'} • IP {item.ip || 'não informado'} • {formatDate(item.created_at)}</div>
               </Surface>
             )) : (
               <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-6 text-sm text-on-surface/62">

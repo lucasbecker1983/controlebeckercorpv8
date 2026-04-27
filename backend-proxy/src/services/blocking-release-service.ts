@@ -24,6 +24,7 @@ type ScopeType = 'global' | 'vlan';
 type PolicyKind = 'block' | 'allow';
 type ApplyOptions = {
     disconnect_active_sessions?: boolean;
+    auto_disconnect_social_sessions?: boolean;
     domains?: string[];
     vlan_ids?: number[];
     lookback_minutes?: number;
@@ -78,6 +79,19 @@ const BASELINE_BLOCK_CATALOG = {
     ],
 };
 
+const SOCIAL_SESSION_DOMAINS = [
+    ...BASELINE_BLOCK_CATALOG['Redes Sociais'],
+    'b-graph.facebook.com',
+    'connect.facebook.net',
+    'edge-mqtt.facebook.com',
+    'graph.facebook.com',
+    'graph.instagram.com',
+    'i.instagram.com',
+    'scontent-gru1-1.cdninstagram.com',
+    'test-gateway.instagram.com',
+    'z-m-gateway.facebook.com',
+];
+
 const BASELINE_ALLOW_CATALOG = {
     WhatsApp: [
         'static.whatsapp.net', 'wa.me', 'web.whatsapp.com', 'whatsapp.com', 'whatsapp.net',
@@ -125,9 +139,9 @@ const DEFAULT_MANAGED_VLAN_ROWS = [
         monitoring_enabled: true,
         custom_policy: true,
         policy_mode: 'global',
-        whitelist_scope: ['redes_sociais'],
-        blacklist_scope: ['pornografia'],
-        notes: 'Escopo padrão da VLAN 30.',
+        whitelist_scope: [],
+        blacklist_scope: ['redes_sociais', 'pornografia'],
+        notes: 'Escopo padrão da VLAN 30: redes sociais somente via VIP ou exceção esporádica.',
     },
     {
         vlan_id: 50,
@@ -153,9 +167,9 @@ const DEFAULT_MANAGED_VLAN_ROWS = [
         monitoring_enabled: true,
         custom_policy: true,
         policy_mode: 'global',
-        whitelist_scope: ['redes_sociais', 'governo', 'bancos'],
-        blacklist_scope: ['pornografia'],
-        notes: 'Escopo padrão da VLAN 70.',
+        whitelist_scope: ['governo', 'bancos'],
+        blacklist_scope: ['redes_sociais', 'pornografia'],
+        notes: 'Escopo padrão da VLAN 70: redes sociais somente via VIP ou exceção esporádica.',
     },
 ] as const;
 
@@ -1700,19 +1714,117 @@ class BlockingReleaseService {
 
     async deleteException(id: number, requestedBy = 'system') {
         await this.ensureReady();
-        const { rows } = await pool.query(`DELETE FROM policy_exceptions WHERE id = $1 RETURNING *`, [id]);
-        if (!rows.length) throw new Error('Exceção não encontrada');
+        const { rows } = await pool.query(
+            `
+                UPDATE policy_exceptions
+                SET active = FALSE,
+                    lifecycle_status = 'revoked',
+                    revoked_by = COALESCE(revoked_by, $2),
+                    revoked_at = COALESCE(revoked_at, NOW()),
+                    updated_at = NOW()
+                WHERE id = $1
+                RETURNING *
+            `,
+            [id, requestedBy],
+        );
+        if (!rows.length) {
+            await this.recordAudit({
+                action: 'exception:delete',
+                requestedBy,
+                payload: { id },
+                result: { id, active: false, already_absent: true },
+                success: true,
+                message: 'Exceção já ausente',
+            });
+            return { id, active: false, already_absent: true };
+        }
         await this.recordAudit({
             action: 'exception:delete',
             requestedBy,
             payload: { id },
             result: rows[0],
             success: true,
-            message: 'Exceção removida',
+            message: 'Exceção revogada',
             vlanId: rows[0].vlan_id,
             ip: rows[0].ip,
         });
         await this.syncDnsVipFromExceptions();
+        await this.disconnectClientSessions(
+            [String(rows[0].ip || '').trim()].filter(Boolean),
+            requestedBy,
+            'VIP revogado',
+        );
+        return rows[0];
+    }
+
+    async listSporadicExceptions(filters: Record<string, any> = {}) {
+        await this.ensureReady();
+        const { rows } = await pool.query(
+            `SELECT * FROM sporadic_exceptions ORDER BY created_at DESC`,
+        );
+        return rows.map((row) => ({
+            ...row,
+            is_expired: row.active && new Date(row.expires_at) < new Date(),
+        }));
+    }
+
+    async createSporadicException(payload: any, requestedBy = 'system') {
+        await this.ensureReady();
+        const ip = String(payload?.ip || '').trim();
+        if (!ip) throw new Error('IP obrigatório');
+        const reqBy = String(payload?.requested_by || requestedBy || '').trim();
+        if (!reqBy) throw new Error('Solicitante obrigatório');
+        const justification = String(payload?.justification || '').trim();
+        if (!justification) throw new Error('Justificativa obrigatória');
+        const durationMinutes = Number(payload?.duration_minutes);
+        if (!Number.isFinite(durationMinutes) || durationMinutes < 1) throw new Error('Duração obrigatória (mínimo 1 minuto)');
+        const expiresAt = new Date(Date.now() + durationMinutes * 60 * 1000);
+        const approvedCategories = Array.isArray(payload?.approved_categories) ? payload.approved_categories : [];
+        const customDomains = Array.isArray(payload?.custom_domains) ? payload.custom_domains.map(String).filter(Boolean) : [];
+
+        const { rows } = await pool.query(
+            `INSERT INTO sporadic_exceptions (ip, requested_by, approved_categories, custom_domains, justification, duration_minutes, expires_at, active, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE,$8) RETURNING *`,
+            [ip, reqBy, JSON.stringify(approvedCategories), customDomains, justification, durationMinutes, expiresAt, requestedBy],
+        );
+        await this.recordAudit({
+            action: 'sporadic_exception:create',
+            requestedBy,
+            payload,
+            result: rows[0],
+            success: true,
+            message: `Exceção esporádica criada para ${ip} por ${durationMinutes} min`,
+            ip,
+        });
+        await this.syncDnsVipFromExceptions();
+        await this.apply(requestedBy);
+        return rows[0];
+    }
+
+    async revokeSporadicException(id: number, requestedBy = 'system') {
+        await this.ensureReady();
+        const { rows } = await pool.query(
+            `UPDATE sporadic_exceptions SET active = FALSE, revoked_by = $1, revoked_at = NOW(), updated_at = NOW()
+             WHERE id = $2 RETURNING *`,
+            [requestedBy, id],
+        );
+        if (!rows.length) throw new Error('Exceção esporádica não encontrada');
+        await this.recordAudit({
+            action: 'sporadic_exception:revoke',
+            requestedBy,
+            payload: { id },
+            result: rows[0],
+            success: true,
+            message: `Exceção esporádica revogada para ${rows[0].ip}`,
+            ip: rows[0].ip,
+        });
+        await this.syncDnsVipFromExceptions();
+        await this.disconnectClientSessions(
+            [String(rows[0].ip || '').trim()].filter(Boolean),
+            requestedBy,
+            'Exceção esporádica revogada',
+        );
+        await this.apply(requestedBy);
         return rows[0];
     }
 
@@ -2084,7 +2196,18 @@ class BlockingReleaseService {
     async syncDnsVipFromExceptions(exceptions?: any[], options: { applyRuntime?: boolean } = {}) {
         await this.ensureReady();
         const activeExceptions = exceptions || await this.listExceptions({ status: 'active' });
-        const vipCandidates = activeExceptions.filter((row) => isManagedBlockingIp(row.ip) || isManagedBlockingVlan(row.vlan_id));
+
+        const { rows: sporadicRows } = await pool.query(
+            `SELECT ip FROM sporadic_exceptions WHERE active = TRUE AND expires_at > NOW()`,
+        ).catch(() => ({ rows: [] as any[] }));
+        const sporadicCandidates = sporadicRows
+            .filter((row) => isManagedBlockingIp(row.ip))
+            .map((row) => ({ ip: row.ip, vlan_id: null, description: 'Exceção esporádica temporária', responsible: 'sporadic' }));
+
+        const vipCandidates = [
+            ...activeExceptions.filter((row) => isManagedBlockingIp(row.ip) || isManagedBlockingVlan(row.vlan_id)),
+            ...sporadicCandidates,
+        ];
 
         const activeIps = vipCandidates.map((row) => String(row.ip || '').trim()).filter(Boolean);
         fs.writeFileSync(PROXY_IP_BYPASS_FILE, `${Array.from(new Set(activeIps)).join('\n')}${activeIps.length ? '\n' : ''}`);
@@ -2252,6 +2375,7 @@ class BlockingReleaseService {
             { protocol: 'tcp', port: 80 },
             { protocol: 'tcp', port: 443 },
             { protocol: 'udp', port: 443 },
+            { protocol: 'tcp', port: 853 },
         ];
 
         const conntrack = [];
@@ -2293,6 +2417,106 @@ class BlockingReleaseService {
         };
     }
 
+    private async filterClientsWithoutActiveBypass(clientIps: string[]) {
+        const uniqueClients = Array.from(new Set(clientIps.map((ip) => String(ip || '').replace(/\/32$/, '').trim()).filter(Boolean)));
+        if (!uniqueClients.length) return [];
+
+        const { rows: policyRows } = await pool.query(
+            `
+                SELECT DISTINCT ip::text AS ip
+                FROM policy_exceptions
+                WHERE active = TRUE
+                  AND ip = ANY($1::inet[])
+            `,
+            [uniqueClients],
+        );
+        const { rows: sporadicRows } = await pool.query(
+            `
+                SELECT DISTINCT ip::text AS ip
+                FROM sporadic_exceptions
+                WHERE active = TRUE
+                  AND expires_at > NOW()
+                  AND ip = ANY($1::inet[])
+            `,
+            [uniqueClients],
+        ).catch(() => ({ rows: [] as any[] }));
+        const rows = [...policyRows, ...sporadicRows];
+        const bypassed = new Set(rows.map((row) => String(row.ip || '').replace(/\/32$/, '').trim()));
+        return uniqueClients.filter((ip) => !bypassed.has(ip));
+    }
+
+    async disconnectClientSessions(clientIps: string[], requestedBy = 'system', reason = 'Política institucional aplicada') {
+        const clients = await this.filterClientsWithoutActiveBypass(clientIps);
+        if (!clients.length) {
+            return { disconnected: false, reason: 'Nenhum cliente fora de bypass ativo', clients: [], conntrack: [], squid_restart: null };
+        }
+
+        const terminated = await this.dropClientSessions(clients, false);
+        const result = {
+            disconnected: true,
+            reason,
+            affected_clients: clients.length,
+            ...terminated,
+        };
+        await this.recordAudit({
+            action: 'disconnect-client-sessions',
+            requestedBy,
+            payload: { clients, reason },
+            result,
+            success: true,
+            message: `${clients.length} cliente(s) tiveram sessões persistentes derrubadas`,
+        });
+        return result;
+    }
+
+    async disconnectRecentSocialSessions(requestedBy = 'system', options: ApplyOptions = {}) {
+        const lookbackMinutes = Number(options.lookback_minutes) > 0 ? Number(options.lookback_minutes) : 120;
+        const vlanIds = options.vlan_ids?.length ? options.vlan_ids : [10, 30, 50, 70];
+        const clients = await this.findRecentClientsForDomains(SOCIAL_SESSION_DOMAINS, vlanIds, lookbackMinutes);
+        const eligibleClients = await this.filterClientsWithoutActiveBypass(clients);
+
+        if (!eligibleClients.length) {
+            const result = {
+                disconnected: false,
+                reason: 'Nenhum cliente recente de redes sociais fora de VIP/exceção',
+                domains: SOCIAL_SESSION_DOMAINS,
+                vlan_ids: vlanIds,
+                lookback_minutes: lookbackMinutes,
+                clients: [],
+                conntrack: [],
+                squid_restart: null,
+            };
+            await this.recordAudit({
+                action: 'disconnect-social-sessions:auto',
+                requestedBy,
+                payload: { vlan_ids: vlanIds, lookback_minutes: lookbackMinutes },
+                result,
+                success: true,
+                message: result.reason,
+            });
+            return result;
+        }
+
+        const terminated = await this.dropClientSessions(eligibleClients, false);
+        const result = {
+            disconnected: true,
+            domains: SOCIAL_SESSION_DOMAINS,
+            vlan_ids: vlanIds,
+            lookback_minutes: lookbackMinutes,
+            affected_clients: eligibleClients.length,
+            ...terminated,
+        };
+        await this.recordAudit({
+            action: 'disconnect-social-sessions:auto',
+            requestedBy,
+            payload: { vlan_ids: vlanIds, lookback_minutes: lookbackMinutes },
+            result,
+            success: true,
+            message: `${eligibleClients.length} cliente(s) com sessões de redes sociais derrubadas`,
+        });
+        return result;
+    }
+
     async disconnectActiveSessions(requestedBy = 'system', options: ApplyOptions = {}) {
         const domains = normalizeOptionalPolicyDomains(options.domains);
         if (!domains.length) {
@@ -2301,12 +2525,13 @@ class BlockingReleaseService {
 
         const vlanIds = (options.vlan_ids || []).map(Number).filter(Number.isFinite);
         const lookbackMinutes = Number(options.lookback_minutes) > 0 ? Number(options.lookback_minutes) : 20;
-        const clients = await this.findRecentClientsForDomains(domains, vlanIds, lookbackMinutes);
+        const recentClients = await this.findRecentClientsForDomains(domains, vlanIds, lookbackMinutes);
+        const clients = await this.filterClientsWithoutActiveBypass(recentClients);
 
         if (!clients.length) {
             const result = {
                 disconnected: false,
-                reason: 'Nenhum cliente recente encontrado para os domínios informados',
+                reason: 'Nenhum cliente recente fora de VIP/exceção encontrado para os domínios informados',
                 domains,
                 vlan_ids: vlanIds,
                 lookback_minutes: lookbackMinutes,
@@ -2366,7 +2591,9 @@ class BlockingReleaseService {
             await dnsContingencyService.ensureFirewallState();
             const sessionTermination = options.disconnect_active_sessions
                 ? await this.disconnectActiveSessions(requestedBy, options)
-                : null;
+                : options.auto_disconnect_social_sessions === false
+                    ? null
+                    : await this.disconnectRecentSocialSessions(requestedBy, options);
             await this.updateEngineState({
                 enforcement_mode: mode,
                 last_apply_at: new Date().toISOString(),

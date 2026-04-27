@@ -898,7 +898,9 @@ export default function Lgpd() {
                     <div className="text-sm font-bold text-on-surface">{item.action}</div>
                   </div>
                   <div className="mt-2 text-sm text-on-surface/68">{item.message || 'Operação institucional registrada.'}</div>
-                  <div className="mt-1 text-xs text-on-surface/56">{item.actor_username || 'sistema'} • {formatDate(item.created_at)}</div>
+                  <div className="mt-1 text-xs text-on-surface/56">
+                    Usuário: {item.actor_username || 'sistema'} • IP: {item.actor_ip || 'não informado'} • {formatDate(item.created_at)}
+                  </div>
                 </div>
               </div>
             </Surface>

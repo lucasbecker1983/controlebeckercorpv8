@@ -6,6 +6,37 @@ import { pool } from '../../config/db';
 
 const router = Router();
 
+const formatMemory = (mb: number) => {
+    if (!Number.isFinite(mb) || mb <= 0) return '0 MB';
+    if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+    return `${Math.round(mb)} MB`;
+};
+
+const formatGhz = (mhz: number) => {
+    if (!Number.isFinite(mhz) || mhz <= 0) return '0.0 GHz';
+    return `${(mhz / 1000).toFixed(1)} GHz`;
+};
+
+const getCpuCapacityText = () => {
+    try {
+        const cpuInfo = fs.readFileSync('/proc/cpuinfo', 'utf-8');
+        const speeds = cpuInfo
+            .split('\n')
+            .map((line) => line.match(/^cpu MHz\s*:\s*([0-9.]+)/)?.[1])
+            .filter(Boolean)
+            .map((value) => Number(value));
+
+        const threadCount = speeds.length;
+        if (!threadCount) return 'Threads indisponíveis';
+
+        const totalMhz = speeds.reduce((sum, value) => sum + value, 0);
+        const avgMhz = totalMhz / threadCount;
+        return `${threadCount} threads • ${formatGhz(totalMhz)} total • ${formatGhz(avgMhz)} média`;
+    } catch {
+        return 'Threads indisponíveis';
+    }
+};
+
 // --- VARIÁVEIS GLOBAIS PARA CÁLCULO DE BANDA (TEMPO REAL) ---
 let lastTime = Date.now();
 let lastWanRx = 0;
@@ -36,7 +67,7 @@ router.get('/metrics', async (req, res) => {
         
         const totalBans = parseInt(totalBansStr) || 0;
         const ufwBlocks = parseInt(ufwBlocksStr) || 0;
-        const [blocked24h, blocked5m, topBlocked, lastBlocked] = await Promise.all([
+        const [blocked24h, blocked5m, topBlocked, topThreatType, lastBlocked] = await Promise.all([
             pool.query(`
                 SELECT COUNT(*)::int AS total
                 FROM access_events
@@ -60,6 +91,24 @@ router.get('/metrics', async (req, res) => {
                 LIMIT 1
             `).catch(() => ({ rows: [] as any[] })),
             pool.query(`
+                SELECT
+                    COALESCE(
+                        NULLIF(raw_payload #>> '{resolved,category}', ''),
+                        NULLIF(raw_payload #>> '{parsed,resolved,category}', ''),
+                        NULLIF(evidence, ''),
+                        NULLIF(policy_origin, ''),
+                        NULLIF(source, ''),
+                        'Sem classificação'
+                    ) AS type,
+                    COUNT(*)::int AS total
+                FROM access_events
+                WHERE occurred_at >= NOW() - INTERVAL '24 hours'
+                  AND action = 'blocked'
+                GROUP BY type
+                ORDER BY total DESC, type ASC
+                LIMIT 1
+            `).catch(() => ({ rows: [] as any[] })),
+            pool.query(`
                 SELECT host(client_ip) AS client_ip, domain, vlan_id, occurred_at
                 FROM access_events
                 WHERE occurred_at >= NOW() - INTERVAL '24 hours'
@@ -71,6 +120,7 @@ router.get('/metrics', async (req, res) => {
         const totalThreats = Number(blocked24h.rows[0]?.total || 0);
         const recentThreats = Number(blocked5m.rows[0]?.total || 0);
         const topThreatDomain = topBlocked.rows[0]?.domain || null;
+        const mostReceivedThreatType = topThreatType.rows[0]?.type || null;
 
         let lastIp = "Nenhum";
         let lastService = "Seguro";
@@ -89,6 +139,7 @@ router.get('/metrics', async (req, res) => {
         
         // CPU: vmstat é infalível para pegar o uso imediato de processo (100 - idle)
         let cpu = 0;
+        const cpuText = getCpuCapacityText();
         try {
             const cpuRaw = await execCmd("vmstat 1 2 | tail -1 | awk '{print 100-$15}'");
             cpu = Math.round(parseFloat(cpuRaw)) || 0;
@@ -96,9 +147,16 @@ router.get('/metrics', async (req, res) => {
 
         // RAM: sem vírgula (cravada com Math.round)
         let ram = 0;
+        let ramText = 'Sem leitura';
         try {
-            const ramRaw = await execCmd("free | grep Mem | awk '{print $3/$2 * 100}'");
-            ram = Math.round(parseFloat(ramRaw)) || 0;
+            const ramRaw = await execCmd("free -m | awk '/^Mem:/ {print $3, $2, $3/$2 * 100}'");
+            const [usedMbRaw, totalMbRaw, percentRaw] = ramRaw.trim().split(/\s+/);
+            const usedMb = Number(usedMbRaw || 0);
+            const totalMb = Number(totalMbRaw || 0);
+            ram = Math.round(parseFloat(percentRaw)) || 0;
+            if (usedMb > 0 && totalMb > 0) {
+                ramText = `Usado ${formatMemory(usedMb)} de ${formatMemory(totalMb)}`;
+            }
         } catch(e) {}
 
         // --- STATUS DE INTERNET E MÓDULOS ---
@@ -127,7 +185,9 @@ router.get('/metrics', async (req, res) => {
             system: {
                 uptime: uptimeSeconds,
                 cpu: cpu,
-                ram: ram
+                cpu_text: cpuText,
+                ram: ram,
+                ram_text: ramText
             },
             internet: {
                 online: isOnline
@@ -139,6 +199,7 @@ router.get('/metrics', async (req, res) => {
                 last_ip: lastIp,
                 last_service: lastService,
                 top_domain: topThreatDomain,
+                top_type: mostReceivedThreatType,
                 severity: recentThreats > 20 ? 'Crítica' : totalThreats > 0 ? 'Monitorada' : 'Sem bloqueios',
                 firewall_blocks: ufwBlocks,
                 fail2ban_bans: totalBans,

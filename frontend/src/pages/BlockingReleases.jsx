@@ -13,6 +13,8 @@ import {
   Flame,
   Globe2,
   Layers3,
+  Zap,
+  Timer,
   MoreHorizontal,
   Network,
   Pencil,
@@ -63,8 +65,8 @@ const TABS = [
   { key: 'policies', label: 'Políticas & Escopos', icon: Layers3 },
   { key: 'vlans', label: 'Escopos de Rede', icon: Network },
   { key: 'vips', label: 'Exceções VIP', icon: ShieldAlert },
-  { key: 'audit', label: 'Relatório de Dados', icon: ScrollText },
-  { key: 'radar', label: 'Radar Operacional', icon: Wifi },
+  { key: 'sporadic', label: 'Exceções Esporádicas', icon: Zap },
+  { key: 'observability', label: 'Observabilidade', icon: Wifi },
   { key: 'engine', label: 'Motor de Controle', icon: Cpu },
   { key: 'contingency', label: 'Contingência DNS', icon: Flame },
   { key: 'metrics', label: 'Telemetria', icon: Activity },
@@ -633,22 +635,11 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
 function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving }) {
   const [form, setForm] = useState({
     name: '',
-    policy_type: 'allow',
+    policy_type: 'block',
     scope_type: 'global',
     vlan_ids: [],
     domainsText: '',
     description: '',
-    legal_basis: '',
-    requested_by: '',
-    approval_scope: '',
-    lifecycle_status: '',
-    review_date: '',
-    approved_by: '',
-    approved_at: '',
-    effective_from: '',
-    expires_at: '',
-    revoked_by: '',
-    revoked_at: '',
     enabled: true,
   });
 
@@ -657,22 +648,11 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
     const governance = governanceFromRecord(item, item?.description || '');
     setForm({
       name: item?.name || '',
-      policy_type: item?.policy_type || 'allow',
+      policy_type: item?.policy_type || 'block',
       scope_type: item?.scope_type || 'global',
       vlan_ids: (item?.vlan_ids || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
       domainsText: (item?.domains || item?.entries?.map((entry) => entry.normalized_domain || entry.domain) || []).join('\n'),
       description: governance.summary || '',
-      legal_basis: governance.legal_basis || '',
-      requested_by: governance.requested_by || '',
-      approval_scope: governance.approval_scope || '',
-      lifecycle_status: governance.lifecycle_status || '',
-      review_date: governance.review_date || '',
-      approved_by: governance.approved_by || '',
-      approved_at: governance.approved_at || '',
-      effective_from: governance.effective_from || '',
-      expires_at: governance.expires_at || '',
-      revoked_by: governance.revoked_by || '',
-      revoked_at: governance.revoked_at || '',
       enabled: item?.enabled ?? true,
     });
   }, [open, item]);
@@ -695,25 +675,8 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
       ? form.vlan_ids.map((value) => Number(value)).filter((value) => Number.isFinite(value)).sort((left, right) => left - right)
       : [],
     domains,
-    description: buildGovernanceText(form.description, {
-      'Base legal': form.legal_basis,
-      Solicitante: form.requested_by,
-      'Alcada de aprovacao': form.approval_scope,
-      'Status institucional': form.lifecycle_status,
-      'Revisao prevista': form.review_date,
-    }),
+    description: form.description.trim(),
     governance_summary: form.description.trim(),
-    legal_basis: form.legal_basis.trim(),
-    requested_by: form.requested_by.trim(),
-    approval_scope: form.approval_scope.trim(),
-    lifecycle_status: form.lifecycle_status,
-    review_date: form.review_date || null,
-    approved_by: form.approved_by.trim(),
-    approved_at: form.approved_at || null,
-    effective_from: form.effective_from || null,
-    expires_at: form.expires_at || null,
-    revoked_by: form.revoked_by.trim(),
-    revoked_at: form.revoked_at || null,
     enabled: form.enabled,
   });
 
@@ -721,7 +684,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
     <DialogShell
       open={open}
       title={item ? 'Editar Política' : 'Nova Política'}
-      subtitle="Fluxo direto e explícito: dê um nome claro, escolha se vai liberar ou bloquear, defina o escopo e informe exatamente quais domínios entram na regra."
+      subtitle="Fluxo enxuto: nome, tipo, escopo, domínios e justificativa. Usuário, horário e IP são registrados automaticamente na LGPD."
       onClose={onClose}
       size="max-w-[1080px]"
       footer={(
@@ -747,9 +710,9 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
         <ThemeAwareSurface tone="primary" className="p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Criar Política → Nome da Política → Domínios</div>
+              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Política Institucional</div>
               <div className="mt-2 text-sm leading-6 text-on-surface/68">
-                Use para liberar um aplicativo, bloquear um domínio específico ou aplicar uma regra por VLAN sem depender de categorias prontas.
+                A autoria não é digitada aqui: o sistema registra automaticamente usuário autenticado, data/hora e IP de origem na trilha LGPD.
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -763,8 +726,8 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
           <div className="space-y-5">
             <label className="flex flex-col gap-2.5">
               <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome da Política</span>
-              <TextInput value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Liberar Ponto RH" />
-              <p className="text-xs leading-5 text-on-surface/58">Use um nome que explique a finalidade da regra. Exemplo: `Liberar Ponto RH`, `Bloquear TikTok Visitantes`, `Liberar Portal do Fornecedor`.</p>
+              <TextInput value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Bloquear redes sociais visitantes" />
+              <p className="text-xs leading-5 text-on-surface/58">Use um nome objetivo. Exemplo: `Bloquear TikTok Visitantes` ou `Liberar Portal do Fornecedor`.</p>
             </label>
 
             <label className="flex flex-col gap-2.5">
@@ -791,64 +754,9 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
 
             <label className="flex flex-col gap-2.5">
               <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Descrição/Motivo</span>
-              <TextArea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={4} placeholder="Motivo operacional ou chamado relacionado." />
-              <p className="text-xs leading-5 text-on-surface/58">Explique por que a regra existe. Esse texto ajuda na revisão futura e na trilha administrativa.</p>
+              <TextArea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={4} placeholder="Justificativa operacional, chamado ou decisão administrativa relacionada." />
+              <p className="text-xs leading-5 text-on-surface/58">Explique por que a regra existe. O usuário, horário e IP entram automaticamente na LGPD.</p>
             </label>
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
-                <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Norma interna, política institucional ou diretriz vigente" />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
-                <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Gestão responsável ou unidade demandante" />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
-                <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Gestor, diretoria, comitê ou instância formal" />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
-                <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
-                  <option value="">Não definido</option>
-                  <option value="Em análise">Em análise</option>
-                  <option value="Aprovado">Aprovado</option>
-                  <option value="Em vigor">Em vigor</option>
-                  <option value="Em revisão">Em revisão</option>
-                  <option value="Revogado">Revogado</option>
-                  <option value="Expirado">Expirado</option>
-                </SelectInput>
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
-                <TextInput type="date" value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado por</span>
-                <TextInput value={form.approved_by} onChange={(event) => setForm((current) => ({ ...current, approved_by: event.target.value }))} placeholder="Autoridade aprovadora" />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado em</span>
-                <TextInput type="datetime-local" value={form.approved_at} onChange={(event) => setForm((current) => ({ ...current, approved_at: event.target.value }))} />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência inicial</span>
-                <TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm((current) => ({ ...current, effective_from: event.target.value }))} />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência final</span>
-                <TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm((current) => ({ ...current, expires_at: event.target.value }))} />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado por</span>
-                <TextInput value={form.revoked_by} onChange={(event) => setForm((current) => ({ ...current, revoked_by: event.target.value }))} placeholder="Autoridade que revogou" />
-              </label>
-              <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado em</span>
-                <TextInput type="datetime-local" value={form.revoked_at} onChange={(event) => setForm((current) => ({ ...current, revoked_at: event.target.value }))} />
-              </label>
-            </div>
           </div>
 
           <div className="space-y-5">
@@ -1557,6 +1465,335 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
   );
 }
 
+const SPORADIC_CATEGORIES = [
+  {
+    key: 'youtube',
+    label: 'YouTube',
+    description: 'youtube.com, youtu.be, googlevideo.com',
+    domains: ['youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com'],
+  },
+  {
+    key: 'redes_sociais',
+    label: 'Redes Sociais',
+    description: 'Instagram, Facebook, X (Twitter), TikTok, LinkedIn',
+    domains: ['instagram.com', 'facebook.com', 'twitter.com', 'x.com', 'tiktok.com', 'linkedin.com', 'cdninstagram.com', 'fbcdn.net'],
+  },
+  {
+    key: 'streaming',
+    label: 'Streaming de Vídeo',
+    description: 'Netflix, Twitch, Globoplay, Spotify',
+    domains: ['netflix.com', 'twitch.tv', 'globoplay.globo.com', 'spotify.com'],
+  },
+  {
+    key: 'noticias',
+    label: 'Portais de Notícias',
+    description: 'UOL, G1, R7, Terra, Folha, Estadão',
+    domains: ['uol.com.br', 'g1.globo.com', 'r7.com', 'terra.com.br', 'folha.uol.com.br', 'estadao.com.br'],
+  },
+];
+
+const SPORADIC_DURATIONS = [
+  { value: 30, label: '30 minutos' },
+  { value: 60, label: '1 hora' },
+  { value: 120, label: '2 horas' },
+  { value: 240, label: '4 horas' },
+  { value: 480, label: '8 horas (turno)' },
+  { value: 1440, label: '1 dia' },
+];
+
+function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving }) {
+  const emptyForm = {
+    ip: '',
+    requested_by: '',
+    justification: '',
+    duration_minutes: 60,
+    approved_categories: [],
+    custom_domains_raw: '',
+  };
+  const [form, setForm] = useState(emptyForm);
+
+  useEffect(() => {
+    if (open) setForm(emptyForm);
+  }, [open]);
+
+  const set = (key, value) => setForm((f) => ({ ...f, [key]: value }));
+
+  const toggleCategory = (key) => {
+    set('approved_categories', form.approved_categories.includes(key)
+      ? form.approved_categories.filter((k) => k !== key)
+      : [...form.approved_categories, key]);
+  };
+
+  const handleSubmit = () => {
+    const customDomains = form.custom_domains_raw
+      .split(/[\n,;\s]+/)
+      .map((d) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, ''))
+      .filter(Boolean);
+    onSubmit({
+      ip: form.ip.trim(),
+      requested_by: form.requested_by.trim(),
+      justification: form.justification.trim(),
+      duration_minutes: Number(form.duration_minutes),
+      approved_categories: form.approved_categories,
+      custom_domains: customDomains,
+    });
+  };
+
+  const isValid = form.ip.trim() && form.requested_by.trim() && form.justification.trim()
+    && (form.approved_categories.length > 0 || form.custom_domains_raw.trim());
+
+  return (
+    <DialogShell
+      open={open}
+      title="Nova Exceção Esporádica"
+      subtitle="Libera acesso temporário a conteúdos bloqueados para um colaborador específico pelo IP."
+      onClose={onClose}
+      size="max-w-2xl"
+      footer={(
+        <div className="flex flex-wrap justify-end gap-2">
+          <ActionButton onClick={onClose}>Cancelar</ActionButton>
+          <ActionButton tone="warning" onClick={handleSubmit} disabled={saving || !isValid}>
+            {saving ? 'Salvando e aplicando...' : 'Salvar e aplicar agora'}
+          </ActionButton>
+        </div>
+      )}
+    >
+      <div className="space-y-5">
+        <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
+          <div className="flex items-start gap-3">
+            <Zap size={18} className="mt-0.5 shrink-0 text-warning" />
+            <div className="text-sm leading-6 text-on-surface/72">
+              Ao salvar, o motor ACL+DNS é atualizado <span className="font-semibold text-on-surface">imediatamente</span>. O IP informado receberá bypass temporário pelo período selecionado. Todas as ações são registradas na trilha de auditoria.
+            </div>
+          </div>
+        </ThemeAwareSurface>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+              IP da máquina do colaborador
+              <HintTooltip text="Digite o endereço IPv4 exato da máquina que receberá o acesso liberado. Ex: 192.168.10.50" />
+            </label>
+            <TextInput
+              value={form.ip}
+              onChange={(e) => set('ip', e.target.value)}
+              placeholder="192.168.10.50"
+              type="text"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+              Quem solicitou
+              <HintTooltip text="Nome completo do colaborador ou responsável que fez a solicitação de exceção." />
+            </label>
+            <TextInput
+              value={form.requested_by}
+              onChange={(e) => set('requested_by', e.target.value)}
+              placeholder="Nome do solicitante"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            Duração da exceção
+            <HintTooltip text="Após o tempo selecionado, o acesso é bloqueado automaticamente. Requer novo pedido para renovar." />
+          </label>
+          <SelectInput value={form.duration_minutes} onChange={(e) => set('duration_minutes', e.target.value)}>
+            {SPORADIC_DURATIONS.map((d) => (
+              <option key={d.value} value={d.value}>{d.label}</option>
+            ))}
+          </SelectInput>
+        </div>
+
+        <div>
+          <label className="mb-2 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            Políticas a liberar
+            <HintTooltip text="Selecione as categorias de conteúdo que serão liberadas. Pelo menos uma categoria ou domínio personalizado é obrigatório." />
+          </label>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {SPORADIC_CATEGORIES.map((cat) => {
+              const selected = form.approved_categories.includes(cat.key);
+              return (
+                <button
+                  key={cat.key}
+                  type="button"
+                  onClick={() => toggleCategory(cat.key)}
+                  className={cx(
+                    'rounded-[calc(var(--surface-radius)-2px)] border p-3 text-left transition',
+                    selected
+                      ? 'border-warning/28 bg-warning/10'
+                      : 'border-outline/12 bg-surface-high/50 hover:border-outline/24',
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-on-surface">{cat.label}</span>
+                    {selected ? <CheckCircle2 size={16} className="shrink-0 text-warning" /> : null}
+                  </div>
+                  <div className="mt-1 text-xs text-on-surface/52">{cat.description}</div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            Domínios personalizados (opcional)
+            <HintTooltip text="Adicione domínios específicos não cobertos pelas categorias acima. Um por linha ou separados por vírgula." />
+          </label>
+          <TextArea
+            value={form.custom_domains_raw}
+            onChange={(e) => set('custom_domains_raw', e.target.value)}
+            rows={3}
+            placeholder="exemplo.com.br&#10;outrodominio.com"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            Justificativa
+            <HintTooltip text="Descreva o motivo da solicitação. Esta informação é registrada na trilha institucional de auditoria." />
+          </label>
+          <TextArea
+            value={form.justification}
+            onChange={(e) => set('justification', e.target.value)}
+            rows={3}
+            placeholder="Descreva o motivo da liberação temporária..."
+          />
+        </div>
+      </div>
+    </DialogShell>
+  );
+}
+
+function SporadicStatusBadge({ item }) {
+  const now = Date.now();
+  const expiresAt = item.expires_at ? new Date(item.expires_at).getTime() : 0;
+  if (item.revoked_by || item.revoked_at) return <StateBadge label="Revogada" tone="danger" />;
+  if (!item.active || expiresAt <= now) return <StateBadge label="Expirada" tone="neutral" />;
+  return <StateBadge label="Ativa" tone="warning" />;
+}
+
+function sporadicIsActive(item) {
+  if (item.revoked_by || item.revoked_at || !item.active) return false;
+  const expiresAt = item.expires_at ? new Date(item.expires_at).getTime() : 0;
+  return expiresAt > Date.now();
+}
+
+function sporadicRemainingSeconds(item) {
+  if (!item.expires_at) return null;
+  const diff = Math.floor((new Date(item.expires_at).getTime() - Date.now()) / 1000);
+  return diff > 0 ? diff : 0;
+}
+
+function SporadicTab({ sporadicExceptions, onNew, onRevoke, working }) {
+  const sorted = [...sporadicExceptions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+  return (
+    <div className="space-y-5 xl:space-y-6">
+      <SectionCard
+        title="Exceções Esporádicas"
+        subtitle="Liberações temporárias de acesso para colaboradores específicos por IP. Ao salvar, o motor ACL+DNS é atualizado imediatamente."
+        actions={(
+          <QuickActionBar
+            items={[
+              { label: 'Nova Exceção', tone: 'warning', icon: Zap, onClick: onNew },
+            ]}
+          />
+        )}
+      >
+        <div className="space-y-4 xl:space-y-5">
+          <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
+            <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-warning">Bypass VIP temporário</div>
+                <div className="mt-2 text-xl font-black text-on-surface">Acesso liberado imediatamente ao salvar</div>
+                <div className="mt-2 text-sm leading-6 text-on-surface/68">
+                  O IP do colaborador entra na lista VIP de bypass do motor ACL+DNS pelo período definido. Ao expirar ou ser revogada, o bloqueio institucional é restaurado automaticamente.
+                </div>
+              </div>
+              <div className="grid gap-2.5 sm:grid-cols-3">
+                <InlineStat label="Total" value={sporadicExceptions.length} tone="neutral" />
+                <InlineStat label="Ativas" value={sporadicExceptions.filter(sporadicIsActive).length} tone="warning" />
+                <InlineStat label="Expiradas" value={sporadicExceptions.filter((item) => !sporadicIsActive(item)).length} tone="neutral" />
+              </div>
+            </div>
+          </ThemeAwareSurface>
+
+          <div className="space-y-2.5">
+            {sorted.length ? sorted.map((item) => {
+              const active = sporadicIsActive(item);
+              const remaining = sporadicRemainingSeconds(item);
+              const categories = Array.isArray(item.approved_categories) ? item.approved_categories : [];
+              const customDomains = Array.isArray(item.custom_domains) ? item.custom_domains : [];
+              return (
+                <ListRow key={item.id}>
+                  <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-base font-black text-on-surface">{item.ip}</span>
+                        <SporadicStatusBadge item={item} />
+                        {active ? (
+                          <span className="flex items-center gap-1 text-xs font-semibold text-warning">
+                            <Timer size={13} />
+                            {formatRemaining(remaining)} restante
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mt-2 text-sm leading-6 text-on-surface/62">
+                        Solicitado por: <span className="font-semibold text-on-surface">{item.requested_by}</span>
+                      </div>
+                      {categories.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {categories.map((cat) => {
+                            const catInfo = SPORADIC_CATEGORIES.find((c) => c.key === cat);
+                            return <StateBadge key={cat} label={catInfo?.label || cat} tone="warning" />;
+                          })}
+                        </div>
+                      ) : null}
+                      {customDomains.length > 0 ? (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {customDomains.slice(0, 6).map((domain) => (
+                            <StateBadge key={domain} label={domain} tone="neutral" />
+                          ))}
+                          {customDomains.length > 6 ? <StateBadge label={`+${customDomains.length - 6} domínios`} tone="neutral" /> : null}
+                        </div>
+                      ) : null}
+                      {item.justification ? (
+                        <div className="mt-2 text-sm leading-6 text-on-surface/52 italic">{item.justification}</div>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2 text-xs uppercase tracking-[0.16em] text-on-surface/44">
+                        <span>Criada em {formatDate(item.created_at)}</span>
+                        <span>Expira em {formatDate(item.expires_at)}</span>
+                        {item.revoked_by ? <span>Revogada por {item.revoked_by}</span> : null}
+                      </div>
+                    </div>
+                    {active ? (
+                      <div className="flex flex-wrap gap-2">
+                        <ActionButton tone="danger" icon={Ban} onClick={() => onRevoke(item)} disabled={working}>
+                          Revogar
+                        </ActionButton>
+                      </div>
+                    ) : null}
+                  </div>
+                </ListRow>
+              );
+            }) : (
+              <EmptyStateBlock
+                icon={Zap}
+                title="Nenhuma exceção esporádica"
+                description="Crie uma exceção para liberar acesso temporário a conteúdos bloqueados para um colaborador específico."
+                action={<ActionButton tone="warning" icon={Zap} onClick={onNew}>Nova Exceção</ActionButton>}
+              />
+            )}
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
 function useModuleData() {
   const [data, setData] = useState({
     status: null,
@@ -1566,6 +1803,7 @@ function useModuleData() {
     allowlist: [],
     vlans: [],
     exceptions: [],
+    sporadicExceptions: [],
     metrics: null,
     audit: [],
     auditEvents: { events: [], summary: {} },
@@ -1606,6 +1844,7 @@ function useModuleData() {
       { key: 'allowlist', endpoint: 'allowlist' },
       { key: 'vlans', endpoint: 'vlans' },
       { key: 'exceptions', endpoint: 'exceptions' },
+      { key: 'sporadicExceptions', endpoint: 'sporadic-exceptions' },
     ];
     const critical = await Promise.allSettled(
       criticalRequests.map((request) => fetchJson(request.endpoint)),
@@ -1699,10 +1938,11 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const [policyEditor, setPolicyEditor] = useState({ open: false, item: null });
   const [auditPolicyAttach, setAuditPolicyAttach] = useState({ open: false, event: null });
   const [vipEditor, setVipEditor] = useState({ open: false, item: null });
+  const [sporadicEditor, setSporadicEditor] = useState({ open: false });
   const [vlanEditor, setVlanEditor] = useState({ open: false, item: null });
   const [contingencyEditor, setContingencyEditor] = useState({ open: false, mode: 'activate' });
   const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', subtitle: '', bullets: [], tone: 'warning', confirmLabel: 'Confirmar', action: null });
-  const [working, setWorking] = useState({ policy: false, vip: false, contingency: false, engine: false, audit: false });
+  const [working, setWorking] = useState({ policy: false, vip: false, sporadic: false, contingency: false, engine: false, audit: false });
   const [policySearch, setPolicySearch] = useState('');
   const [policyFilters, setPolicyFilters] = useState({ type: 'all', status: 'all', scope: 'all' });
   const [vlanSearch, setVlanSearch] = useState('');
@@ -2489,6 +2729,33 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     }
   };
 
+  const saveSporadicException = async (form) => {
+    setWorking((current) => ({ ...current, sporadic: true }));
+    try {
+      await requestAction('sporadic-exceptions', 'POST', form);
+      await loadAll();
+      setSporadicEditor({ open: false });
+      flash('Exceção esporádica criada e motor atualizado imediatamente.', 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao criar exceção esporádica.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, sporadic: false }));
+    }
+  };
+
+  const revokeSporadicException = async (item) => {
+    setWorking((current) => ({ ...current, sporadic: true }));
+    try {
+      await requestAction(`sporadic-exceptions/${item.id}/revoke`, 'POST');
+      await loadAll();
+      flash('Exceção esporádica revogada e motor atualizado.', 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao revogar exceção.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, sporadic: false }));
+    }
+  };
+
   const saveVlan = async (form) => {
     setWorking((current) => ({ ...current, engine: true }));
     try {
@@ -2628,7 +2895,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   }
 
   useEffect(() => {
-    if (activeTab !== 'radar' || loading) return undefined;
+    if (activeTab !== 'observability' || loading) return undefined;
     loadRealtimeRadar(true);
     const timer = window.setInterval(() => loadRealtimeRadar(true), 5000);
     return () => window.clearInterval(timer);
@@ -2674,6 +2941,13 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         onClose={() => setVipEditor({ open: false, item: null })}
         onSubmit={saveVip}
         saving={working.vip}
+      />
+
+      <SporadicExceptionEditorDialog
+        open={sporadicEditor.open}
+        onClose={() => setSporadicEditor({ open: false })}
+        onSubmit={saveSporadicException}
+        saving={working.sporadic}
       />
 
       <VlanEditorDialog
@@ -3311,6 +3585,16 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         </div>
       ) : null}
 
+      {!loading && activeTab === 'sporadic' ? (
+        <SporadicTab
+          sporadicExceptions={data.sporadicExceptions || []}
+          onNew={() => setSporadicEditor({ open: true })}
+          onRevoke={revokeSporadicException}
+          working={working.sporadic}
+          managedVlanIds={managedVlanIds}
+        />
+      ) : null}
+
       {!loading && activeTab === 'engine' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
@@ -3447,10 +3731,10 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     onClick: () => setContingencyEditor({ open: true, mode: 'renew' }),
                   },
                   {
-                    label: 'Relatório de Dados',
+                    label: 'Observabilidade',
                     tone: 'ghost',
                     icon: ScrollText,
-                    onClick: () => startTransition(() => handleTabChange('audit')),
+                    onClick: () => startTransition(() => handleTabChange('observability')),
                   },
                 ]}
               />
@@ -3555,7 +3839,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         </div>
       ) : null}
 
-      {!loading && activeTab === 'radar' ? (
+      {!loading && activeTab === 'observability' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
             title="Radar operacional"
@@ -3564,7 +3848,6 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <QuickActionBar
                 items={[
                   { label: 'Atualizar', tone: 'primary', icon: RefreshCcw, onClick: () => loadRealtimeRadar(false) },
-                  { label: 'Dados', tone: 'ghost', icon: ScrollText, onClick: () => startTransition(() => handleTabChange('audit')) },
                 ]}
               />
             )}
@@ -3650,7 +3933,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain || item.client_ip || ''); startTransition(() => handleTabChange('audit')); }}>
+                        <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain || item.client_ip || ''); }}>
                           Investigar
                         </ActionButton>
                         {item.action === 'blocked' && item.domain ? (
@@ -3672,11 +3955,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </div>
             </div>
           </SectionCard>
-        </div>
-      ) : null}
 
-      {!loading && activeTab === 'audit' ? (
-        <div className="space-y-5 xl:space-y-6">
           <SectionCard
             title="Relatório de Dados"
             subtitle="Leitura central de governança de dados para identificar quem acessou o quê, em qual rede, com qual decisão aplicada e sob qual política institucional."

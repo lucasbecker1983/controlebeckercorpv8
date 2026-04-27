@@ -56,7 +56,7 @@ const corsOptions = {
     origin: true,
     preflightContinue: true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Origin', 'X-Requested-With', 'X-User'],
+    allowedHeaders: ['Authorization', 'Content-Type', 'Accept', 'Origin', 'X-Requested-With', 'X-User', 'X-User-Id', 'X-Client-Ip'],
     exposedHeaders: ['Content-Disposition'],
 };
 
@@ -70,7 +70,7 @@ app.use((req, res, next) => {
     }
     res.header('Vary', 'Origin');
     res.header('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Authorization,Content-Type,Accept,Origin,X-Requested-With,X-User');
+    res.header('Access-Control-Allow-Headers', 'Authorization,Content-Type,Accept,Origin,X-Requested-With,X-User,X-User-Id,X-Client-Ip');
     res.header('Access-Control-Expose-Headers', 'Content-Disposition');
 
     if (req.method === 'OPTIONS') {

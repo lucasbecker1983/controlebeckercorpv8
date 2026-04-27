@@ -23,6 +23,8 @@ import proxyRoutes from './modules/proxy/proxy-routes';
 import securityRoutes from './modules/security/security-routes';
 import lgpdRoutes from './modules/lgpd/lgpd-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
+import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
+import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
 
 import vlanScheduleRoutes from "./modules/network/vlan-schedule-routes";
 
@@ -69,6 +71,7 @@ app.use((req, res, next) => {
     next();
 });
 app.use(globalJwtGuard);
+app.use(institutionalAuditMiddleware);
 app.use(runtimeProxyMiddleware);
 
 // Mapeamento de Rotas
@@ -98,6 +101,9 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`>>> BACKEND CORE ONLINE: ${PORT} (HTTP Interno)`);
     authSecurityService.ensureSchema().catch((error) => {
         console.error('[AUTH] Falha ao garantir schema de autenticacao:', error);
+    });
+    institutionalAuditService.ensureSchema().catch((error) => {
+        console.error('[AUDIT] Falha ao garantir schema institucional:', error);
     });
     // Iniciando Sentinelas
     try { startMonitor(); } catch(e) {}

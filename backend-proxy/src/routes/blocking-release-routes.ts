@@ -7,7 +7,17 @@ import { domainPolicyManagerService } from '../services/domain-policy-manager-se
 import { proxyRadarService } from '../services/proxy-radar-service';
 
 const router = Router();
-const requestedBy = (req: any) => String(req.headers['x-user'] || req.body?.requested_by || 'api');
+const clientIp = (req: any) => {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    return String(req.headers['x-client-ip'] || forwarded || req.ip || req.socket?.remoteAddress || '').trim();
+};
+const requestContext = (req: any) => ({
+    username: String(req.auth?.username || req.headers['x-user'] || req.body?.requested_by || 'api'),
+    userId: req.auth?.id ? Number(req.auth.id) : Number(req.headers['x-user-id'] || 0) || null,
+    ipAddress: clientIp(req),
+    userAgent: String(req.headers['user-agent'] || ''),
+});
+const requestedBy = (req: any) => requestContext(req).username;
 
 router.get('/status', async (_req, res) => {
     try {
@@ -114,7 +124,7 @@ router.get('/domain-policies/:id', async (req, res) => {
 
 router.post('/domain-policies', async (req, res) => {
     try {
-        res.json(await domainPolicyManagerService.create(req.body, requestedBy(req)));
+        res.json(await domainPolicyManagerService.create(req.body, requestedBy(req), requestContext(req)));
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }
@@ -122,7 +132,7 @@ router.post('/domain-policies', async (req, res) => {
 
 router.patch('/domain-policies/:id', async (req, res) => {
     try {
-        res.json(await domainPolicyManagerService.update(Number(req.params.id), req.body, requestedBy(req)));
+        res.json(await domainPolicyManagerService.update(Number(req.params.id), req.body, requestedBy(req), requestContext(req)));
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }
@@ -130,7 +140,7 @@ router.patch('/domain-policies/:id', async (req, res) => {
 
 router.post('/domain-policies/:id/duplicate', async (req, res) => {
     try {
-        res.json(await domainPolicyManagerService.duplicate(Number(req.params.id), requestedBy(req)));
+        res.json(await domainPolicyManagerService.duplicate(Number(req.params.id), requestedBy(req), requestContext(req)));
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }
@@ -138,7 +148,7 @@ router.post('/domain-policies/:id/duplicate', async (req, res) => {
 
 router.post('/domain-policies/:id/toggle', async (req, res) => {
     try {
-        res.json(await domainPolicyManagerService.toggle(Number(req.params.id), requestedBy(req)));
+        res.json(await domainPolicyManagerService.toggle(Number(req.params.id), requestedBy(req), requestContext(req)));
     } catch (error: any) {
         res.status(400).json({ error: error.message });
     }
@@ -146,7 +156,7 @@ router.post('/domain-policies/:id/toggle', async (req, res) => {
 
 router.delete('/domain-policies/:id', async (req, res) => {
     try {
-        res.json(await domainPolicyManagerService.delete(Number(req.params.id), requestedBy(req)));
+        res.json(await domainPolicyManagerService.delete(Number(req.params.id), requestedBy(req), requestContext(req)));
     } catch (error: any) {
         res.status(404).json({ error: error.message });
     }
@@ -363,6 +373,38 @@ router.patch('/exceptions/:id', async (req, res) => {
 router.delete('/exceptions/:id', async (req, res) => {
     try {
         res.json(await blockingReleaseService.deleteException(Number(req.params.id), requestedBy(req)));
+    } catch (error: any) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
+router.get('/sporadic-exceptions', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.listSporadicExceptions(req.query));
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/sporadic-exceptions', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.createSporadicException(req.body, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/sporadic-exceptions/:id/revoke', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.revokeSporadicException(Number(req.params.id), requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.delete('/sporadic-exceptions/:id', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.revokeSporadicException(Number(req.params.id), requestedBy(req)));
     } catch (error: any) {
         res.status(404).json({ error: error.message });
     }

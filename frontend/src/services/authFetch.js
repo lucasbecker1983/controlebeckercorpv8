@@ -1,17 +1,12 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
-let authInvalidated = false;
+import {
+    invalidateSession,
+    isSessionInvalidated,
+    readStoredAccessToken,
+    refreshAccessToken,
+    resetSessionInvalidation,
+} from './authSession';
 
-const redirectToLogin = () => {
-    if (typeof window === 'undefined') return;
-    if (authInvalidated) return;
-    authInvalidated = true;
-    localStorage.removeItem('becker_token');
-    localStorage.removeItem('becker_user');
-    window.dispatchEvent(new CustomEvent('sgcg:auth-invalid'));
-    if (window.location.pathname !== '/') {
-        window.location.href = '/';
-    }
-};
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 const resolveUrl = (input) => {
     const raw = String(input || '');
@@ -21,35 +16,50 @@ const resolveUrl = (input) => {
     return `${API_BASE_URL}${raw.startsWith('/') ? raw : `/${raw}`}`;
 };
 
+const isAuthRoute = (requestUrl = '') => (
+    requestUrl.includes('/api/auth/login')
+    || requestUrl.includes('/api/auth/refresh')
+    || requestUrl.includes('/api/auth/logout')
+);
+
+const buildHeaders = (init = {}) => {
+    const headers = new Headers(init.headers || {});
+    if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
+    const token = readStoredAccessToken();
+    if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
+    }
+    return headers;
+};
+
 export async function authFetch(input, init = {}) {
-    if (authInvalidated) {
+    if (isSessionInvalidated()) {
         return new Response(JSON.stringify({ error: 'Sessão invalidada.' }), {
             status: 401,
             headers: { 'Content-Type': 'application/json' },
         });
     }
-    const headers = new Headers(init.headers || {});
-    if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json');
-    const token = String(localStorage.getItem('becker_token') || '');
-    if (token && !headers.has('Authorization')) {
-        headers.set('Authorization', `Bearer ${token}`);
-    }
     const requestUrl = resolveUrl(input);
 
     const execute = () => fetch(requestUrl, {
         ...init,
-        headers,
+        headers: buildHeaders(init),
         credentials: 'include',
     });
 
     let response = await execute();
-    if (response.status === 401 && !requestUrl.includes('/api/auth/login') && !requestUrl.includes('/api/auth/logout')) {
-        redirectToLogin();
+    if (response.status === 401 && !isAuthRoute(requestUrl)) {
+        const nextToken = await refreshAccessToken();
+        if (nextToken) {
+            response = await execute();
+        } else {
+            invalidateSession();
+        }
     }
 
     return response;
 }
 
 export function resetAuthFetchInvalidation() {
-    authInvalidated = false;
+    resetSessionInvalidation();
 }
