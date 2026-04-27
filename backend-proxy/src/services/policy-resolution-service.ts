@@ -18,6 +18,12 @@ type ExceptionRow = {
     bypass_total?: boolean;
 };
 
+type EmergencyVlanBypassRow = {
+    id: number;
+    vlan_id: number;
+    reason: string;
+};
+
 type VlanRow = {
     vlan_id: number;
     label: string;
@@ -34,6 +40,7 @@ type CacheState = {
     blocks: PolicyRow[];
     allows: PolicyRow[];
     exceptions: ExceptionRow[];
+    emergencyVlanBypasses: EmergencyVlanBypassRow[];
     vlans: VlanRow[];
 };
 
@@ -79,7 +86,7 @@ export type ResolvedPolicyDecision = {
     vlan_id: number | null;
     vlan_label: string | null;
     action: 'allowed' | 'blocked' | 'bypassed';
-    policy_source: 'global' | 'vlan' | 'vip' | 'default';
+    policy_source: 'global' | 'vlan' | 'vip' | 'emergency-vlan' | 'default';
     category: string | null;
     rule_id: number | null;
     matched_rule: string | null;
@@ -94,16 +101,24 @@ export class PolicyResolutionService {
             return this.cache;
         }
 
-        const [blocks, allows, exceptions, vlans] = await Promise.all([
+        const [blocks, allows, exceptions, emergencyVlanBypasses, vlans] = await Promise.all([
             pool.query(`SELECT id, domain, category, scope_type, scope_value FROM blocking_policies WHERE active = TRUE ORDER BY id ASC`),
             pool.query(`SELECT id, domain, category, protected, scope_type, scope_value FROM release_policies WHERE active = TRUE ORDER BY id ASC`),
             pool.query(`
                 SELECT id, host(ip) AS ip, vlan_id, exception_type, bypass_total
                 FROM policy_exceptions
                 WHERE active = TRUE
+                  AND masklen(ip) = 32
                   AND (valid_until IS NULL OR valid_until >= NOW())
                 ORDER BY id ASC
             `),
+            pool.query(`
+                SELECT id, vlan_id, reason
+                FROM emergency_vlan_bypass
+                WHERE active = TRUE
+                  AND (expires_at IS NULL OR expires_at >= NOW())
+                ORDER BY vlan_id ASC, id DESC
+            `).catch(() => ({ rows: [] as EmergencyVlanBypassRow[] })),
             pool.query(`SELECT vlan_id, label, interface_name, subnet_cidr, exempt, blocking_enabled, monitoring_enabled, policy_mode FROM vlan_policies ORDER BY vlan_id ASC`),
         ]);
 
@@ -112,6 +127,7 @@ export class PolicyResolutionService {
             blocks: blocks.rows as PolicyRow[],
             allows: allows.rows as PolicyRow[],
             exceptions: exceptions.rows as ExceptionRow[],
+            emergencyVlanBypasses: emergencyVlanBypasses.rows as EmergencyVlanBypassRow[],
             vlans: filterOperationalVlans(vlans.rows as VlanRow[]),
         };
         return this.cache;
@@ -130,6 +146,9 @@ export class PolicyResolutionService {
         const vlan = await this.resolveVlanByIp(clientIp);
         const vlanId = vlan?.vlan_id || null;
         const managedClient = vlan ? isOperationalVlan(vlan) : false;
+        const matchedEmergencyVlanBypass = vlanId
+            ? state.emergencyVlanBypasses.find((row) => Number(row.vlan_id) === Number(vlanId)) || null
+            : null;
 
         const allowGlobal = managedClient ? bestMatch(normalizedDomain, state.allows.filter((row) => row.scope_type === 'global')) : null;
         const allowVlan = managedClient ? bestMatch(normalizedDomain, state.allows.filter((row) => row.scope_type === 'vlan' && Number(row.scope_value) === vlanId)) : null;
@@ -137,6 +156,20 @@ export class PolicyResolutionService {
         const blockVlan = managedClient ? bestMatch(normalizedDomain, state.blocks.filter((row) => row.scope_type === 'vlan' && Number(row.scope_value) === vlanId)) : null;
         const matchedException = state.exceptions.find((row) => cidrContainsIp(row.ip, String(clientIp || ''))) || null;
         const blockedRule = blockVlan || blockGlobal;
+
+        if (matchedEmergencyVlanBypass) {
+            return {
+                normalizedDomain,
+                vlan_id: vlanId,
+                vlan_label: vlan?.label || null,
+                action: 'bypassed',
+                policy_source: 'emergency-vlan',
+                category: blockedRule?.category || null,
+                rule_id: matchedEmergencyVlanBypass.id,
+                matched_rule: `emergency_vlan_bypass:${matchedEmergencyVlanBypass.id}`,
+                matched_policy_kind: 'exception',
+            } satisfies ResolvedPolicyDecision;
+        }
 
         if (matchedException && matchedException.bypass_total) {
             return {

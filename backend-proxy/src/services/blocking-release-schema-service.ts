@@ -69,13 +69,18 @@ CREATE TABLE IF NOT EXISTS domain_policy_entries (
     id BIGSERIAL PRIMARY KEY,
     policy_id BIGINT NOT NULL REFERENCES domain_policies(id) ON DELETE CASCADE,
     domain VARCHAR(255) NOT NULL,
+    entry_type VARCHAR(16) NOT NULL DEFAULT 'domain',
     normalized_domain VARCHAR(255) NOT NULL,
+    normalized_host_domain VARCHAR(255),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE domain_policy_entries ADD COLUMN IF NOT EXISTS entry_type VARCHAR(16) NOT NULL DEFAULT 'domain';
+ALTER TABLE domain_policy_entries ADD COLUMN IF NOT EXISTS normalized_host_domain VARCHAR(255);
+DROP INDEX IF EXISTS ux_domain_policy_entries_policy_domain;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_domain_policy_entries_policy_domain
-    ON domain_policy_entries (policy_id, normalized_domain);
+    ON domain_policy_entries (policy_id, entry_type, normalized_domain);
 
 CREATE TABLE IF NOT EXISTS domain_policy_audit_logs (
     id BIGSERIAL PRIMARY KEY,
@@ -161,6 +166,24 @@ CREATE TABLE IF NOT EXISTS policy_exceptions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS emergency_vlan_bypass (
+    id BIGSERIAL PRIMARY KEY,
+    vlan_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    requested_by VARCHAR(128) NOT NULL DEFAULT 'system',
+    activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    deactivated_at TIMESTAMPTZ,
+    deactivated_by VARCHAR(128),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_vlan_bypass_active
+    ON emergency_vlan_bypass (vlan_id, active, expires_at);
 
 CREATE TABLE IF NOT EXISTS access_events (
     id BIGSERIAL PRIMARY KEY,

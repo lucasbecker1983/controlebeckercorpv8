@@ -651,7 +651,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
       policy_type: item?.policy_type || 'block',
       scope_type: item?.scope_type || 'global',
       vlan_ids: (item?.vlan_ids || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
-      domainsText: (item?.domains || item?.entries?.map((entry) => entry.normalized_domain || entry.domain) || []).join('\n'),
+      domainsText: (item?.domains || item?.entries?.map((entry) => entry.domain || entry.normalized_domain) || []).join('\n'),
       description: governance.summary || '',
       enabled: item?.enabled ?? true,
     });
@@ -684,7 +684,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
     <DialogShell
       open={open}
       title={item ? 'Editar Política' : 'Nova Política'}
-      subtitle="Fluxo enxuto: nome, tipo, escopo, domínios e justificativa. Usuário, horário e IP são registrados automaticamente na LGPD."
+      subtitle="Fluxo enxuto: nome, tipo, escopo, domínios/URLs e justificativa. Usuário, horário e IP são registrados automaticamente na LGPD."
       onClose={onClose}
       size="max-w-[1080px]"
       footer={(
@@ -731,16 +731,16 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
             </label>
 
             <label className="flex flex-col gap-2.5">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Domínios</span>
-              <TextArea value={form.domainsText} onChange={(event) => setForm((current) => ({ ...current, domainsText: event.target.value }))} rows={10} placeholder={'api.pontorh.com.br\napp.pontorh.com.br\ncdn.pontorh.com.br'} />
-              <p className="text-xs leading-5 text-on-surface/58">Informe um domínio por linha. Pode colar vários de uma vez; o sistema remove duplicados antes de salvar.</p>
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Domínios e URLs</span>
+              <TextArea value={form.domainsText} onChange={(event) => setForm((current) => ({ ...current, domainsText: event.target.value }))} rows={10} placeholder={'api.pontorh.com.br\napp.pontorh.com.br\nhttps://portal.exemplo.gov.br/relatorios'} />
+              <p className="text-xs leading-5 text-on-surface/58">Informe um domínio ou URL por linha. Domínios seguem para DNS e proxy; URLs entram no proxy complementar como ACL de URL.</p>
             </label>
 
             <div className="rounded-[28px] border border-outline/14 bg-surface/50 p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Prévia dos domínios</div>
-                  <p className="mt-1 text-xs leading-5 text-on-surface/58">A lista abaixo ajuda a validar rapidamente o que será salvo na política.</p>
+                  <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Prévia das entradas</div>
+                  <p className="mt-1 text-xs leading-5 text-on-surface/58">A lista abaixo ajuda a validar rapidamente os domínios e URLs que serão salvos na política.</p>
                 </div>
                 <StateBadge label={`${domains.length} domínio(s)`} tone={domains.length ? 'primary' : 'neutral'} />
               </div>
@@ -2021,6 +2021,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   ];
   const contingency = data.contingency || data.status?.contingency || data.health?.contingency || null;
   const contingencyActive = contingency?.status === 'active';
+  const emergencyBypassActive = Boolean(data.status?.engine?.emergency_bypass || data.health?.engine?.emergency_bypass);
   const managedVlanIds = useMemo(() => {
     const raw = data.status?.engine?.managed_vlan_ids || data.vlans?.map((row) => row.vlan_id);
     if (!Array.isArray(raw) || !raw.length) return MANAGED_VLAN_IDS;
@@ -2103,7 +2104,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
           policy.policy_type,
           policy.scope_value,
           ...(policy.domains || []),
-          ...((policy.entries || []).map((entry) => entry.normalized_domain || entry.domain)),
+          ...((policy.entries || []).map((entry) => entry.domain || entry.normalized_domain)),
         ].some((value) => normalizeText(value).includes(search));
       })
       .sort((a, b) => Number(Boolean(b.enabled)) - Number(Boolean(a.enabled)) || new Date(b.updated_at || b.created_at || 0).getTime() - new Date(a.updated_at || a.created_at || 0).getTime());
@@ -2212,6 +2213,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       <StateBadge label="VIP = exceção total" tone="danger" title="VIP sai livre pelo firewall e não segue bloqueios comuns." />
       <StateBadge label="DNS interno preservado" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
       <StateBadge label="DNS interno por VLAN" tone="success" title="Cada VLAN operacional preserva o gateway interno tratado como válido." />
+      <StateBadge label={emergencyBypassActive ? 'Emergência ativa' : 'Emergência pronta'} tone={emergencyBypassActive ? 'danger' : 'warning'} />
       <StateBadge label={contingencyActive ? 'Contingência ativa' : 'Contingência pronta'} tone={contingencyActive ? 'danger' : 'success'} />
     </>
   );
@@ -2234,6 +2236,12 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       tone: 'warning',
       icon: Plus,
       onClick: () => setVipEditor({ open: true, item: null }),
+    },
+    {
+      label: emergencyBypassActive ? 'Emergência OFF' : 'Emergência ON',
+      tone: 'danger',
+      icon: ShieldAlert,
+      onClick: () => openEmergencyBypassDialog(!emergencyBypassActive),
     },
     {
       label: 'Contingência',
@@ -2260,9 +2268,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       icon: ShieldCheck,
       eyebrow: 'Modo atual',
       title: 'Modo operacional do motor',
-      value: MODE_LABELS[engineMode] || engineMode,
-      subtitle: 'Leitura direta do enforcement ativo, sem debug extra na tela principal.',
-      tone: 'primary',
+      value: emergencyBypassActive ? 'Emergência' : (MODE_LABELS[engineMode] || engineMode),
+      subtitle: emergencyBypassActive ? 'ACL, DNS e interceptação suspensos globalmente.' : 'Leitura direta do enforcement ativo, sem debug extra na tela principal.',
+      tone: emergencyBypassActive ? 'danger' : 'primary',
     },
     {
       icon: Layers3,
@@ -2359,6 +2367,12 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         text: `Contingência DNS ativa em ${contingency?.scope_type === 'vlan' ? `VLAN ${(contingency?.vlan_ids || []).join(', ')}` : 'escopo global'}.`,
       });
     }
+    if (emergencyBypassActive) {
+      alerts.push({
+        tone: 'danger',
+        text: 'Bypass de emergência ativo: ACL, DNS e interceptação estão suspensos para todas as VLANs do módulo.',
+      });
+    }
     if (data.health?.divergence?.mode_mismatch) {
       alerts.push({ tone: 'danger', text: 'Existe drift entre manifesto compilado e modo persistido.' });
     }
@@ -2372,7 +2386,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       alerts.push({ tone: 'success', text: 'Nenhum alerta crítico visível na leitura atual.' });
     }
     return alerts;
-  }, [contingency, contingencyActive, data.health]);
+  }, [contingency, contingencyActive, data.health, emergencyBypassActive]);
 
   const changeEngineMode = async (mode) => {
     setWorking((current) => ({ ...current, engine: true }));
@@ -2855,6 +2869,47 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     }
   };
 
+  function openEmergencyBypassDialog(enabled) {
+    setConfirmDialog({
+      open: true,
+      title: enabled ? 'Ativar bypass de emergência' : 'Desativar bypass de emergência',
+      subtitle: enabled
+        ? 'Isso libera imediatamente todas as VLANs do módulo, ignorando ACL, DNS e interceptação.'
+        : 'Isso restaura o enforcement institucional conforme o modo atualmente persistido.',
+      bullets: enabled
+        ? [
+            'Todas as VLANs operacionais do módulo entram em bypass total.',
+            'O Unbound deixa de aplicar RPZ e o Squid deixa de impor ACL categórica.',
+            contingencyActive ? 'A contingência DNS ativa será suspensa para prevalecer o bypass global.' : 'Não há contingência DNS ativa para suspender.',
+          ]
+        : [
+            'O motor recompila o enforcement institucional atual.',
+            `O modo persistido volta a valer: ${MODE_LABELS[engineMode] || engineMode}.`,
+            'ACL, DNS e interceptação voltam ao fluxo normal do módulo.',
+          ],
+      tone: 'danger',
+      confirmLabel: enabled ? 'Ativar emergência' : 'Desativar emergência',
+      action: async () => {
+        setWorking((current) => ({ ...current, engine: true }));
+        try {
+          await requestAction('emergency-bypass', 'POST', { enabled });
+          await loadAll();
+          flash(
+            enabled
+              ? 'Bypass de emergência ativado para todas as VLANs.'
+              : 'Bypass de emergência desativado e enforcement restaurado.',
+            'success',
+          );
+        } catch (error) {
+          flash(error.message || 'Falha ao alterar bypass de emergência.', 'danger');
+          throw error;
+        } finally {
+          setWorking((current) => ({ ...current, engine: false }));
+        }
+      },
+    });
+  }
+
   const handleContingencySubmit = async (form) => {
     setWorking((current) => ({ ...current, contingency: true }));
     try {
@@ -3013,6 +3068,15 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             : 'border-primary/16 bg-primary/10 text-primary'}
         >
           <div className="text-sm font-semibold">{banner.text}</div>
+        </ListRow>
+      ) : null}
+
+      {emergencyBypassActive ? (
+        <ListRow className="border-danger/18 bg-danger/10 text-danger">
+          <div className="text-[11px] font-black uppercase tracking-[0.18em]">Bypass de emergência ativo</div>
+          <div className="mt-2 text-sm font-semibold">
+            Todas as VLANs do módulo estão livres de ACL, RPZ/DNS e interceptação até a desativação manual.
+          </div>
         </ListRow>
       ) : null}
 
@@ -3213,7 +3277,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
               <div className="space-y-2.5">
                 {filteredDomainPolicies.length ? filteredDomainPolicies.map((policy) => {
-                  const domains = policy.domains || (policy.entries || []).map((entry) => entry.normalized_domain || entry.domain);
+                  const domains = policy.domains || (policy.entries || []).map((entry) => entry.domain || entry.normalized_domain);
                   const governance = governanceFromRecord(policy, policy.description || '');
                   return (
                     <ListRow key={policy.id}>
@@ -3640,6 +3704,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             actions={(
               <QuickActionBar
                 items={[
+                  { label: emergencyBypassActive ? 'Emergência OFF' : 'Emergência ON', tone: 'danger', icon: ShieldAlert, onClick: () => openEmergencyBypassDialog(!emergencyBypassActive) },
                   { label: 'Apply', tone: 'success', icon: Power, onClick: () => runEngineAction('apply', 'Políticas aplicadas.') },
                   { label: 'Rollback', tone: 'neutral', icon: RotateCcw, onClick: () => runEngineAction('rollback', 'Rollback executado.') },
                   { label: 'Validar', tone: 'primary', icon: ScanSearch, onClick: () => runEngineAction('ops/validate', 'Validação concluída.') },

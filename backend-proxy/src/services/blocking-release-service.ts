@@ -35,6 +35,21 @@ type SyncTelemetryOptions = {
     background?: boolean;
 };
 
+type EmergencyVlanBypassRow = {
+    id: number;
+    vlan_id: number;
+    reason: string;
+    requested_by: string;
+    activated_at: string;
+    expires_at: string | null;
+    deactivated_at: string | null;
+    deactivated_by: string | null;
+    active: boolean;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
 const ENTERPRISE_DIR = path.join(env.rulesDir, 'generated', 'bloqueios-liberacoes');
 const SNAPSHOT_DIR = path.join(env.proxyStateDir, 'backups', 'bloqueios-liberacoes');
 const LEGACY_BYPASS_FILE = path.join(env.rulesDir, 'bypassed_vlans.json');
@@ -254,6 +269,21 @@ const normalizeOptionalDate = (value: unknown) => {
     return normalized;
 };
 
+const cidrContainsIp = (cidr: string, ip: string) => {
+    try {
+        const [networkIp, prefixRaw] = cidr.includes('/') ? cidr.split('/') : [cidr, '32'];
+        const prefix = Number(prefixRaw);
+        if (networkIp.split('.').length !== 4 || ip.split('.').length !== 4 || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+            return false;
+        }
+        const ipv4ToInt = (value: string) => value.split('.').reduce((acc, octet) => ((acc << 8) + Number(octet)) >>> 0, 0);
+        const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+        return (ipv4ToInt(ip) & mask) === (ipv4ToInt(networkIp) & mask);
+    } catch {
+        return false;
+    }
+};
+
 let telemetrySyncPromise: Promise<any> | null = null;
 let lastTelemetrySyncAt = 0;
 
@@ -323,6 +353,13 @@ const modeLabel = (mode: string | null | undefined) => mode === 'acl-only'
     : mode === 'intercept-selective'
         ? 'Interceptação Seletiva'
         : 'ACL + DNS';
+const effectiveProxyMode = (mode: EnforcementMode, emergencyBypass: boolean) => (
+    emergencyBypass
+        ? 'off'
+        : mode === 'intercept-selective'
+            ? 'test-http-only'
+            : 'off'
+);
 
 const parseSimpleTable = (html: string) => {
     const rows = [...html.matchAll(/<tr>(.*?)<\/tr>/gsi)];
@@ -923,6 +960,8 @@ class BlockingReleaseService {
             env.squidConfigPath,
             path.join(env.squidAclDir, 'proxy_whitelist.acl'),
             path.join(env.squidAclDir, 'proxy_blocklist.acl'),
+            path.join(env.squidAclDir, 'proxy_whitelist_url.acl'),
+            path.join(env.squidAclDir, 'proxy_blocklist_url.acl'),
             path.join(env.squidAclDir, 'proxy_protected_ssl.acl'),
             path.join(env.squidAclDir, 'proxy_bump_ssl.acl'),
             path.join(env.squidAclDir, 'proxy_ip_bypass.acl'),
@@ -937,6 +976,8 @@ class BlockingReleaseService {
         for (const vlan of await this.listVlans()) {
             files.push(path.join(env.squidAclDir, `allowlist-vlan-${vlan.vlan_id}.acl`));
             files.push(path.join(env.squidAclDir, `blocklist-vlan-${vlan.vlan_id}.acl`));
+            files.push(path.join(env.squidAclDir, `allowlist-vlan-${vlan.vlan_id}-url.acl`));
+            files.push(path.join(env.squidAclDir, `blocklist-vlan-${vlan.vlan_id}-url.acl`));
             files.push(path.join(path.dirname(env.blockedRpzFile), `allowlist-vlan-${vlan.vlan_id}.rpz`));
             files.push(path.join(path.dirname(env.blockedRpzFile), `blocklist-vlan-${vlan.vlan_id}.rpz`));
         }
@@ -1574,6 +1615,169 @@ class BlockingReleaseService {
         return rows[0];
     }
 
+    async listEmergencyVlanBypasses(options: { includeInactive?: boolean; skipReconcile?: boolean } = {}) {
+        await this.ensureReady();
+        if (!options.skipReconcile) {
+            await this.reconcileEmergencyVlanBypasses();
+        }
+        const clauses = [options.includeInactive ? '1 = 1' : 'active = TRUE'];
+        if (!options.includeInactive) {
+            clauses.push('(expires_at IS NULL OR expires_at >= NOW())');
+        }
+        const { rows } = await pool.query(
+            `
+                SELECT *
+                FROM emergency_vlan_bypass
+                WHERE ${clauses.join(' AND ')}
+                ORDER BY active DESC, vlan_id ASC, activated_at DESC
+            `,
+        ).catch(() => ({ rows: [] as EmergencyVlanBypassRow[] }));
+        return rows as EmergencyVlanBypassRow[];
+    }
+
+    private async reconcileEmergencyVlanBypasses() {
+        const { rows } = await pool.query(
+            `
+                UPDATE emergency_vlan_bypass
+                SET active = FALSE,
+                    deactivated_at = COALESCE(deactivated_at, NOW()),
+                    deactivated_by = COALESCE(deactivated_by, 'system-expiry'),
+                    updated_at = NOW()
+                WHERE active = TRUE
+                  AND expires_at IS NOT NULL
+                  AND expires_at < NOW()
+                RETURNING vlan_id
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
+        if (!rows.length) return { expired: 0 };
+
+        await this.writeGeneratedArtifacts();
+        const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
+        await this.validateCompiledState(mode);
+        await dnsContingencyService.ensureFirewallState();
+        await this.recordAudit({
+            action: 'emergency-vlan-bypass:expire',
+            requestedBy: 'system-expiry',
+            payload: { vlan_ids: rows.map((row) => row.vlan_id) },
+            result: { expired: rows.length, vlan_ids: rows.map((row) => row.vlan_id) },
+            success: true,
+            message: `${rows.length} bypass(es) emergenciais por VLAN expiraram`,
+        });
+        return { expired: rows.length };
+    }
+
+    async activateEmergencyVlanBypass(payload: any, requestedBy = 'system') {
+        await this.ensureReady();
+        const vlanId = assertManagedPolicyVlan(payload?.vlan_id ?? payload?.vlanId);
+        const reason = String(payload?.reason || '').trim();
+        if (!reason) throw new Error('Motivo obrigatório para bypass emergencial por VLAN.');
+
+        const durationRaw = payload?.duration_minutes ?? payload?.durationMinutes ?? payload?.duration;
+        let expiresAt: string | null = null;
+        if (durationRaw !== null && durationRaw !== undefined && durationRaw !== '' && durationRaw !== 'manual') {
+            const durationMinutes = Number(durationRaw);
+            if (![15, 30, 60, 120].includes(durationMinutes)) {
+                throw new Error('Duração inválida. Use 15, 30, 60, 120 ou manual.');
+            }
+            expiresAt = new Date(Date.now() + durationMinutes * 60_000).toISOString();
+        }
+
+        const existing = await pool.query(
+            `
+                SELECT *
+                FROM emergency_vlan_bypass
+                WHERE vlan_id = $1
+                  AND active = TRUE
+                  AND (expires_at IS NULL OR expires_at >= NOW())
+                ORDER BY activated_at DESC
+                LIMIT 1
+            `,
+            [vlanId],
+        ).catch(() => ({ rows: [] as EmergencyVlanBypassRow[] }));
+        if (existing.rows.length) {
+            throw new Error(`A VLAN ${vlanId} já está em bypass emergencial.`);
+        }
+
+        const contingency = await dnsContingencyService.getStatus().catch(() => null);
+        if (contingency?.status === 'active' && (
+            contingency.scope_type === 'global'
+            || (Array.isArray(contingency.vlan_ids) && contingency.vlan_ids.map(Number).includes(vlanId))
+        )) {
+            await dnsContingencyService.deactivate(
+                requestedBy,
+                `Bypass emergencial da VLAN ${vlanId} ativado; contingência DNS suspensa para evitar conflito de modo.`,
+            );
+        }
+
+        const { rows } = await pool.query(
+            `
+                INSERT INTO emergency_vlan_bypass (
+                    vlan_id,
+                    reason,
+                    requested_by,
+                    activated_at,
+                    expires_at,
+                    active,
+                    notes
+                )
+                VALUES ($1, $2, $3, NOW(), $4, TRUE, $5)
+                RETURNING *
+            `,
+            [vlanId, reason, requestedBy, expiresAt, payload?.notes || null],
+        );
+
+        await this.writeGeneratedArtifacts();
+        const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
+        const validation = await this.validateCompiledState(mode);
+        await dnsContingencyService.ensureFirewallState();
+        await this.recordAudit({
+            action: 'emergency-vlan-bypass:activate',
+            requestedBy,
+            payload: { vlan_id: vlanId, reason, expires_at: expiresAt },
+            result: { ...rows[0], validation },
+            success: true,
+            message: `Bypass emergencial ativado para VLAN ${vlanId}`,
+            vlanId,
+        });
+        return rows[0];
+    }
+
+    async deactivateEmergencyVlanBypass(vlanRef: number, requestedBy = 'system', reason = 'Retorno manual ao enforcement institucional') {
+        await this.ensureReady();
+        const vlanId = assertManagedPolicyVlan(vlanRef);
+        const { rows } = await pool.query(
+            `
+                UPDATE emergency_vlan_bypass
+                SET active = FALSE,
+                    deactivated_at = NOW(),
+                    deactivated_by = $2,
+                    updated_at = NOW(),
+                    notes = CONCAT(COALESCE(notes, ''), CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE E'\n' END, $3)
+                WHERE vlan_id = $1
+                  AND active = TRUE
+                  AND (expires_at IS NULL OR expires_at >= NOW())
+                RETURNING *
+            `,
+            [vlanId, requestedBy, `Desativado: ${reason}`],
+        );
+        if (!rows.length) throw new Error(`Nenhum bypass emergencial ativo encontrado para a VLAN ${vlanId}.`);
+
+        await this.writeGeneratedArtifacts();
+        const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
+        const validation = await this.validateCompiledState(mode);
+        await dnsContingencyService.ensureFirewallState();
+        await this.recordAudit({
+            action: 'emergency-vlan-bypass:deactivate',
+            requestedBy,
+            payload: { vlan_id: vlanId, reason },
+            result: { ...rows[0], validation },
+            success: true,
+            message: `Bypass emergencial desativado para VLAN ${vlanId}`,
+            vlanId,
+        });
+        return rows[0];
+    }
+
     async listExceptions(filters: Record<string, any> = {}) {
         await this.ensureReady();
         const clauses = ['1 = 1'];
@@ -1949,7 +2153,7 @@ class BlockingReleaseService {
 
     async getHealth() {
         await this.ensureReady();
-        const [engineState, proxyState, services] = await Promise.all([
+        const [engineState, proxyState, services, emergencyVlanBypasses] = await Promise.all([
             this.getEngineState(),
             proxyEngineService.getStatus().catch(() => null),
             Promise.all([
@@ -1957,6 +2161,7 @@ class BlockingReleaseService {
                 runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true }),
                 runCommand('systemctl', ['is-active', 'postgresql'], { elevated: true, allowFailure: true }),
             ]),
+            this.listEmergencyVlanBypasses({ skipReconcile: true }),
         ]);
         const [squidStatus, unboundStatus, postgresStatus] = services;
         const [dnsLogger, dnsRadar] = await Promise.all([
@@ -2000,15 +2205,17 @@ class BlockingReleaseService {
 
         const alerts = [
             ...(compilerInspection.compilerIncludeLoaded ? [] : ['Compiler include do Unbound ausente do carregamento ativo']),
-            ...(compilerInspection.allowedReferenced ? [] : ['allowed.rpz não referenciado no include ativo']),
-            ...(compilerInspection.blockedReferenced ? [] : ['blocked.rpz não referenciado no include ativo']),
-            ...(compilerInspection.vipBypassReferenced ? [] : ['vip-bypass.conf não referenciado no include ativo']),
+            ...(engineState.emergency_bypass || compilerInspection.allowedReferenced ? [] : ['allowed.rpz não referenciado no include ativo']),
+            ...(engineState.emergency_bypass || compilerInspection.blockedReferenced ? [] : ['blocked.rpz não referenciado no include ativo']),
+            ...(engineState.emergency_bypass || compilerInspection.vipBypassReferenced ? [] : ['vip-bypass.conf não referenciado no include ativo']),
             ...(compilerInspection.filesMatchManifest ? [] : [`Manifesto divergente dos artefatos: ${compilerInspection.mismatchedPaths.join(', ')}`]),
             ...(compilerInspection.missingTaggedVpcFiles.length ? [`RPZ por VLAN ausente: ${compilerInspection.missingTaggedVpcFiles.join(', ')}`] : []),
             ...(compilerInspection.missingTaggedVpcTags.length ? [`Tag/attach DNS por VLAN ausente: ${compilerInspection.missingTaggedVpcTags.join(', ')}`] : []),
             ...(legacyRisk.active_scripts.length ? [`Scripts legados ainda ativos fora da quarentena: ${legacyRisk.active_scripts.join(', ')}`] : []),
             ...(squidWarnings.length ? [`Warnings do Squid presentes: ${squidWarnings.join(' | ')}`] : []),
             ...(!contingencyStatus || contingencyStatus.chain !== 'DNS_EMERGENCY_V8' ? ['Chain de contingência DNS indisponível para inspeção.'] : []),
+            ...(engineState.emergency_bypass ? ['Bypass de emergência ativo: ACL, DNS e interceptação ficam suspensos globalmente.'] : []),
+            ...(emergencyVlanBypasses.length ? [`Bypass emergencial por VLAN ativo em: ${emergencyVlanBypasses.map((row) => `VLAN ${row.vlan_id}`).join(', ')}`] : []),
         ];
 
         const integrityScore = Object.values(integrity).reduce((acc, value) => acc + (value ? 1 : 0), 0);
@@ -2064,6 +2271,7 @@ class BlockingReleaseService {
             },
             compiler: compilerInspection,
             contingency: contingencyStatus,
+            emergency_vlan_bypasses: emergencyVlanBypasses,
             validation: runtimeValidation,
             warnings: {
                 squid: squidWarnings,
@@ -2080,7 +2288,7 @@ class BlockingReleaseService {
 
     async buildOverview() {
         await this.syncTelemetry({ background: true });
-        const [engineState, health, policyCounts, vlanSummary, traffic, recentFailures, contingency] = await Promise.all([
+        const [engineState, health, policyCounts, vlanSummary, traffic, recentFailures, contingency, emergencyVlanBypasses] = await Promise.all([
             this.getEngineState(),
             this.getHealth(),
             Promise.all([
@@ -2103,6 +2311,7 @@ class BlockingReleaseService {
             ]),
             pool.query(`SELECT action, message, created_at FROM action_audit_logs WHERE success = FALSE ORDER BY created_at DESC LIMIT 1`),
             dnsContingencyService.getStatus().catch(() => null),
+            this.listEmergencyVlanBypasses({ skipReconcile: true }),
         ]);
 
         const [blockCount, allowCount, exceptionCount, exemptCount, protectedCount] = policyCounts;
@@ -2119,6 +2328,7 @@ class BlockingReleaseService {
             topVlan.rows[0]?.vlan_id ? `VLAN ${topVlan.rows[0].vlan_id} lidera a atividade recente` : 'Sem VLAN dominante suficiente no período',
             topDomain.rows[0]?.domain ? `Maior volume nas últimas 24h: ${topDomain.rows[0].domain}` : 'Sem domínio dominante recente',
             `O módulo opera hoje sobre ${vlanSummary.length} VLAN(s) cadastradas.`,
+            emergencyVlanBypasses.length ? `${emergencyVlanBypasses.length} VLAN(s) em bypass emergencial temporário` : 'Nenhuma VLAN em bypass emergencial',
             `Política global ${engineState.global_blocking_enabled ? 'ativa' : 'desativada'}`,
             contingency?.status === 'active'
                 ? `Contingência DNS ativa em escopo ${contingency.scope_type}`
@@ -2143,48 +2353,57 @@ class BlockingReleaseService {
                 vlans_isentas: exemptCount.rows[0]?.total || 0,
                 dns_contingency_status: contingency?.status || 'unknown',
                 dns_contingency_scope: contingency?.scope_type || 'global',
+                emergency_vlan_bypass_count: emergencyVlanBypasses.length,
                 volume_por_hora: hourlyVolume.rows,
                 score_operacional: score,
             },
             insights,
             vlans: vlanSummary,
             contingency,
+            emergency_vlan_bypasses: emergencyVlanBypasses,
         };
     }
 
     async exportPolicies() {
-        const [blocks, allows, vlans, exceptions] = await Promise.all([
+        const [blocks, allows, vlans, exceptions, emergencyVlanBypasses] = await Promise.all([
             this.listPolicies('block'),
             this.listPolicies('allow'),
             this.listVlans(),
             this.listExceptions(),
+            this.listEmergencyVlanBypasses({ includeInactive: true }),
         ]);
-        return { generated_at: new Date().toISOString(), blocks, allows, vlans, exceptions };
+        return { generated_at: new Date().toISOString(), blocks, allows, vlans, exceptions, emergency_vlan_bypasses: emergencyVlanBypasses };
     }
 
     async writeGeneratedArtifacts() {
         await this.ensureReady();
-        const [engineState, blocks, allows, vlans, exceptions] = await Promise.all([
+        const [engineState, blocks, allows, vlans, exceptions, emergencyVlanBypasses] = await Promise.all([
             this.getEngineState(),
             this.listPolicies('block', { status: 'active' }),
             this.listPolicies('allow', { status: 'active' }),
             this.listVlans(),
             this.listExceptions({ status: 'active' }),
+            this.listEmergencyVlanBypasses(),
         ]);
 
         const mode = (engineState.enforcement_mode || 'acl-plus-dns') as EnforcementMode;
         await this.syncDnsVipFromExceptions(exceptions, { applyRuntime: false });
         const manifest = await policyCompilerService.compile(mode);
+        const emergencyBypassVlanIds = new Set(emergencyVlanBypasses.map((row) => Number(row.vlan_id)));
 
         const bypassState = {
             global: Boolean(engineState.emergency_bypass),
-            vlans: Object.fromEntries(vlans.map((row) => [row.interface_name, Boolean(row.exempt || !row.blocking_enabled || !row.monitoring_enabled)])),
+            vlans: Object.fromEntries(vlans.map((row) => [
+                row.interface_name,
+                Boolean(row.exempt || !row.blocking_enabled || !row.monitoring_enabled || emergencyBypassVlanIds.has(Number(row.vlan_id))),
+            ])),
         };
         fs.writeFileSync(LEGACY_BYPASS_FILE, JSON.stringify(bypassState, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'vlan-policies.json'), JSON.stringify(vlans, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'exceptions.json'), JSON.stringify(exceptions, null, 2));
+        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'emergency-vlan-bypass.json'), JSON.stringify(emergencyVlanBypasses, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'engine-state.json'), JSON.stringify(engineState, null, 2));
-        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'export.json'), JSON.stringify({ blocks, allows, vlans, exceptions, engineState, manifest }, null, 2));
+        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'export.json'), JSON.stringify({ blocks, allows, vlans, exceptions, emergencyVlanBypasses, engineState, manifest }, null, 2));
 
         return {
             directory: ENTERPRISE_DIR,
@@ -2291,13 +2510,15 @@ class BlockingReleaseService {
     }
 
     async validateCompiledState(mode: EnforcementMode) {
+        const engineState = await this.getEngineState();
+        const emergencyBypass = Boolean(engineState.emergency_bypass);
         const unboundValidation = await this.validateUnbound();
         let proxyStatus = null;
 
-        if (mode === 'intercept-selective') {
+        if (effectiveProxyMode(mode, emergencyBypass) === 'test-http-only') {
             proxyStatus = await proxyEngineService.setMode('test-http-only', 'policy-compiler', 'intercept-selective');
         } else {
-            proxyStatus = await proxyEngineService.setMode('off', 'policy-compiler', `mode:${mode}`);
+            proxyStatus = await proxyEngineService.setMode('off', 'policy-compiler', emergencyBypass ? 'emergency-bypass' : `mode:${mode}`);
         }
 
         const unboundStatus = await this.reloadUnbound();
@@ -2440,9 +2661,20 @@ class BlockingReleaseService {
             `,
             [uniqueClients],
         ).catch(() => ({ rows: [] as any[] }));
+        const { rows: emergencyRows } = await pool.query(
+            `
+                SELECT evb.vlan_id, vp.subnet_cidr
+                FROM emergency_vlan_bypass evb
+                JOIN vlan_policies vp
+                  ON vp.vlan_id = evb.vlan_id
+                WHERE evb.active = TRUE
+                  AND (evb.expires_at IS NULL OR evb.expires_at >= NOW())
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number; subnet_cidr: string }> }));
         const rows = [...policyRows, ...sporadicRows];
         const bypassed = new Set(rows.map((row) => String(row.ip || '').replace(/\/32$/, '').trim()));
-        return uniqueClients.filter((ip) => !bypassed.has(ip));
+        const emergencyCidrs = emergencyRows.map((row) => String(row.subnet_cidr || '').trim()).filter(Boolean);
+        return uniqueClients.filter((ip) => !bypassed.has(ip) && !emergencyCidrs.some((cidr) => cidrContainsIp(cidr, ip)));
     }
 
     async disconnectClientSessions(clientIps: string[], requestedBy = 'system', reason = 'Política institucional aplicada') {
@@ -2576,8 +2808,9 @@ class BlockingReleaseService {
         const snapshot = await this.createSnapshot();
         try {
             const artifacts = await this.writeGeneratedArtifacts();
-            const mode = (await this.getEngineState()).enforcement_mode as EnforcementMode || 'acl-plus-dns';
-            const desiredProxyMode = mode === 'intercept-selective' ? 'test-http-only' : 'off';
+            const engineState = await this.getEngineState();
+            const mode = engineState.enforcement_mode as EnforcementMode || 'acl-plus-dns';
+            const desiredProxyMode = effectiveProxyMode(mode, Boolean(engineState.emergency_bypass));
             const desiredSquidConfig = await proxyEngineService.renderDesiredSquidConfig(desiredProxyMode);
             const squidConfigAligned = readTextIfExists(env.squidConfigPath) === desiredSquidConfig;
             const noOp = Boolean(previousManifest
@@ -2734,21 +2967,49 @@ class BlockingReleaseService {
     }
 
     async setEmergencyBypass(enabled: boolean, requestedBy = 'system') {
+        let contingency = await dnsContingencyService.getStatus().catch(() => null);
+        if (enabled && contingency?.status === 'active') {
+            contingency = await dnsContingencyService.deactivate(
+                requestedBy,
+                'Bypass de emergência ativado; contingência DNS suspensa para liberar todas as VLANs.',
+            );
+        }
+
         await this.updateEngineState({
             emergency_bypass: enabled,
+            compiler_status: 'pending',
             health_status: enabled ? 'degraded' : 'healthy',
+            last_error: null,
         });
         await this.writeGeneratedArtifacts();
-        await this.validateCompiledState(((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode);
+        const engineState = await this.getEngineState();
+        const validation = await this.validateCompiledState((engineState.enforcement_mode || 'acl-plus-dns') as EnforcementMode);
+        await dnsContingencyService.ensureFirewallState();
+        await this.updateEngineState({
+            compiler_status: 'healthy',
+            last_validation: {
+                ...(engineState.last_validation && typeof engineState.last_validation === 'object' ? engineState.last_validation : {}),
+                emergency_bypass: {
+                    enabled,
+                    changed_at: new Date().toISOString(),
+                    validation,
+                    contingency_status: contingency?.status || 'normal',
+                },
+            },
+        });
         await this.recordAudit({
             action: 'emergency-bypass',
             requestedBy,
             payload: { enabled },
-            result: { enabled },
+            result: {
+                enabled,
+                validation,
+                contingency_status: contingency?.status || 'normal',
+            },
             success: true,
             message: enabled ? 'Bypass global ativado' : 'Bypass global desativado',
         });
-        return this.getEngineState();
+        return this.getStatus();
     }
 
     async setEnforcementMode(mode: EnforcementMode, requestedBy = 'system') {
@@ -2840,11 +3101,12 @@ class BlockingReleaseService {
     }
 
     async getStatus() {
-        const [engine, health, contingency, vlans] = await Promise.all([
+        const [engine, health, contingency, vlans, emergencyVlanBypasses] = await Promise.all([
             this.getEngineState(),
             this.getHealth(),
             dnsContingencyService.getStatus().catch(() => null),
             this.listVlans().catch(() => []),
+            this.listEmergencyVlanBypasses(),
         ]);
         const operationalVlans = filterOperationalVlans(vlans as any[]);
         const internalDnsByVlan = buildInternalDnsByVlan(operationalVlans as any[]);
@@ -2874,6 +3136,7 @@ class BlockingReleaseService {
             },
             health,
             contingency,
+            emergency_vlan_bypasses: emergencyVlanBypasses,
         };
     }
 }

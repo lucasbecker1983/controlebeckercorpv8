@@ -4,21 +4,40 @@ import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activit
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
+const EMERGENCY_VLANS = [
+    { vlan_id: 10, label: 'Secretaria' },
+    { vlan_id: 30, label: 'Celulares' },
+    { vlan_id: 50, label: 'SINE' },
+    { vlan_id: 70, label: 'Visitantes' },
+];
+
+const formatDateTime = (value) => {
+    if (!value) return 'Manual';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Manual';
+    return date.toLocaleString('pt-BR');
+};
+
 export default function ControlPage() {
     const [services, setServices] = useState([]);
     const [clamav, setClamav] = useState(null);
+    const [emergencyBypasses, setEmergencyBypasses] = useState([]);
     const [selectedService, setSelectedService] = useState(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [tacticalLoading, setTacticalLoading] = useState('');
     const [findingLoading, setFindingLoading] = useState('');
     const [servicesError, setServicesError] = useState('');
     const [clamavError, setClamavError] = useState('');
+    const [emergencyError, setEmergencyError] = useState('');
+    const [emergencyDialog, setEmergencyDialog] = useState({ open: false, mode: 'activate', vlan: null });
+    const [emergencyForm, setEmergencyForm] = useState({ duration_minutes: '30', reason: '' });
     
     const loadData = async () => {
         const [servicesRes, clamavRes] = await Promise.allSettled([
             api.get('/api/control/services'),
             api.get('/api/control/clamav'),
         ]);
+        const emergencyRes = await api.get('/api/bloqueios-liberacoes/emergency-vlan-bypass').catch((error) => error);
 
         if (servicesRes.status === 'fulfilled') {
             setServices(Array.isArray(servicesRes.value.data) ? servicesRes.value.data : []);
@@ -35,8 +54,53 @@ export default function ControlPage() {
             setClamav(null);
             setClamavError('Falha ao carregar a telemetria do ClamAV.');
         }
+
+        if (emergencyRes?.data && Array.isArray(emergencyRes.data)) {
+            setEmergencyBypasses(emergencyRes.data);
+            setEmergencyError('');
+        } else {
+            setEmergencyBypasses([]);
+            setEmergencyError('Falha ao carregar os bypasses emergenciais por VLAN.');
+        }
     };
     useEffect(() => { loadData(); const i = setInterval(loadData, 5000); return () => clearInterval(i); }, []);
+
+    const activeBypassByVlan = emergencyBypasses.reduce((acc, item) => {
+        acc[String(item.vlan_id)] = item;
+        return acc;
+    }, {});
+
+    const submitEmergencyBypass = async () => {
+        const vlanId = Number(emergencyDialog.vlan?.vlan_id || 0);
+        if (!vlanId) return;
+
+        if (emergencyDialog.mode === 'activate' && !String(emergencyForm.reason || '').trim()) {
+            alert('Informe o motivo institucional da liberação emergencial.');
+            return;
+        }
+
+        setTacticalLoading(`emergency-vlan-${vlanId}-${emergencyDialog.mode}`);
+        try {
+            if (emergencyDialog.mode === 'activate') {
+                await api.post('/api/bloqueios-liberacoes/emergency-vlan-bypass/activate', {
+                    vlan_id: vlanId,
+                    duration_minutes: emergencyForm.duration_minutes === 'manual' ? 'manual' : Number(emergencyForm.duration_minutes),
+                    reason: emergencyForm.reason.trim(),
+                });
+            } else {
+                await api.post(`/api/bloqueios-liberacoes/emergency-vlan-bypass/${vlanId}/deactivate`, {
+                    reason: emergencyForm.reason.trim() || 'Retorno manual ao enforcement institucional',
+                });
+            }
+            setEmergencyDialog({ open: false, mode: 'activate', vlan: null });
+            setEmergencyForm({ duration_minutes: '30', reason: '' });
+            loadData();
+        } catch (error) {
+            alert(error?.response?.data?.error || 'Falha ao processar bypass emergencial por VLAN.');
+        } finally {
+            setTacticalLoading('');
+        }
+    };
 
     // Ações táticas globais
     const runTactical = async (action, label) => {
@@ -175,6 +239,76 @@ export default function ControlPage() {
                     ))}
                 </div>
             </div>
+
+            <Surface className="p-6 space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <div className="text-[11px] font-semibold tracking-tight text-primary">Resposta emergencial</div>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Liberação emergencial por VLAN</h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/66">
+                            Use esta camada apenas quando uma rede inteira precisar de bypass temporário. A VLAN sai do enforcement categórico do Squid e do RPZ do Unbound, e a contingência DNS conflitante é retirada.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <StatusChip label={`${emergencyBypasses.length} VLAN(s) em bypass`} tone={emergencyBypasses.length ? 'warning' : 'success'} />
+                        <StatusChip label="Escopo técnico emergencial" tone="primary" />
+                    </div>
+                </div>
+
+                {emergencyError ? (
+                    <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                        {emergencyError}
+                    </div>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {EMERGENCY_VLANS.map((vlan) => {
+                        const activeBypass = activeBypassByVlan[String(vlan.vlan_id)];
+                        const actionKey = `emergency-vlan-${vlan.vlan_id}-${activeBypass ? 'deactivate' : 'activate'}`;
+                        return (
+                            <Surface key={vlan.vlan_id} stripe={false} className="p-4">
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-bold text-on-surface">VLAN {vlan.vlan_id}</div>
+                                        <div className="mt-1 text-xs text-on-surface/62">{vlan.label}</div>
+                                    </div>
+                                    <StatusChip label={activeBypass ? 'Bypass ativo' : 'Protegida'} tone={activeBypass ? 'warning' : 'success'} />
+                                </div>
+                                <div className="mt-4 text-xs leading-6 text-on-surface/66">
+                                    {activeBypass ? (
+                                        <>
+                                            Motivo: {activeBypass.reason}<br />
+                                            Expira: {formatDateTime(activeBypass.expires_at)}
+                                        </>
+                                    ) : (
+                                        'Enforcement institucional ativo: ACL categórica, RPZ e comportamento normal da camada de controle.'
+                                    )}
+                                </div>
+                                <div className="mt-4">
+                                    <ActionButton
+                                        tone={activeBypass ? 'danger' : 'primary'}
+                                        icon={activeBypass ? X : Zap}
+                                        disabled={tacticalLoading === actionKey}
+                                        onClick={() => {
+                                            setEmergencyDialog({ open: true, mode: activeBypass ? 'deactivate' : 'activate', vlan });
+                                            setEmergencyForm({
+                                                duration_minutes: '30',
+                                                reason: activeBypass ? '' : '',
+                                            });
+                                        }}
+                                    >
+                                        {tacticalLoading === actionKey
+                                            ? 'Processando...'
+                                            : activeBypass
+                                                ? 'Encerrar bypass'
+                                                : 'Ativar bypass'}
+                                    </ActionButton>
+                                </div>
+                            </Surface>
+                        );
+                    })}
+                </div>
+            </Surface>
 
             <Surface className="p-6 space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -382,6 +516,72 @@ export default function ControlPage() {
             </div>
 
             <AnimatePresence>
+                {emergencyDialog.open && emergencyDialog.vlan && (
+                    <DialogShell
+                        open={Boolean(emergencyDialog.open)}
+                        title={`${emergencyDialog.mode === 'activate' ? 'Ativar' : 'Encerrar'} bypass emergencial`}
+                        subtitle={`VLAN ${emergencyDialog.vlan.vlan_id} • ${emergencyDialog.vlan.label}`}
+                        onClose={() => !tacticalLoading && setEmergencyDialog({ open: false, mode: 'activate', vlan: null })}
+                        size="max-w-lg"
+                    >
+                        <div className="space-y-4">
+                            <div className="rounded-2xl border border-outline/12 bg-surface-high/55 px-4 py-3 text-sm leading-6 text-on-surface/70">
+                                {emergencyDialog.mode === 'activate'
+                                    ? 'Esta ação libera temporariamente a VLAN inteira do enforcement categórico. O Unbound deixa de aplicar RPZ para essa rede e o Squid sai do fluxo categórico correspondente.'
+                                    : 'Esta ação retira a VLAN do bypass emergencial e recompõe o enforcement institucional atual do módulo.'}
+                            </div>
+
+                            {emergencyDialog.mode === 'activate' ? (
+                                <label className="block">
+                                    <span className="mb-2 block text-sm font-bold text-on-surface">Duração</span>
+                                    <select
+                                        value={emergencyForm.duration_minutes}
+                                        onChange={(event) => setEmergencyForm((current) => ({ ...current, duration_minutes: event.target.value }))}
+                                        className="w-full rounded-2xl border border-outline/16 bg-surface px-4 py-3 text-sm text-on-surface"
+                                    >
+                                        <option value="15">15 minutos</option>
+                                        <option value="30">30 minutos</option>
+                                        <option value="60">60 minutos</option>
+                                        <option value="120">120 minutos</option>
+                                        <option value="manual">Manual</option>
+                                    </select>
+                                </label>
+                            ) : null}
+
+                            <label className="block">
+                                <span className="mb-2 block text-sm font-bold text-on-surface">Motivo</span>
+                                <textarea
+                                    value={emergencyForm.reason}
+                                    onChange={(event) => setEmergencyForm((current) => ({ ...current, reason: event.target.value }))}
+                                    rows={4}
+                                    placeholder={emergencyDialog.mode === 'activate'
+                                        ? 'Descreva a indisponibilidade ou necessidade operacional.'
+                                        : 'Registre o motivo do retorno ao enforcement institucional.'}
+                                    className="w-full rounded-2xl border border-outline/16 bg-surface px-4 py-3 text-sm text-on-surface"
+                                />
+                            </label>
+
+                            <div className="flex justify-end gap-3">
+                                <ActionButton tone="ghost" onClick={() => setEmergencyDialog({ open: false, mode: 'activate', vlan: null })}>
+                                    Cancelar
+                                </ActionButton>
+                                <ActionButton
+                                    tone={emergencyDialog.mode === 'activate' ? 'danger' : 'primary'}
+                                    icon={emergencyDialog.mode === 'activate' ? Zap : ShieldCheck}
+                                    disabled={Boolean(tacticalLoading)}
+                                    onClick={submitEmergencyBypass}
+                                >
+                                    {tacticalLoading
+                                        ? 'Processando...'
+                                        : emergencyDialog.mode === 'activate'
+                                            ? 'Confirmar bypass'
+                                            : 'Restaurar enforcement'}
+                                </ActionButton>
+                            </div>
+                        </div>
+                    </DialogShell>
+                )}
+
                 {selectedService && (
                     <DialogShell
                         open={Boolean(selectedService)}

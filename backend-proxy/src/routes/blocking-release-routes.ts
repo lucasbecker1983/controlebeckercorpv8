@@ -306,6 +306,34 @@ router.get('/exceptions', async (req, res) => {
     }
 });
 
+router.get('/emergency-vlan-bypass', async (_req, res) => {
+    try {
+        res.json(await blockingReleaseService.listEmergencyVlanBypasses());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/emergency-vlan-bypass/activate', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.activateEmergencyVlanBypass(req.body, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/emergency-vlan-bypass/:vlanId/deactivate', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.deactivateEmergencyVlanBypass(
+            Number(req.params.vlanId),
+            requestedBy(req),
+            String(req.body?.reason || 'Retorno manual ao enforcement institucional'),
+        ));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.get('/contingency/status', async (_req, res) => {
     try {
         res.json(await dnsContingencyService.getStatus());

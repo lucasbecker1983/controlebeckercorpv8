@@ -54,6 +54,12 @@ const uniqueVipRows = (rows: Array<{ ip: string; vlan_id: number | null }>) => {
         });
 };
 
+const uniqueVlanIds = (rows: Array<{ vlan_id: number }>) => new Set(
+    rows
+        .map((row) => Number(row.vlan_id))
+        .filter((value) => Number.isFinite(value) && isManagedBlockingVlan(value)),
+);
+
 export class InterceptionService {
     readonly backupDir = path.join(env.proxyStateDir, 'backups', 'ufw');
 
@@ -81,16 +87,28 @@ export class InterceptionService {
                 SELECT host(ip) AS ip, vlan_id
                 FROM policy_exceptions
                 WHERE active = TRUE
+                  AND masklen(ip) = 32
                   AND (valid_until IS NULL OR valid_until >= NOW())
                 ORDER BY id ASC
             `,
         ).catch(() => ({ rows: [] as Array<{ ip: string; vlan_id: number | null }> }));
+        const { rows: emergencyRows } = await pool.query(
+            `
+                SELECT vlan_id
+                FROM emergency_vlan_bypass
+                WHERE active = TRUE
+                  AND (expires_at IS NULL OR expires_at >= NOW())
+                ORDER BY vlan_id ASC
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
         const vipBypassRows = uniqueVipRows(vipRows);
+        const emergencyVlans = uniqueVlanIds(emergencyRows);
 
         if (!bypassGlobal && ports.length > 0 && selectiveVlans.length > 0) {
             rules.push('*nat');
             rules.push(':V8_PROXY_ENGINE - [0:0]');
             for (const row of selectiveVlans) {
+                if (emergencyVlans.has(Number(row.vlan_id))) continue;
                 const gatewayIp = getGatewayFromSubnet(row.subnet_cidr);
                 const vlanVips = vipBypassRows.filter((vip) => !vip.vlan_id || vip.vlan_id === row.vlan_id);
                 if (gatewayIp) {

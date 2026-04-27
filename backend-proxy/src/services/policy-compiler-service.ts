@@ -37,6 +37,18 @@ type VlanRow = {
     policy_mode: string;
 };
 
+type EmergencyVlanBypassRow = {
+    vlan_id: number;
+};
+
+type DomainPolicyEntryRow = {
+    policy_type: 'allow' | 'block';
+    scope_type: 'global' | 'vlan';
+    scope_value: string;
+    entry_type: 'domain' | 'url';
+    normalized_domain: string;
+};
+
 const normalizeDomain = (value: string) => value
     .trim()
     .toLowerCase()
@@ -99,6 +111,18 @@ const normalizeIpv4Cidrs = (entries: string[]) => {
 };
 
 const sha256 = (content: string) => crypto.createHash('sha256').update(content).digest('hex');
+const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const urlLiteralToRegex = (value: string) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return null;
+    const slashIndex = normalized.indexOf('/');
+    const host = slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized;
+    const suffix = slashIndex >= 0 ? normalized.slice(slashIndex) : '';
+    if (!host) return null;
+    if (!suffix) return `^https?://${escapeRegex(host)}(?::[0-9]+)?(?:[/?].*)?$`;
+    if (suffix.includes('?')) return `^https?://${escapeRegex(host)}(?::[0-9]+)?${escapeRegex(suffix)}$`;
+    return `^https?://${escapeRegex(host)}(?::[0-9]+)?${escapeRegex(suffix)}(?:\\?.*)?$`;
+};
 
 type CompiledArtifacts = {
     enforcementMode: EnforcementMode;
@@ -152,12 +176,27 @@ export class PolicyCompilerService {
     }
 
     async loadState() {
-        const [blocks, allows, exceptions, vlans, engine] = await Promise.all([
+        const [blocks, allows, exceptions, vlans, engine, emergencyVlans, domainPolicyEntries] = await Promise.all([
             pool.query(`SELECT * FROM blocking_policies WHERE active = TRUE ORDER BY scope_type, scope_value, domain`),
             pool.query(`SELECT * FROM release_policies WHERE active = TRUE ORDER BY scope_type, scope_value, domain`),
             pool.query(`SELECT * FROM policy_exceptions WHERE active = TRUE ORDER BY id ASC`),
             pool.query(`SELECT * FROM vlan_policies ORDER BY vlan_id ASC`),
             pool.query(`SELECT * FROM policy_engine_state WHERE id = 1 LIMIT 1`),
+            pool.query(`
+                SELECT vlan_id
+                FROM emergency_vlan_bypass
+                WHERE active = TRUE
+                  AND (expires_at IS NULL OR expires_at >= NOW())
+                ORDER BY vlan_id ASC
+            `).catch(() => ({ rows: [] as EmergencyVlanBypassRow[] })),
+            pool.query(`
+                SELECT dp.policy_type, dp.scope_type, dp.scope_value, dpe.entry_type, dpe.normalized_domain
+                FROM domain_policy_entries dpe
+                JOIN domain_policies dp ON dp.id = dpe.policy_id
+                WHERE dp.enabled = TRUE
+                  AND dpe.entry_type = 'url'
+                ORDER BY dp.id ASC, dpe.id ASC
+            `).catch(() => ({ rows: [] as DomainPolicyEntryRow[] })),
         ]);
 
         return {
@@ -166,6 +205,8 @@ export class PolicyCompilerService {
             exceptions: exceptions.rows as ExceptionRow[],
             vlans: vlans.rows as VlanRow[],
             engine: engine.rows[0] || null,
+            emergencyVlans: emergencyVlans.rows as EmergencyVlanBypassRow[],
+            domainPolicyEntries: domainPolicyEntries.rows as DomainPolicyEntryRow[],
         };
     }
 
@@ -203,12 +244,33 @@ export class PolicyCompilerService {
         return `vlan_${vlanId}`;
     }
 
-    private compileScopes(blocks: PolicyRow[], allows: PolicyRow[], exceptions: ExceptionRow[], vlans: VlanRow[]) {
-        const managedVlans = filterOperationalVlans(vlans);
+    private compileScopes(
+        blocks: PolicyRow[],
+        allows: PolicyRow[],
+        exceptions: ExceptionRow[],
+        vlans: VlanRow[],
+        emergencyVlans: EmergencyVlanBypassRow[] = [],
+        domainPolicyEntries: DomainPolicyEntryRow[] = [],
+    ) {
+        const emergencyVlanIds = new Set(emergencyVlans.map((row) => Number(row.vlan_id)).filter((value) => Number.isFinite(value)));
+        const operationalVlans = filterOperationalVlans(vlans);
+        const managedVlans = operationalVlans.filter((vlan) => !emergencyVlanIds.has(Number(vlan.vlan_id)));
         const allowGlobal = sortedUnique(allows.filter((row) => row.scope_type === 'global').map((row) => normalizeDomain(row.domain)));
         const allowProtectedGlobal = sortedUnique(allows.filter((row) => row.protected).map((row) => normalizeDomain(row.domain)));
         const allowByVlan = new Map<number, string[]>();
         const blockByVlan = new Map<number, string[]>();
+        const allowUrlGlobal = sortedUnique(domainPolicyEntries
+            .filter((row) => row.policy_type === 'allow' && row.scope_type === 'global')
+            .map((row) => String(row.normalized_domain || '').trim())
+            .map((entry) => urlLiteralToRegex(entry) || '')
+            .filter(Boolean));
+        const blockUrlGlobal = sortedUnique(domainPolicyEntries
+            .filter((row) => row.policy_type === 'block' && row.scope_type === 'global')
+            .map((row) => String(row.normalized_domain || '').trim())
+            .map((entry) => urlLiteralToRegex(entry) || '')
+            .filter(Boolean));
+        const allowUrlByVlan = new Map<number, string[]>();
+        const blockUrlByVlan = new Map<number, string[]>();
 
         for (const vlan of managedVlans) {
             const vlanAllow = sortedUnique(allows
@@ -220,6 +282,14 @@ export class PolicyCompilerService {
                 .filter((domain) => !allowGlobal.includes(domain) && !allowProtectedGlobal.includes(domain) && !vlanAllow.includes(domain)));
             allowByVlan.set(vlan.vlan_id, vlanAllow);
             blockByVlan.set(vlan.vlan_id, vlanBlock);
+            allowUrlByVlan.set(vlan.vlan_id, sortedUnique(domainPolicyEntries
+                .filter((row) => row.policy_type === 'allow' && row.scope_type === 'vlan' && String(row.scope_value || '').split(',').map((item) => Number(item.trim())).includes(vlan.vlan_id))
+                .map((row) => urlLiteralToRegex(String(row.normalized_domain || '').trim()) || '')
+                .filter(Boolean)));
+            blockUrlByVlan.set(vlan.vlan_id, sortedUnique(domainPolicyEntries
+                .filter((row) => row.policy_type === 'block' && row.scope_type === 'vlan' && String(row.scope_value || '').split(',').map((item) => Number(item.trim())).includes(vlan.vlan_id))
+                .map((row) => urlLiteralToRegex(String(row.normalized_domain || '').trim()) || '')
+                .filter(Boolean)));
         }
 
         const blockGlobal = sortedUnique(blocks
@@ -230,12 +300,17 @@ export class PolicyCompilerService {
         const ipBypassEntries = normalizeIpv4Cidrs(unique(exceptions
             .filter((row) => isManagedBlockingIp(row.ip))
             .map((row) => String(row.ip || '').trim())));
+        const vlanBypassEntries = normalizeIpv4Cidrs(unique(operationalVlans
+            .filter((vlan) => emergencyVlanIds.has(Number(vlan.vlan_id)))
+            .map((vlan) => String(vlan.subnet_cidr || '').trim())
+            .filter(Boolean)));
 
         // Exempt VLANs deixam de significar bypass DNS total. Elas continuam sem
         // escopo categórico explícito por VLAN, mas herdam políticas globais
         // mandatórias como pornografia bloqueada.
         const dnsBypassEntries = sortedUnique([
             ...ipBypassEntries,
+            ...vlanBypassEntries,
             `${env.proxyLocalResolverIp}/32`,
         ]);
 
@@ -243,11 +318,16 @@ export class PolicyCompilerService {
             allowGlobal,
             allowProtectedGlobal,
             allowByVlan,
+            allowUrlGlobal,
+            allowUrlByVlan,
             blockGlobal,
             blockByVlan,
-            ipBypassEntries,
+            blockUrlGlobal,
+            blockUrlByVlan,
+            ipBypassEntries: sortedUnique([...ipBypassEntries, ...vlanBypassEntries]),
             dnsBypassEntries,
             managedVlans,
+            emergencyVlanIds: Array.from(emergencyVlanIds).sort((left, right) => left - right),
         };
     }
 
@@ -303,26 +383,29 @@ export class PolicyCompilerService {
             }
         }
 
+        const emergencyBypassActive = Boolean(manifest.policySummary?.emergency_bypass);
         const expectedTaggedVlans = (manifest.policySummary?.vlan_scopes || [])
             .filter((scope: any) => Number(scope.allow_count || 0) > 0 || Number(scope.block_count || 0) > 0)
             .map((scope: any) => ({ vlanId: Number(scope.vlan_id), subnet: String(scope.subnet_cidr || '').trim() }));
         const missingTaggedVpcFiles: string[] = [];
         const missingTaggedVpcTags: string[] = [];
 
-        for (const entry of expectedTaggedVlans) {
-            const vlanId = entry.vlanId;
-            const allowPath = path.join(this.unboundPolicyDir, `allowlist-vlan-${vlanId}.rpz`);
-            const blockPath = path.join(this.unboundPolicyDir, `blocklist-vlan-${vlanId}.rpz`);
-            if (!fs.existsSync(allowPath)) missingTaggedVpcFiles.push(`allowlist-vlan-${vlanId}.rpz`);
-            if (!fs.existsSync(blockPath)) missingTaggedVpcFiles.push(`blocklist-vlan-${vlanId}.rpz`);
-            if (!compilerIncludeContent.includes(`access-control-tag: ${entry.subnet} "vlan_${vlanId}"`)) {
-                missingTaggedVpcTags.push(`vlan_${vlanId}`);
-            }
-            if (!compilerIncludeContent.includes(`name: "rpz.allow.vlan${vlanId}.becker.local."`)) {
-                missingTaggedVpcTags.push(`allow-rpz-vlan-${vlanId}`);
-            }
-            if (!compilerIncludeContent.includes(`name: "rpz.block.vlan${vlanId}.becker.local."`)) {
-                missingTaggedVpcTags.push(`block-rpz-vlan-${vlanId}`);
+        if (!emergencyBypassActive) {
+            for (const entry of expectedTaggedVlans) {
+                const vlanId = entry.vlanId;
+                const allowPath = path.join(this.unboundPolicyDir, `allowlist-vlan-${vlanId}.rpz`);
+                const blockPath = path.join(this.unboundPolicyDir, `blocklist-vlan-${vlanId}.rpz`);
+                if (!fs.existsSync(allowPath)) missingTaggedVpcFiles.push(`allowlist-vlan-${vlanId}.rpz`);
+                if (!fs.existsSync(blockPath)) missingTaggedVpcFiles.push(`blocklist-vlan-${vlanId}.rpz`);
+                if (!compilerIncludeContent.includes(`access-control-tag: ${entry.subnet} "vlan_${vlanId}"`)) {
+                    missingTaggedVpcTags.push(`vlan_${vlanId}`);
+                }
+                if (!compilerIncludeContent.includes(`name: "rpz.allow.vlan${vlanId}.becker.local."`)) {
+                    missingTaggedVpcTags.push(`allow-rpz-vlan-${vlanId}`);
+                }
+                if (!compilerIncludeContent.includes(`name: "rpz.block.vlan${vlanId}.becker.local."`)) {
+                    missingTaggedVpcTags.push(`block-rpz-vlan-${vlanId}`);
+                }
             }
         }
 
@@ -336,7 +419,7 @@ export class PolicyCompilerService {
             compilerIncludePresent,
             compilerIncludeLoaded,
             moduleConfigOk,
-            rpzReferencesOk: vipBypassReferenced && allowedReferenced && blockedReferenced,
+            rpzReferencesOk: emergencyBypassActive || (vipBypassReferenced && allowedReferenced && blockedReferenced),
             vipBypassReferenced,
             allowedReferenced,
             blockedReferenced,
@@ -349,6 +432,8 @@ export class PolicyCompilerService {
     private syncCompatibilityFiles(compiled: ReturnType<PolicyCompilerService['compileScopes']>) {
         this.writeText(path.join(this.enterpriseDir, 'allowlist-global.acl'), compiled.allowGlobal);
         this.writeText(path.join(this.enterpriseDir, 'blocklist-global.acl'), compiled.blockGlobal);
+        this.writeText(path.join(this.enterpriseDir, 'allowlist-global-url.acl'), compiled.allowUrlGlobal);
+        this.writeText(path.join(this.enterpriseDir, 'blocklist-global-url.acl'), compiled.blockUrlGlobal);
         this.writeText(path.join(this.enterpriseDir, 'ip-bypass.acl'), compiled.ipBypassEntries);
 
         for (const [vlanId, domains] of compiled.allowByVlan.entries()) {
@@ -357,9 +442,17 @@ export class PolicyCompilerService {
         for (const [vlanId, domains] of compiled.blockByVlan.entries()) {
             this.writeText(path.join(this.enterpriseDir, `blocklist-vlan-${vlanId}.acl`), domains);
         }
+        for (const [vlanId, urls] of compiled.allowUrlByVlan.entries()) {
+            this.writeText(path.join(this.enterpriseDir, `allowlist-vlan-${vlanId}-url.acl`), urls);
+        }
+        for (const [vlanId, urls] of compiled.blockUrlByVlan.entries()) {
+            this.writeText(path.join(this.enterpriseDir, `blocklist-vlan-${vlanId}-url.acl`), urls);
+        }
 
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_whitelist.acl'), unique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal]));
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_blocklist.acl'), compiled.blockGlobal);
+        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_whitelist_url.acl'), compiled.allowUrlGlobal);
+        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_blocklist_url.acl'), compiled.blockUrlGlobal);
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_protected_ssl.acl'), unique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal]));
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_bump_ssl.acl'), compiled.blockGlobal);
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_ip_bypass.acl'), compiled.ipBypassEntries);
@@ -367,7 +460,8 @@ export class PolicyCompilerService {
 
     async compile(mode: EnforcementMode = 'acl-plus-dns'): Promise<CompiledArtifacts> {
         const state = await this.loadState();
-        const compiled = this.compileScopes(state.blocks, state.allows, state.exceptions, state.vlans);
+        const compiled = this.compileScopes(state.blocks, state.allows, state.exceptions, state.vlans, state.emergencyVlans, state.domainPolicyEntries);
+        const emergencyBypassActive = Boolean(state.engine?.emergency_bypass);
         const previousManifest = this.readManifest();
         const generatedAt = new Date().toISOString();
         const version = generatedAt.replace(/[:.]/g, '-');
@@ -375,6 +469,8 @@ export class PolicyCompilerService {
         const files: Record<string, string> = {};
         files.squidWhitelist = this.writeText(this.squidWhitelistFile, sortedUnique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal]));
         files.squidBlocklist = this.writeText(this.squidBlocklistFile, compiled.blockGlobal);
+        files.squidWhitelistUrl = this.writeText(path.join(this.squidAclDir, 'proxy_whitelist_url.acl'), compiled.allowUrlGlobal);
+        files.squidBlocklistUrl = this.writeText(path.join(this.squidAclDir, 'proxy_blocklist_url.acl'), compiled.blockUrlGlobal);
         files.squidIpBypass = this.writeText(this.squidIpBypassFile, compiled.ipBypassEntries);
         files.squidProtected = this.writeText(this.squidProtectedFile, sortedUnique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal]));
         files.squidBump = this.writeText(this.squidBumpFile, compiled.blockGlobal);
@@ -384,6 +480,12 @@ export class PolicyCompilerService {
         }
         for (const [vlanId, domains] of compiled.blockByVlan.entries()) {
             files[`squidBlockVlan${vlanId}`] = this.writeText(path.join(this.squidAclDir, `blocklist-vlan-${vlanId}.acl`), domains);
+        }
+        for (const [vlanId, urls] of compiled.allowUrlByVlan.entries()) {
+            files[`squidAllowUrlVlan${vlanId}`] = this.writeText(path.join(this.squidAclDir, `allowlist-vlan-${vlanId}-url.acl`), urls);
+        }
+        for (const [vlanId, urls] of compiled.blockUrlByVlan.entries()) {
+            files[`squidBlockUrlVlan${vlanId}`] = this.writeText(path.join(this.squidAclDir, `blocklist-vlan-${vlanId}-url.acl`), urls);
         }
 
         const allowedEntries = [
@@ -467,7 +569,7 @@ export class PolicyCompilerService {
             );
         }
 
-        if (mode !== 'acl-only') {
+        if (mode !== 'acl-only' && !emergencyBypassActive) {
             unboundPolicyLines.push(
                 'rpz:',
                 '    name: "rpz.vippass.becker.local."',
@@ -502,6 +604,8 @@ export class PolicyCompilerService {
                 '    rpz-action-override: nxdomain',
                 '',
             );
+        } else if (emergencyBypassActive) {
+            unboundPolicyLines.push('# Bypass de emergência ativo: enforcement DNS/RPZ suspenso intencionalmente para todas as VLANs.');
         } else {
             unboundPolicyLines.push('# Modo acl-only: RPZ gerada, porém enforcement DNS desativado.');
         }
@@ -513,8 +617,12 @@ export class PolicyCompilerService {
 
         const policySummary = {
             mode,
+            emergency_bypass: emergencyBypassActive,
+            emergency_vlan_bypass_ids: compiled.emergencyVlanIds,
             block_global: compiled.blockGlobal.length,
             allow_global: compiled.allowGlobal.length,
+            allow_url_global: compiled.allowUrlGlobal.length,
+            block_url_global: compiled.blockUrlGlobal.length,
             allow_protected_global: compiled.allowProtectedGlobal.length,
             bypass_ip: compiled.ipBypassEntries.length,
             bypass_dns: compiled.dnsBypassEntries.length,
@@ -526,7 +634,9 @@ export class PolicyCompilerService {
                 blocking_enabled: vlan.blocking_enabled,
                 policy_mode: vlan.policy_mode,
                 allow_count: compiled.allowByVlan.get(vlan.vlan_id)?.length || 0,
+                allow_url_count: compiled.allowUrlByVlan.get(vlan.vlan_id)?.length || 0,
                 block_count: compiled.blockByVlan.get(vlan.vlan_id)?.length || 0,
+                block_url_count: compiled.blockUrlByVlan.get(vlan.vlan_id)?.length || 0,
                 dns_tag: dnsTaggedVlans.some((tagged) => tagged.vlan_id === vlan.vlan_id) ? this.buildVlanTag(vlan.vlan_id) : null,
             })),
         };
@@ -544,6 +654,8 @@ export class PolicyCompilerService {
             paths: {
                 squidWhitelist: this.squidWhitelistFile,
                 squidBlocklist: this.squidBlocklistFile,
+                squidWhitelistUrl: path.join(this.squidAclDir, 'proxy_whitelist_url.acl'),
+                squidBlocklistUrl: path.join(this.squidAclDir, 'proxy_blocklist_url.acl'),
                 squidIpBypass: this.squidIpBypassFile,
                 squidProtected: this.squidProtectedFile,
                 squidBump: this.squidBumpFile,
@@ -554,6 +666,8 @@ export class PolicyCompilerService {
                 ...Object.fromEntries(compiled.managedVlans.flatMap((vlan) => ([
                     [`squidAllowVlan${vlan.vlan_id}`, path.join(this.squidAclDir, `allowlist-vlan-${vlan.vlan_id}.acl`)],
                     [`squidBlockVlan${vlan.vlan_id}`, path.join(this.squidAclDir, `blocklist-vlan-${vlan.vlan_id}.acl`)],
+                    [`squidAllowUrlVlan${vlan.vlan_id}`, path.join(this.squidAclDir, `allowlist-vlan-${vlan.vlan_id}-url.acl`)],
+                    [`squidBlockUrlVlan${vlan.vlan_id}`, path.join(this.squidAclDir, `blocklist-vlan-${vlan.vlan_id}-url.acl`)],
                     [`dnsAllowVlan${vlan.vlan_id}`, path.join(this.unboundPolicyDir, `allowlist-vlan-${vlan.vlan_id}.rpz`)],
                     [`dnsBlockVlan${vlan.vlan_id}`, path.join(this.unboundPolicyDir, `blocklist-vlan-${vlan.vlan_id}.rpz`)],
                 ]))),

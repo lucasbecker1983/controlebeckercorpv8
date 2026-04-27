@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import net from 'net';
 import { execCmd } from '../../utils/sys';
 import { pool } from '../../config/db';
 
@@ -7,6 +8,30 @@ const router = Router();
 const respondAccessError = (res: any, area: string, error: unknown) => {
     console.error(`[ACCESS MODULE] Falha em ${area}:`, error);
     return res.status(500).json({ error: `Falha ao processar ${area}.` });
+};
+
+const MAC_ADDRESS_REGEX = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/i;
+
+const isSingleHostIp = (value: string) => net.isIP(value) !== 0 && !value.includes('/');
+
+const isMacAddress = (value: string) => MAC_ADDRESS_REGEX.test(value);
+
+const validateBlockTarget = (type: string, value: string) => {
+    if (type === 'ip') {
+        if (!isSingleHostIp(value)) {
+            return 'Informe um IP unico valido. Sub-redes/CIDR nao podem ser bloqueadas por esta rota.';
+        }
+        return null;
+    }
+
+    if (type === 'mac') {
+        if (!isMacAddress(value)) {
+            return 'Informe um endereco MAC valido no formato AA:BB:CC:DD:EE:FF.';
+        }
+        return null;
+    }
+
+    return 'Tipo de bloqueio invalido. Use apenas ip ou mac.';
 };
 
 // DEFINIÇÃO EXPLÍCITA DAS REDES (CIDR)
@@ -42,6 +67,12 @@ router.get('/', async (req, res) => {
 
 router.post('/block', async (req, res) => {
     const { type, value, vendor, reason } = req.body;
+    const validationError = validateBlockTarget(type, value);
+
+    if (validationError) {
+        return res.status(400).json({ error: validationError });
+    }
+
     try {
         await pool.query("INSERT INTO net_blocklist (target_type, target_value, vendor, reason) VALUES ($1, $2, $3, $4) ON CONFLICT (target_value) DO NOTHING", [type, value, vendor || 'Manual', reason || 'Admin']);
         await enforceBlock(type, value, true);
@@ -53,6 +84,12 @@ router.post('/block', async (req, res) => {
 
 router.post('/unblock', async (req, res) => {
     const { id, type, value } = req.body;
+    const validationError = validateBlockTarget(type, value);
+
+    if (validationError) {
+        return res.status(400).json({ error: validationError });
+    }
+
     try {
         await pool.query("DELETE FROM net_blocklist WHERE id=$1", [id]);
         await enforceBlock(type, value, false);

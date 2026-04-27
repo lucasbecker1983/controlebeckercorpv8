@@ -252,6 +252,7 @@ class DnsContingencyService {
                 SELECT host(ip) AS ip, vlan_id
                 FROM policy_exceptions
                 WHERE active = TRUE
+                  AND masklen(ip) = 32
                   AND (valid_until IS NULL OR valid_until >= NOW())
                 ORDER BY id ASC
             `,
@@ -363,6 +364,10 @@ class DnsContingencyService {
         const configuredVlans = await this.listConfiguredVlans();
         const vipBypassRows = await this.listVipBypassRows();
         const active = state.status === 'active';
+        if (!active) {
+            return `${BEGIN_MARKER}\n# Contingencia DNS inativa: enforcement retorna para ACL + DNS (Unbound/Squid).\n${END_MARKER}\n`;
+        }
+
         const scopedVlans = active
             ? await this.getScopedVlans(state.scope_type as ContingencyScopeType, normalizeVlanIds(state.vlan_ids))
             : [];

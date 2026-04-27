@@ -59,6 +59,10 @@ const modePorts = (mode: EngineMode) => {
 
 const getObservedClientScopes = () => [];
 const hasLegacyTarget = () => Boolean(String(env.proxyTestTargetIpSingle || '').trim());
+const isEmergencyBypassEnabled = async () => {
+    const { rows } = await pool.query(`SELECT emergency_bypass FROM policy_engine_state WHERE id = 1 LIMIT 1`).catch(() => ({ rows: [] as Array<{ emergency_bypass?: boolean }> }));
+    return Boolean(rows[0]?.emergency_bypass);
+};
 
 export class ProxyEngineService {
     readonly actionLogService = new ActionLogService();
@@ -151,9 +155,12 @@ export class ProxyEngineService {
     }
 
     async renderSquidConfig(mode: EngineMode, activeCertificate: any) {
+        const emergencyBypassActive = await isEmergencyBypassEnabled();
         const protectedFile = path.join(env.squidAclDir, 'proxy_protected_ssl.acl');
         const whitelistFile = path.join(env.squidAclDir, 'proxy_whitelist.acl');
         const blocklistFile = path.join(env.squidAclDir, 'proxy_blocklist.acl');
+        const whitelistUrlFile = path.join(env.squidAclDir, 'proxy_whitelist_url.acl');
+        const blocklistUrlFile = path.join(env.squidAclDir, 'proxy_blocklist_url.acl');
         const bumpFile = path.join(env.squidAclDir, 'proxy_bump_ssl.acl');
         const ipBypassFile = path.join(env.squidAclDir, 'proxy_ip_bypass.acl');
         const { rows: vlanRows } = await pool.query(
@@ -170,12 +177,18 @@ export class ProxyEngineService {
         const vlanAcls = managedVlanRows.map((vlan: any) => {
             const allowPath = path.join(env.squidAclDir, `allowlist-vlan-${vlan.vlan_id}.acl`);
             const blockPath = path.join(env.squidAclDir, `blocklist-vlan-${vlan.vlan_id}.acl`);
+            const allowUrlPath = path.join(env.squidAclDir, `allowlist-vlan-${vlan.vlan_id}-url.acl`);
+            const blockUrlPath = path.join(env.squidAclDir, `blocklist-vlan-${vlan.vlan_id}-url.acl`);
             return {
                 ...vlan,
                 allowPath,
                 blockPath,
+                allowUrlPath,
+                blockUrlPath,
                 allowEntries: readAclEntries(allowPath),
                 blockEntries: readAclEntries(blockPath),
+                allowUrlEntries: readAclEntries(allowUrlPath),
+                blockUrlEntries: readAclEntries(blockUrlPath),
             };
         }).filter((vlan: any) => vlan.subnet_cidr);
         const ipBypassEntries = readAclEntries(ipBypassFile);
@@ -201,6 +214,8 @@ export class ProxyEngineService {
             managedClientCidrs.length ? `acl managed_module_clients src ${managedClientCidrs.join(' ')}` : null,
             `acl proxy_whitelist dstdomain "${whitelistFile}"`,
             `acl proxy_blocklist dstdomain "${blocklistFile}"`,
+            `acl proxy_whitelist_url url_regex -i "${whitelistUrlFile}"`,
+            `acl proxy_blocklist_url url_regex -i "${blocklistUrlFile}"`,
             `acl protected_ssl ssl::server_name "${protectedFile}"`,
             `acl whitelist_ssl ssl::server_name "${whitelistFile}"`,
             `acl bump_ssl ssl::server_name "${bumpFile}"`,
@@ -225,6 +240,12 @@ export class ProxyEngineService {
             if (vlan.blockEntries.length > 0) {
                 lines.push(`acl vlan_${vlan.vlan_id}_block dstdomain "${vlan.blockPath}"`);
             }
+            if (vlan.allowUrlEntries.length > 0) {
+                lines.push(`acl vlan_${vlan.vlan_id}_allow_url url_regex -i "${vlan.allowUrlPath}"`);
+            }
+            if (vlan.blockUrlEntries.length > 0) {
+                lines.push(`acl vlan_${vlan.vlan_id}_block_url url_regex -i "${vlan.blockUrlPath}"`);
+            }
         }
 
         if (mode === 'test-http+https') {
@@ -247,22 +268,41 @@ export class ProxyEngineService {
             'http_access deny !allowed_clients',
         );
 
+        if (emergencyBypassActive) {
+            lines.push(
+                '# Bypass de emergência: libera clientes institucionais sem ACL categórica.',
+                managedClientCidrs.length ? 'http_access allow managed_module_clients' : 'http_access allow allowed_clients',
+            );
+        }
+
         if (ipBypassEntries.length > 0) {
             lines.push('http_access allow ip_bypass');
         }
 
-        for (const vlan of vlanAcls.filter((row: any) => !row.exempt && row.blocking_enabled)) {
-            if (vlan.allowEntries.length > 0) {
-                lines.push(`http_access allow vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_allow`);
+        if (!emergencyBypassActive) {
+            for (const vlan of vlanAcls.filter((row: any) => !row.exempt && row.blocking_enabled)) {
+                if (vlan.allowUrlEntries.length > 0) {
+                    lines.push(`http_access allow vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_allow_url`);
+                }
+                if (vlan.allowEntries.length > 0) {
+                    lines.push(`http_access allow vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_allow`);
+                }
+                if (vlan.blockUrlEntries.length > 0) {
+                    lines.push(`http_access deny vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_block_url`);
+                }
+                if (vlan.blockEntries.length > 0) {
+                    lines.push(`http_access deny vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_block`);
+                }
             }
-            if (vlan.blockEntries.length > 0) {
-                lines.push(`http_access deny vlan_${vlan.vlan_id}_src vlan_${vlan.vlan_id}_block`);
-            }
+            lines.push(
+                managedClientCidrs.length ? 'http_access allow managed_module_clients proxy_whitelist_url' : 'http_access allow proxy_whitelist_url',
+                managedClientCidrs.length ? 'http_access allow managed_module_clients proxy_whitelist' : 'http_access allow proxy_whitelist',
+                managedClientCidrs.length ? 'http_access deny managed_module_clients proxy_blocklist_url' : 'http_access deny proxy_blocklist_url',
+                managedClientCidrs.length ? 'http_access deny managed_module_clients proxy_blocklist' : 'http_access deny proxy_blocklist',
+            );
         }
 
         lines.push(
-            managedClientCidrs.length ? 'http_access allow managed_module_clients proxy_whitelist' : 'http_access allow proxy_whitelist',
-            managedClientCidrs.length ? 'http_access deny managed_module_clients proxy_blocklist' : 'http_access deny proxy_blocklist',
             'http_access allow allowed_clients',
             'http_access deny all',
             '',

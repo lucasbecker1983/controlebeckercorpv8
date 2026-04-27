@@ -28,6 +28,14 @@ type GovernanceMetadata = {
     revoked_at: string | null;
 };
 
+type PolicyEntryType = 'domain' | 'url';
+type NormalizedPolicyEntry = {
+    raw: string;
+    entry_type: PolicyEntryType;
+    normalized_domain: string;
+    normalized_host_domain: string | null;
+};
+
 const normalizeDomain = (value: string) => String(value || '')
     .trim()
     .toLowerCase()
@@ -36,6 +44,8 @@ const normalizeDomain = (value: string) => String(value || '')
     .replace(/\/.*$/, '')
     .replace(/^\*\./, '')
     .replace(/\.$/, '');
+
+const collapseSlashes = (value: string) => value.replace(/\/{2,}/g, '/');
 
 const isValidDomain = (domain: string) => {
     if (!domain || domain.length > 255) return false;
@@ -162,6 +172,54 @@ const normalizeDomainList = (raw: unknown) => {
     return unique;
 };
 
+const isLikelyUrl = (value: string) => /^https?:\/\//i.test(value) || /[/?#]/.test(value);
+
+const normalizeUrlEntry = (value: string): NormalizedPolicyEntry => {
+    const raw = String(value || '').trim();
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    let parsed: URL;
+    try {
+        parsed = new URL(candidate);
+    } catch {
+        throw new Error(`URL inválida: ${raw}`);
+    }
+    const host = normalizeDomain(parsed.hostname);
+    if (!isValidDomain(host)) throw new Error(`URL inválida: ${raw}`);
+    const pathname = collapseSlashes(parsed.pathname || '/');
+    const normalized = `${host}${pathname === '/' && !parsed.search ? '' : pathname}${parsed.search || ''}`;
+    return {
+        raw,
+        entry_type: 'url',
+        normalized_domain: normalized,
+        normalized_host_domain: host,
+    };
+};
+
+const normalizePolicyEntryList = (raw: unknown): NormalizedPolicyEntry[] => {
+    const source = Array.isArray(raw)
+        ? raw
+        : String(raw || '').split(/[\n,;\s]+/);
+    const normalized = source
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)
+        .map((item) => {
+            if (isLikelyUrl(item)) return normalizeUrlEntry(item);
+            const domain = normalizeDomain(item);
+            if (!isValidDomain(domain)) throw new Error(`Domínio inválido: ${item}`);
+            return {
+                raw: item,
+                entry_type: 'domain' as const,
+                normalized_domain: domain,
+                normalized_host_domain: domain,
+            };
+        });
+    const unique = Array.from(new Map(
+        normalized.map((entry) => [`${entry.entry_type}:${entry.normalized_domain}`, entry]),
+    ).values());
+    if (!unique.length) throw new Error('Informe ao menos um domínio ou URL');
+    return unique;
+};
+
 const normalizePolicyType = (value: unknown): PolicyType => {
     const raw = String(value || '').toLowerCase();
     if (raw === 'allow' || raw === 'liberar' || raw === 'whitelist') return 'allow';
@@ -204,7 +262,9 @@ const policyRowSelect = `
                 jsonb_build_object(
                     'id', dpe.id,
                     'domain', dpe.domain,
+                    'entry_type', dpe.entry_type,
                     'normalized_domain', dpe.normalized_domain,
+                    'normalized_host_domain', dpe.normalized_host_domain,
                     'created_at', dpe.created_at,
                     'updated_at', dpe.updated_at
                 )
@@ -268,7 +328,7 @@ export class DomainPolicyManagerService {
             ...row,
             scope_values: scopeValues,
             vlan_ids: row.scope_type === 'vlan' ? scopeValues.map(Number).filter(Number.isFinite) : [],
-            domains: (row.entries || []).map((entry: any) => entry.normalized_domain || entry.domain),
+            domains: (row.entries || []).map((entry: any) => entry.domain || entry.normalized_domain),
             governance,
         };
     }
@@ -343,18 +403,19 @@ export class DomainPolicyManagerService {
         );
     }
 
-    private async replaceEntries(client: PoolClient, policyId: number, domains: string[]) {
+    private async replaceEntries(client: PoolClient, policyId: number, entries: NormalizedPolicyEntry[]) {
         await client.query(`DELETE FROM domain_policy_entries WHERE policy_id = $1`, [policyId]);
-        for (const domain of domains) {
+        for (const entry of entries) {
             await client.query(
                 `
-                    INSERT INTO domain_policy_entries (policy_id, domain, normalized_domain)
-                    VALUES ($1, $2, $3)
-                    ON CONFLICT (policy_id, normalized_domain) DO UPDATE SET
+                    INSERT INTO domain_policy_entries (policy_id, domain, entry_type, normalized_domain, normalized_host_domain)
+                    VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (policy_id, entry_type, normalized_domain) DO UPDATE SET
                         domain = EXCLUDED.domain,
+                        normalized_host_domain = EXCLUDED.normalized_host_domain,
                         updated_at = NOW()
                 `,
-                [policyId, domain, domain],
+                [policyId, entry.raw, entry.entry_type, entry.normalized_domain, entry.normalized_host_domain],
             );
         }
     }
@@ -372,7 +433,9 @@ export class DomainPolicyManagerService {
         const originRule = `domain_policy:${policy.id}`;
 
         for (const scopeValue of scopeValues) {
-            for (const domain of policy.domains) {
+            for (const entry of (policy.entries || []).filter((item: any) => item.entry_type !== 'url')) {
+                const domain = entry.normalized_host_domain || entry.normalized_domain || entry.domain;
+                if (!domain) continue;
                 if (policy.policy_type === 'block') {
                     await client.query(
                         `
@@ -521,7 +584,7 @@ export class DomainPolicyManagerService {
         if (!name) throw new Error('Nome da política obrigatório');
         const policyType = normalizePolicyType(payload?.policy_type || payload?.policyType || payload?.type);
         const scope = normalizeScope(payload);
-        const domains = normalizeDomainList(payload?.domains ?? payload?.entries);
+        const entries = normalizePolicyEntryList(payload?.domains ?? payload?.entries);
         const governance = resolveGovernanceMetadata({
             ...payload,
             requested_by: payload?.requested_by || requestedBy,
@@ -578,7 +641,7 @@ export class DomainPolicyManagerService {
                     requestedBy,
                 ],
             );
-            await this.replaceEntries(client, rows[0].id, domains);
+            await this.replaceEntries(client, rows[0].id, entries);
             const synced = await this.syncLegacyRows(client, rows[0].id);
             await this.recordPolicyAudit(client, {
                 policyId: rows[0].id,
@@ -612,9 +675,9 @@ export class DomainPolicyManagerService {
                 ? normalizePolicyType(payload?.policy_type || payload?.policyType || payload?.type)
                 : current.policy_type;
             const scope = normalizeScope(payload, current);
-            const domains = payload?.domains !== undefined || payload?.entries !== undefined
-                ? normalizeDomainList(payload?.domains ?? payload?.entries)
-                : current.domains;
+            const entries = payload?.domains !== undefined || payload?.entries !== undefined
+                ? normalizePolicyEntryList(payload?.domains ?? payload?.entries)
+                : current.entries;
             const governance = resolveGovernanceMetadata({
                 ...payload,
                 requested_by: payload?.requested_by || current.requested_by || requestedBy,
@@ -668,7 +731,7 @@ export class DomainPolicyManagerService {
                     id,
                 ],
             );
-            await this.replaceEntries(client, id, domains);
+            await this.replaceEntries(client, id, entries);
             const synced = await this.syncLegacyRows(client, id);
             await this.recordPolicyAudit(client, {
                 policyId: id,
@@ -712,7 +775,7 @@ export class DomainPolicyManagerService {
             expires_at: source.expires_at,
             revoked_by: source.revoked_by,
             revoked_at: source.revoked_at,
-            domains: source.domains,
+            domains: (source.entries || []).map((entry: any) => entry.domain || entry.normalized_domain),
         }, requestedBy, auditContext);
     }
 

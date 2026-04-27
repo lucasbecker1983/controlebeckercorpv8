@@ -218,6 +218,11 @@ Camada de execucao tecnica, enforcement, observabilidade, monitoramento, servico
   - isso reduz ruido de console e evita falsa sensacao de falha em cascata antes mesmo do usuario autenticar
 - revisao estrutural da sessao identificou conflito na politica de cookie:
   - o ajuste anterior de cookies ainda ficava neutralizado por uma heuristica baseada em `APP_BASE_URL`
+- endurecimento do modulo de acesso aplicado para prevenir bloqueio acidental de VLAN inteira:
+  - a rota `POST /api/access/block` agora aceita apenas `IP` unico ou `MAC` unico
+  - entradas em formato `CIDR` ou subnet passaram a ser rejeitadas com `400` antes de qualquer chamada ao `iptables`
+  - a rota `POST /api/access/unblock` tambem valida o alvo antes de tentar remover a regra
+  - o objetivo operacional e impedir que um bloqueio administrativo destinado a um host isolado derrube a navegacao de uma VLAN inteira por erro de entrada
   - na pratica, `Secure=true` continuava sendo aplicado mesmo quando a requisicao nao estava sendo percebida corretamente como HTTPS pelo app
   - a logica foi simplificada para usar apenas o protocolo efetivo da requisicao (`req.secure` ou `x-forwarded-proto=https`)
   - isso remove o conflito entre endurecimento da seguranca e persistencia funcional da sessao
@@ -462,9 +467,9 @@ Ao final de cada sessao:
 ## Atualizacao operacional de enforcement - 2026-04-27
 
 - sistema versionado nesta rodada:
-  - `frontend`: `8.1.0`
-  - `backend`: `1.1.0`
-  - `backend-proxy`: `1.1.0`
+  - `frontend`: `8.2.0`
+  - `backend`: `1.2.0`
+  - `backend-proxy`: `1.2.0`
 - regra institucional consolidada: `VIP` e `Exceção Esporádica` sao excecoes especiais e nao devem ser apagadas nem afetadas por expurgos automaticos de conexao
 - clientes fora de `VIP` e fora de `Exceção Esporádica` ativa passam a compor o `oceano` operacional
 - o `backend-proxy` passou a filtrar clientes com bypass ativo antes de derrubar conexoes persistentes
@@ -491,6 +496,47 @@ Ao final de cada sessao:
 - `chrome.cloudflare-dns.com` permanece bloqueado por seguranca, pois representa DoH externo capaz de burlar RPZ, LGPD e politicas institucionais
 - VLANs `30` e `70` tiveram escopo corrigido para remover `redes_sociais` da allowlist antiga
 - VLANs `10`, `30`, `50` e `70` agora convergem para a regra: redes sociais somente via `VIP` ou `Exceção Esporádica`
+- saneamento do enforcement DNS aplicado para evitar indisponibilidade por firewall legado:
+  - `dns_contingency_state` estava `expired` em `2026-04-27 14:26:40 -03`, mas a chain `DNS_EMERGENCY_V8` ainda mantinha `DROP` de `TCP/UDP 53`
+  - o `backend-proxy` passou a remover o bloco de contingencia quando o estado nao estiver `active`, devolvendo o enforcement normal para `ACL + DNS` via `Unbound` e `Squid`
+  - consultas a `policy_exceptions` usadas por contingencia, interceptacao e resolucao agora aceitam apenas entradas `masklen(ip) = 32`, impedindo que uma subnet como `192.168.10.0/24` vire bypass amplo por erro de cadastro
+  - o host foi alinhado para redirecionar `DNS 53` das VLANs internas ao `Unbound` local em vez de derrubar as consultas no `FORWARD`
+  - os `DROP` legados de `53` em `ufw-user-forward` foram removidos dos arquivos persistentes `user.rules` e `user6.rules`
+  - os bloqueios de `DoT` (`TCP/853`) e `DoH/QUIC` observados na VLAN 10 permaneceram ativos para evitar bypass das politicas de RPZ e ACL
+  - a inconsistência operacional do `ufw` foi corrigida: `/etc/ufw/ufw.conf` voltou para `ENABLED=yes`
+  - com isso, `ufw reload` voltou a funcionar e o ciclo de aplicacao persistente do firewall deixou de depender apenas do runtime herdado
+- `Operações Técnicas` passou a concentrar a `Liberação emergencial por VLAN` como acao de controle, sem confundir esse fluxo com governanca nem com `VIP`:
+  - foi criada trilha propria `emergency_vlan_bypass` no `backend-proxy`, com `vlan_id`, motivo, solicitante, ativacao, expiracao, desativacao e estado ativo
+  - a ativacao opera como bypass temporario real por VLAN e nao como excecao individual
+  - `VIP` permaneceu restrito a host individual, preservando o endurecimento que impede subnet ampla em `policy_exceptions`
+  - ao ativar o bypass de uma VLAN, o sistema suspende contingencia DNS conflitante para evitar sobreposicao de modos
+  - a expiracao automatica do bypass recompila os artefatos e reaplica o enforcement institucional
+- o runtime institucional passou a respeitar bypass emergencial por VLAN em todas as camadas relevantes:
+  - `Policy Compiler` exclui a VLAN emergencial do conjunto tagueado de RPZ e injeta sua subnet como bypass tecnico
+  - o `Unbound` deixa de aplicar `RPZ` a essa rede enquanto o bypass estiver ativo
+  - o `Squid` deixa de impor ACL categórica a essa rede ao receber a subnet no arquivo de bypass por IP/rede
+  - a `Interceptação Seletiva` deixa de redirecionar a VLAN emergencial
+  - a resolucao institucional marca consultas dessa rede como `bypassed` por fonte `emergency-vlan`
+  - filtros que derrubam sessoes ativas agora preservam clientes pertencentes a VLAN em bypass emergencial
+- a interface de `Operações Técnicas` ganhou quadro operacional dedicado para `Liberação emergencial por VLAN`:
+  - foco em `VLAN 10`, `30`, `50` e `70`
+  - leitura imediata de status, motivo e expiracao
+  - acao direta para ativar bypass com duracao de `15`, `30`, `60`, `120` minutos ou modo manual
+  - acao direta para encerrar bypass e restaurar o enforcement institucional
+- as ACLs do modulo passaram a aceitar `dominios` e `URLs` no fluxo de politicas nomeadas:
+  - `domain_policy_entries` ganhou tipagem explicita de entrada com `entry_type`
+  - entradas `domain` continuam alimentando `RPZ` e `ACL` por dominio
+  - entradas `url` passam a ser persistidas separadamente, com host normalizado para contexto tecnico e valor bruto preservado para interface e auditoria
+  - a sincronizacao legada para `blocking_policies` e `release_policies` continua projetando apenas dominios, evitando prometer enforcement DNS para regra de URL
+- o motor complementar do `Squid` passou a respeitar ACLs por URL para bloquear e liberar:
+  - arquivos globais `proxy_whitelist_url.acl` e `proxy_blocklist_url.acl` passaram a ser gerados pelo `Policy Compiler`
+  - cada VLAN agora pode receber tambem `allowlist-vlan-<id>-url.acl` e `blocklist-vlan-<id>-url.acl`
+  - o `squid.conf` institucional passou a declarar ACLs `url_regex -i` para essas listas
+  - a ordem de precedencia foi ampliada para permitir `allow` por URL antes de `deny` por URL e antes do bloqueio por dominio correspondente
+  - com isso, o modulo consegue liberar ou bloquear caminhos especificos sem perder o enforcement atual por dominio
+- a interface de `Políticas` em `Bloqueios & Liberações` foi ajustada para refletir o novo contrato:
+  - o editor agora orienta o operador a informar `dominios e URLs`
+  - a pre-visualizacao e a reabertura da politica preservam o valor bruto digitado, inclusive URLs completas
 - validacao operacional executada:
   - `cd backend-proxy && npm run build`
   - `pm2 restart backend-proxy --update-env`
@@ -512,8 +558,34 @@ Transformar os novos blocos de governanca em modulos com funcionalidade propria:
 ## Ultima validacao registrada
 
 - `cd backend-proxy && npm run build`
+- compilacao TypeScript concluida apos o ajuste da contingencia DNS e filtragem de VIPs `/32`
+- `pm2 restart backend-proxy --update-env`
+- bootstrap voltou `online` e reescreveu `/etc/ufw/before.rules` sem reativar a contingencia expirada
+- `unbound-checkconf`
+- sem erros
+- `systemctl is-active unbound`
+- `active`
+- `ufw reload`
+- `Firewall reloaded`
+- `squid -k parse`
+- parsing concluido sem erro fatal
+- `systemctl is-active squid`
+- `active`
+- `dig @127.0.0.1 cloudflare.com +short`
+- resposta valida recebida
+- `dig @127.0.0.1 gov.br +short`
+- resposta valida recebida
+- `cd backend-proxy && npm run build`
 - compilacao TypeScript concluida sem quebra de contrato observada
 - `cd backend && npm run build`
 - compilacao TypeScript concluida com a nova camada de sessao institucional, ajuste de emissao de cookies por protocolo e fallback bearer
 - `cd frontend && npm run build`
 - `✓ built in 2.43s`
+- `cd backend-proxy && npm run build`
+- compilacao TypeScript concluida com o novo bypass emergencial por VLAN
+- `cd frontend && npm run build`
+- `✓ built in 3.10s`
+- `cd backend-proxy && npm run build`
+- compilacao TypeScript concluida com suporte a ACL por URL no motor complementar
+- `cd frontend && npm run build`
+- `✓ built in 2.83s`
