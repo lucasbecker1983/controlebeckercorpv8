@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan } from 'lucide-react';
+import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan, Eraser } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
@@ -147,6 +147,16 @@ export default function ControlPage() {
         } catch (e) {
             alert("Erro ao enviar comando ao serviço.");
             setActionLoading(false);
+        }
+    };
+
+    const clearRuns = async () => {
+        if (!confirm('Limpar todo o histórico de execuções do ClamAV? Achados vinculados também serão removidos.')) return;
+        try {
+            await api.delete('/api/control/clamav/runs');
+            loadData();
+        } catch (error) {
+            alert(error?.response?.data?.error || 'Falha ao limpar histórico.');
         }
     };
 
@@ -376,7 +386,14 @@ export default function ControlPage() {
                 </div>
 
                 <div>
-                    <div className="text-sm font-bold text-on-surface">Últimas execuções</div>
+                    <div className="flex items-center justify-between gap-3 mb-1">
+                        <div className="text-sm font-bold text-on-surface">Últimas execuções</div>
+                        {(clamav?.recent_runs || []).length > 0 && (
+                            <ActionButton tone="ghost" icon={Eraser} onClick={clearRuns}>
+                                Limpar histórico
+                            </ActionButton>
+                        )}
+                    </div>
                     <div className="mt-3 grid gap-3">
                         {(clamav?.recent_runs || []).length ? clamav.recent_runs.map((run) => (
                             <Surface key={run.id} stripe={false} className="p-4">

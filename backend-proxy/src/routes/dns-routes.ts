@@ -3,6 +3,8 @@ import fs from 'fs';
 import { pool } from '../config/db';
 import { proxyEngineService } from '../services/proxy-module';
 import { ensureBlockingReleaseSchema } from '../services/blocking-release-schema-service';
+import { dnsIgnoredService } from '../services/dns-ignored-service';
+import { radarLiveBus } from '../services/dns-radar-live';
 import { runCommand } from '../utils/process';
 
 const router = Router();
@@ -239,6 +241,8 @@ router.post('/radar/clear', async (req, res) => {
 router.get('/vlan-summary', async (_req, res) => {
     try {
         await ensureBlockingReleaseSchema();
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
         const { rows } = await pool.query(`
             SELECT
                 vlan_id,
@@ -249,6 +253,7 @@ router.get('/vlan-summary', async (_req, res) => {
             WHERE occurred_at >= NOW() - INTERVAL '24 hours'
               AND client_ip IS NOT NULL
               AND vlan_id IS NOT NULL
+              ${noiseFilter}
             GROUP BY vlan_id
             ORDER BY vlan_id ASC
         `);
@@ -424,6 +429,85 @@ router.post('/cleanup', async (_req, res) => {
     try {
         const deleted = await proxyEngineService.dnsLoggerService.cleanup(30);
         res.json({ success: true, message: 'Logs antigos limpos.', deleted_rows: deleted });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// ── Radar em tempo real (SSE) ─────────────────────────────────────────────────
+
+router.get('/radar/live', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const heartbeat = setInterval(() => res.write(': ping\n\n'), 25000);
+
+    const onEvent = (data: any) => {
+        try {
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        } catch {
+            // cliente desconectou
+        }
+    };
+
+    radarLiveBus.on('event', onEvent);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        radarLiveBus.off('event', onEvent);
+    });
+});
+
+// ── Domínios ignorados ────────────────────────────────────────────────────────
+
+router.get('/ignored', async (_req, res) => {
+    try {
+        const list = await dnsIgnoredService.list();
+        res.json({ patterns: list });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/ignored', async (req, res) => {
+    const pattern = String(req.body?.pattern || '').trim().toLowerCase();
+    const match_type = String(req.body?.match_type || 'contains');
+    const reason = req.body?.reason ? String(req.body.reason).trim() : undefined;
+
+    if (!pattern) return res.status(400).json({ error: 'pattern é obrigatório.' });
+    if (!['exact', 'contains', 'suffix', 'prefix'].includes(match_type)) {
+        return res.status(400).json({ error: 'match_type inválido. Use: exact, contains, suffix, prefix.' });
+    }
+
+    try {
+        const created = await dnsIgnoredService.add(pattern, match_type, reason);
+        res.status(201).json({ success: true, pattern: created });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.patch('/ignored/:id/toggle', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID inválido.' });
+    try {
+        const updated = await dnsIgnoredService.toggle(id);
+        if (!updated) return res.status(404).json({ error: 'Padrão não encontrado.' });
+        res.json({ success: true, pattern: updated });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.delete('/ignored/:id', async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'ID inválido.' });
+    try {
+        await dnsIgnoredService.remove(id);
+        res.json({ success: true });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

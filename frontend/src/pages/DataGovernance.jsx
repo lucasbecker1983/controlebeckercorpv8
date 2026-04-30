@@ -125,6 +125,9 @@ export default function DataGovernance() {
       return [
         item.client_ip,
         item.hostname,
+        item.identity_user,
+        item.identity_display_user,
+        item.identity_computer,
         item.domain,
         item.policy_label,
         item.matched_policy_name,
@@ -306,7 +309,8 @@ export default function DataGovernance() {
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-sm font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
-                        <StateBadge label={item.hostname || 'hostname não identificado'} tone="neutral" />
+                        <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
+                        <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                         {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                         <StateBadge label={item.source === 'dns' ? 'DNS' : 'Proxy'} tone={item.source === 'dns' ? 'success' : 'warning'} />
                       </div>
@@ -349,7 +353,8 @@ export default function DataGovernance() {
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-sm font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
-                      <StateBadge label={item.hostname || 'hostname não identificado'} tone="neutral" />
+                      <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
+                      <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                       {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                       <StateBadge label={item.action || '—'} tone={item.action === 'blocked' ? 'danger' : item.action === 'allowed' ? 'success' : 'warning'} />
                       <StateBadge label={item.source === 'dns' ? 'DNS' : 'Proxy'} tone={item.source === 'dns' ? 'success' : 'warning'} />

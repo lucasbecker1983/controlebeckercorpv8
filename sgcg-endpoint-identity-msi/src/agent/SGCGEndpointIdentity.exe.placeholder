@@ -1,0 +1,11 @@
+Substitua este arquivo pelo binario oficial do WinSW antes de gerar o MSI funcional.
+
+Nome esperado no pacote:
+SGCGEndpointIdentity.exe
+
+Origem recomendada:
+https://github.com/winsw/winsw/releases
+
+Use uma versao x64 assinada/verificada do WinSW. O build nao baixa binarios
+automaticamente para evitar dependencia de fonte nao verificada durante a
+construcao do instalador institucional.

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <Package
+      Name="SGCG Endpoint Identity Online Setup"
+      Manufacturer="JMB Tecnologia"
+      Version="0.1.0"
+      UpgradeCode="F23E2804-4F1F-4CC5-96D0-5E88C78938C5"
+      Scope="perMachine"
+      Language="1046"
+      InstallerVersion="500">
+
+    <SummaryInformation Description="SGCG Endpoint Identity Online Setup" Manufacturer="JMB Tecnologia" />
+    <MediaTemplate EmbedCab="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+
+    <SetProperty Id="RunOnlineSetup"
+                 Before="RunOnlineSetup"
+                 Sequence="execute"
+                 Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;[#OnlineSetupCmd]&quot;" />
+    <CustomAction Id="RunOnlineSetup"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Return="check"
+                  Impersonate="no" />
+
+    <SetProperty Id="RunOnlineUninstall"
+                 Before="RunOnlineUninstall"
+                 Sequence="execute"
+                 Value="&quot;[SystemFolder]cmd.exe&quot; /c &quot;[#OnlineUninstallCmd]&quot;" />
+    <CustomAction Id="RunOnlineUninstall"
+                  BinaryRef="Wix4UtilCA_X64"
+                  DllEntry="WixQuietExec64"
+                  Execute="deferred"
+                  Return="check"
+                  Impersonate="no" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunOnlineSetup" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="RunOnlineUninstall" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="ManufacturerFolder" Name="JMB Tecnologia">
+        <Directory Id="INSTALLFOLDER" Name="SGCG Endpoint Identity Online Setup" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="MainFeature" Title="SGCG Endpoint Identity Online Setup" Level="1">
+      <ComponentGroupRef Id="OnlineSetupFiles" />
+    </Feature>
+
+    <ComponentGroup Id="OnlineSetupFiles" Directory="INSTALLFOLDER">
+      <Component Id="OnlineSetupCmdComponent" Guid="7BC03F4D-FDAE-44D9-94B1-1569D0857C3E">
+        <File Id="OnlineSetupCmd" Source="$(var.RootDir)\SGCGEndpointIdentity-OnlineSetup.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="OnlineSetupPs1Component" Guid="B4650CEE-58CC-4FEC-8300-C30E2806B3E3">
+        <File Id="OnlineSetupPs1" Source="$(var.RootDir)\SGCGEndpointIdentity-OnlineSetup.ps1" KeyPath="yes" />
+      </Component>
+      <Component Id="OnlineUninstallCmdComponent" Guid="6AC491D7-82FA-4A28-A69E-8B5DB8C83190">
+        <File Id="OnlineUninstallCmd" Source="$(var.RootDir)\SGCGEndpointIdentity-OnlineUninstall.cmd" KeyPath="yes" />
+      </Component>
+      <Component Id="OnlineUninstallPs1Component" Guid="8874E1E6-D21E-4734-A9F2-E813CCBB723C">
+        <File Id="OnlineUninstallPs1" Source="$(var.RootDir)\SGCGEndpointIdentity-OnlineUninstall.ps1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Package>
+</Wix>

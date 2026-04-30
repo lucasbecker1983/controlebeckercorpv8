@@ -1,5 +1,6 @@
 import { pool } from '../config/db';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
+import { identityEnrichmentService } from './identity-enrichment-service';
 
 export class ProxyRadarService {
     async getOverview(range = '24h') {
@@ -68,7 +69,7 @@ export class ProxyRadarService {
             cards: totals.rows[0] || {},
             topDomains: topHosts.rows,
             topBlockedDomains: topBlockedHosts.rows,
-            topBlockedIps: topBlockedIps.rows,
+            topBlockedIps: identityEnrichmentService.enrichRows(topBlockedIps.rows),
             topVlans: topVlans.rows,
             topBlockedCategories: topCategories.rows,
         };
@@ -117,7 +118,7 @@ export class ProxyRadarService {
             `,
             params,
         );
-        return rows;
+        return identityEnrichmentService.enrichRows(rows);
     }
 
     async getTimeline(range = '24h') {

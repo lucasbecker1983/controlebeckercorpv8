@@ -421,6 +421,16 @@ router.post('/clamav/findings/:id/decision', async (req, res) => {
     }
 });
 
+router.delete('/clamav/runs', async (_req, res) => {
+    try {
+        await ensureAntimalwareSchema();
+        await pool.query(`DELETE FROM control_antimalware_runs WHERE status <> 'running'`);
+        res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao limpar histórico de execuções.' });
+    }
+});
+
 // --- AÇÕES INDIVIDUAIS ---
 router.post('/service-action', async (req, res) => {
     const { service, action } = req.body;
@@ -447,14 +457,18 @@ router.post('/tactical', async (req, res) => {
         if (action === 'db_restart') await execCmd('sudo systemctl restart postgresql');
         if (action === 'clear_cache') { await execCmd('sync'); await execCmd('sudo sysctl -w vm.drop_caches=3'); }
         if (action === 'clamav_update') {
-            const result = await execClam('sudo', ['freshclam', '--stdout']);
-            const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
-            if (result.code > 1) {
-                throw new Error(output || 'Falha ao atualizar assinaturas do ClamAV.');
-            }
+            // O daemon clamav-freshclam segura o lock do log, então chamamos freshclam
+            // via restart do serviço para evitar o erro "Failed to lock the log file".
+            await execCmd('sudo systemctl restart clamav-freshclam');
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+            const statusOut = await execCmd('systemctl is-active clamav-freshclam').catch(() => 'inactive');
+            const success = statusOut.trim() === 'active';
+            const output = success
+                ? 'Serviço clamav-freshclam reiniciado com sucesso. Assinaturas serão sincronizadas automaticamente.'
+                : 'Serviço reiniciado, mas estado atual: ' + statusOut.trim();
             await recordAntimalwareRun({
                 action,
-                success: result.code === 0,
+                success,
                 targetPaths: [],
                 output,
             });

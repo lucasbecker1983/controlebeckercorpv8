@@ -18,6 +18,7 @@ import {
 } from './blocking-release-scope';
 import { dnsContingencyService } from './dns-contingency-service';
 import { dnsRadarService } from './dns-radar-service';
+import { identityEnrichmentService } from './identity-enrichment-service';
 import { EnforcementMode, policyCompilerService } from './policy-compiler-service';
 
 type ScopeType = 'global' | 'vlan';
@@ -70,6 +71,29 @@ const QUARANTINED_LEGACY_SCRIPT_PATHS = [
 const MANAGED_POLICY_SCOPE_SQL = `(scope_type = 'global' OR (scope_type = 'vlan' AND scope_value ~ '^[0-9]+$' AND CAST(scope_value AS integer) IN (${MANAGED_VLAN_SQL_LIST})))`;
 const MANAGED_EXCEPTION_SCOPE_SQL = `(vlan_id IN (${MANAGED_VLAN_SQL_LIST}) OR CAST(substring(host(ip) from '^192\\.168\\.([0-9]{1,3})\\.') AS integer) IN (${MANAGED_VLAN_SQL_LIST}))`;
 const TELEMETRY_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+const TRANSIENT_DB_ERROR_RE = /(ECONNRESET|ETIMEDOUT|Connection terminated unexpectedly|connection to client lost|read ECONNRESET)/i;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const isTransientDbError = (error: any) =>
+    ['ECONNRESET', 'ETIMEDOUT'].includes(String(error?.code || '')) ||
+    TRANSIENT_DB_ERROR_RE.test(String(error?.message || error || ''));
+
+const retryTransientDb = async <T>(operation: () => Promise<T>, attempts = 2): Promise<T> => {
+    let lastError: any;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        try {
+            return await operation();
+        } catch (error: any) {
+            lastError = error;
+            if (!isTransientDbError(error) || attempt === attempts) break;
+            await delay(75 * attempt);
+        }
+    }
+    throw lastError;
+};
+
+const readQuery = (sql: string, params?: any[]) =>
+    retryTransientDb(() => (params ? pool.query(sql, params) : pool.query(sql)));
 
 const BASELINE_BLOCK_CATALOG = {
     'Pornografia': [
@@ -112,7 +136,10 @@ const BASELINE_ALLOW_CATALOG = {
         'static.whatsapp.net', 'wa.me', 'web.whatsapp.com', 'whatsapp.com', 'whatsapp.net',
     ],
     'Sites Google': [
+        'docs.google.com',
+        'drive.google.com',
         'earth.google.com',
+        'googleusercontent.com',
         'gstatic.com',
         'google.com',
         'google.com.br',
@@ -126,6 +153,19 @@ const BASELINE_ALLOW_CATALOG = {
     ],
     Governo: [
         'conectividade.caixa.gov.br', 'esocial.gov.br', 'gov.br', 'pr.gov.br', 'serpro.gov.br', 'trt.jus.br',
+        'cidade360.cloud',
+        'consulta-crf.caixa.gov.br',
+        'fomentonet.pr.gov.br',
+        'governancabrasil.com.br',
+        'interno.empresafacil.pr.gov.br',
+        'jacarezinho.pr.leg.br',
+        'pncp.gov.br',
+        'receita.pr.gov.br',
+        'salas-apps-pr.sebrae.com.br',
+        'sebrae.com.br',
+        'webapp1-jacarezinho.cidade360.cloud',
+        'www8.receita.fazenda.gov.br',
+        'cadin.pr.gov.br',
     ],
 };
 
@@ -269,6 +309,17 @@ const normalizeOptionalDate = (value: unknown) => {
     return normalized;
 };
 
+const hasOwn = (source: any, key: string) => Object.prototype.hasOwnProperty.call(source || {}, key);
+
+const normalizeBoolean = (value: unknown, fallback: boolean) => {
+    if (value === undefined || value === null || value === '') return fallback;
+    if (typeof value === 'boolean') return value;
+    const normalized = String(value).trim().toLowerCase();
+    if (['true', '1', 'yes', 'sim', 'on', 'active', 'ativo'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'nao', 'não', 'off', 'inactive', 'inativo'].includes(normalized)) return false;
+    throw new Error(`Booleano inválido: ${value}`);
+};
+
 const cidrContainsIp = (cidr: string, ip: string) => {
     try {
         const [networkIp, prefixRaw] = cidr.includes('/') ? cidr.split('/') : [cidr, '32'];
@@ -298,7 +349,7 @@ const resolveExceptionGovernance = (payload: any, requestedBy = 'system', fallba
             ?? fallback?.governance_summary
             ?? parsedFallback.summary
             ?? '',
-        ).trim(),
+        ).trim() || String(fallback?.governance_summary || parsedFallback.summary || '').trim(),
         legal_basis: normalizeOptionalText(
             payload?.legal_basis
             ?? payload?.legalBasis
@@ -1727,9 +1778,11 @@ class BlockingReleaseService {
         );
 
         await this.writeGeneratedArtifacts();
+        await this.reloadUnbound();
         const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
         const validation = await this.validateCompiledState(mode);
         await dnsContingencyService.ensureFirewallState();
+        await this.applyNftablesDotExemption(vlanId, true);
         await this.recordAudit({
             action: 'emergency-vlan-bypass:activate',
             requestedBy,
@@ -1752,7 +1805,7 @@ class BlockingReleaseService {
                     deactivated_at = NOW(),
                     deactivated_by = $2,
                     updated_at = NOW(),
-                    notes = CONCAT(COALESCE(notes, ''), CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE E'\n' END, $3)
+                    notes = CONCAT(COALESCE(notes, ''), CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE E'\n' END, $3::text)
                 WHERE vlan_id = $1
                   AND active = TRUE
                   AND (expires_at IS NULL OR expires_at >= NOW())
@@ -1763,9 +1816,11 @@ class BlockingReleaseService {
         if (!rows.length) throw new Error(`Nenhum bypass emergencial ativo encontrado para a VLAN ${vlanId}.`);
 
         await this.writeGeneratedArtifacts();
+        await this.reloadUnbound();
         const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
         const validation = await this.validateCompiledState(mode);
         await dnsContingencyService.ensureFirewallState();
+        await this.applyNftablesDotExemption(vlanId, false);
         await this.recordAudit({
             action: 'emergency-vlan-bypass:deactivate',
             requestedBy,
@@ -1776,6 +1831,34 @@ class BlockingReleaseService {
             vlanId,
         });
         return rows[0];
+    }
+
+    private async applyNftablesDotExemption(vlanId: number, activate: boolean) {
+        const { rows } = await pool.query(
+            'SELECT interface_name FROM vlan_policies WHERE vlan_id = $1 LIMIT 1',
+            [vlanId],
+        ).catch(() => ({ rows: [] as Array<{ interface_name: string }> }));
+        const iface = rows[0]?.interface_name;
+        if (!iface) return;
+
+        const comment = 'sgcg-emergency-bypass';
+
+        if (activate) {
+            // Insere ACCEPT para DoT no início da chain FORWARD antes do DROP existente.
+            await runCommand('nft', [
+                'insert', 'rule', 'ip', 'filter', 'FORWARD',
+                'iifname', iface, 'tcp', 'dport', '853',
+                'comment', comment, 'accept',
+            ], { elevated: true, allowFailure: true });
+        } else {
+            // Remove qualquer regra de ACCEPT de DoT com o comentário sgcg-emergency-bypass para esta interface.
+            const list = await runCommand('nft', ['-a', 'list', 'chain', 'ip', 'filter', 'FORWARD'], { elevated: true, allowFailure: true });
+            const re = new RegExp(`iifname\\s+"${iface.replace(/\./g, '\\.')}".+?${comment}.+?accept.+?#\\s*handle\\s+(\\d+)`, 'g');
+            let match: RegExpExecArray | null;
+            while ((match = re.exec(list.stdout)) !== null) {
+                await runCommand('nft', ['delete', 'rule', 'ip', 'filter', 'FORWARD', 'handle', match[1]], { elevated: true, allowFailure: true });
+            }
+        }
     }
 
     async listExceptions(filters: Record<string, any> = {}) {
@@ -1803,25 +1886,45 @@ class BlockingReleaseService {
 
     async upsertException(payload: any, requestedBy = 'system', id?: number) {
         await this.ensureReady();
-        const ip = String(payload?.ip || '').trim();
-        if (!ip) throw new Error('IP obrigatório');
-        const inferredVlanId = extractVlanIdFromIp(ip);
-        const vlanId = payload?.vlan_id ? Number(payload.vlan_id) : inferredVlanId;
-        if (vlanId !== null && vlanId !== undefined) {
-            assertManagedPolicyVlan(vlanId);
-        }
         const current = id
             ? (await pool.query(`SELECT * FROM policy_exceptions WHERE id = $1`, [id])).rows[0]
             : null;
         if (id && !current) throw new Error('Exceção não encontrada');
+        const ip = String(hasOwn(payload, 'ip') ? payload?.ip : current?.ip || '').trim();
+        if (!ip) throw new Error('IP obrigatório');
+        const inferredVlanId = extractVlanIdFromIp(ip);
+        const vlanId = hasOwn(payload, 'vlan_id')
+            ? (payload?.vlan_id === null || payload?.vlan_id === '' ? inferredVlanId : Number(payload.vlan_id))
+            : (current?.vlan_id ?? inferredVlanId);
+        if (vlanId !== null && vlanId !== undefined) {
+            assertManagedPolicyVlan(vlanId);
+        }
+        const active = normalizeBoolean(payload?.active, current?.active ?? true);
+        if (active) {
+            const duplicate = await pool.query(
+                `
+                    SELECT id
+                    FROM policy_exceptions
+                    WHERE ip = $1::inet
+                      AND COALESCE(vlan_id, -1) = COALESCE($2::integer, -1)
+                      AND active = TRUE
+                      AND ($3::bigint IS NULL OR id <> $3::bigint)
+                    LIMIT 1
+                `,
+                [ip, vlanId ?? null, id || null],
+            );
+            if (duplicate.rowCount) {
+                throw new Error(`Já existe VIP ativo para o IP ${ip}${vlanId ? ` na VLAN ${vlanId}` : ''}.`);
+            }
+        }
         const governance = resolveExceptionGovernance(payload, requestedBy, current);
         const values = [
             ip,
-            payload?.hostname || null,
-            payload?.description || null,
+            hasOwn(payload, 'hostname') ? normalizeOptionalText(payload?.hostname) : current?.hostname || null,
+            hasOwn(payload, 'description') ? normalizeOptionalText(payload?.description) : current?.description || null,
             governance.summary || null,
             governance.legal_basis,
-            payload?.responsible || current?.responsible || governance.requested_by || requestedBy,
+            hasOwn(payload, 'responsible') ? normalizeOptionalText(payload?.responsible) : current?.responsible || governance.requested_by || requestedBy,
             governance.requested_by,
             governance.approval_scope,
             governance.lifecycle_status,
@@ -1833,11 +1936,11 @@ class BlockingReleaseService {
             governance.revoked_by,
             governance.revoked_at,
             vlanId || null,
-            payload?.exception_type || 'vip',
+            hasOwn(payload, 'exception_type') ? normalizeOptionalText(payload?.exception_type) || 'vip' : current?.exception_type || 'vip',
             true,
-            payload?.active ?? true,
-            governance.expires_at || payload?.valid_until || current?.valid_until || null,
-            payload?.notes || null,
+            active,
+            governance.expires_at || (hasOwn(payload, 'valid_until') ? normalizeOptionalTimestamp(payload?.valid_until) : current?.valid_until) || null,
+            hasOwn(payload, 'notes') ? normalizeOptionalText(payload?.notes) : current?.notes || null,
         ];
         const { rows } = id
             ? await pool.query(
@@ -2042,18 +2145,18 @@ class BlockingReleaseService {
         };
         const sinceExpr = periods[range] || periods['24h'];
         const [topSites, topBlocked, topIps, topVlans, hourly, daily, recent, allowedDomains, serviceTrend] = await Promise.all([
-            pool.query(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
-            pool.query(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked' GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
-            pool.query(`SELECT host(client_ip) AS client_ip, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked' GROUP BY client_ip ORDER BY total DESC NULLS LAST LIMIT 8`),
-            pool.query(`SELECT vlan_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE action = 'blocked')::int AS blocked FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY vlan_id ORDER BY total DESC NULLS LAST LIMIT 8`),
-            pool.query(`SELECT EXTRACT(HOUR FROM occurred_at)::int AS hour, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY hour ORDER BY hour ASC`),
-            pool.query(`SELECT TO_CHAR(occurred_at, 'YYYY-MM-DD') AS day, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY day ORDER BY day ASC`),
-            pool.query(`SELECT occurred_at, host(client_ip) AS client_ip, vlan_id, domain, action, policy_origin, source FROM access_events WHERE vlan_id IN (${MANAGED_VLAN_SQL_LIST}) ORDER BY occurred_at DESC LIMIT 20`),
-            pool.query(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'allowed' GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
-            pool.query(`SELECT created_at::date AS day, COUNT(*)::int AS changes FROM action_audit_logs WHERE created_at >= ${sinceExpr} GROUP BY day ORDER BY day ASC`),
+            readQuery(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
+            readQuery(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked' GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
+            readQuery(`SELECT host(client_ip) AS client_ip, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked' GROUP BY client_ip ORDER BY total DESC NULLS LAST LIMIT 8`),
+            readQuery(`SELECT vlan_id, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE action = 'blocked')::int AS blocked FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY vlan_id ORDER BY total DESC NULLS LAST LIMIT 8`),
+            readQuery(`SELECT EXTRACT(HOUR FROM occurred_at)::int AS hour, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY hour ORDER BY hour ASC`),
+            readQuery(`SELECT TO_CHAR(occurred_at, 'YYYY-MM-DD') AS day, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY day ORDER BY day ASC`),
+            readQuery(`SELECT occurred_at, host(client_ip) AS client_ip, vlan_id, domain, action, policy_origin, source FROM access_events WHERE vlan_id IN (${MANAGED_VLAN_SQL_LIST}) ORDER BY occurred_at DESC LIMIT 20`),
+            readQuery(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= ${sinceExpr} AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'allowed' GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 8`),
+            readQuery(`SELECT created_at::date AS day, COUNT(*)::int AS changes FROM action_audit_logs WHERE created_at >= ${sinceExpr} GROUP BY day ORDER BY day ASC`),
         ]);
 
-        const heatmapRows = await pool.query(
+        const heatmapRows = await readQuery(
             `
                 SELECT
                     EXTRACT(DOW FROM occurred_at)::int AS dow,
@@ -2067,7 +2170,7 @@ class BlockingReleaseService {
             `,
         );
 
-        const exceptionUsage = await pool.query(
+        const exceptionUsage = await readQuery(
             `
                 SELECT exception_type, COUNT(*)::int AS total
                 FROM policy_exceptions
@@ -2082,11 +2185,11 @@ class BlockingReleaseService {
             range,
             topSites: topSites.rows,
             topBlocked: topBlocked.rows,
-            topIps: topIps.rows,
+            topIps: identityEnrichmentService.enrichRows(topIps.rows),
             topVlans: topVlans.rows,
             hourly: hourly.rows,
             daily: daily.rows,
-            recentAttempts: recent.rows,
+            recentAttempts: identityEnrichmentService.enrichRows(recent.rows),
             releasedDomains: allowedDomains.rows,
             exceptionUsage: exceptionUsage.rows,
             serviceTrend: serviceTrend.rows,
@@ -2289,29 +2392,29 @@ class BlockingReleaseService {
     async buildOverview() {
         await this.syncTelemetry({ background: true });
         const [engineState, health, policyCounts, vlanSummary, traffic, recentFailures, contingency, emergencyVlanBypasses] = await Promise.all([
-            this.getEngineState(),
-            this.getHealth(),
+            retryTransientDb(() => this.getEngineState()),
+            retryTransientDb(() => this.getHealth()),
             Promise.all([
-                pool.query(`SELECT COUNT(*)::int AS total FROM blocking_policies WHERE active = TRUE AND ${MANAGED_POLICY_SCOPE_SQL}`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM release_policies WHERE active = TRUE AND ${MANAGED_POLICY_SCOPE_SQL}`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM policy_exceptions WHERE active = TRUE AND ${MANAGED_EXCEPTION_SCOPE_SQL}`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM vlan_policies WHERE vlan_id BETWEEN 1 AND 4094 AND (exempt = TRUE OR blocking_enabled = FALSE OR monitoring_enabled = FALSE)`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM vlan_policies WHERE vlan_id BETWEEN 1 AND 4094 AND exempt = FALSE AND blocking_enabled = TRUE AND monitoring_enabled = TRUE`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM blocking_policies WHERE active = TRUE AND ${MANAGED_POLICY_SCOPE_SQL}`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM release_policies WHERE active = TRUE AND ${MANAGED_POLICY_SCOPE_SQL}`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM policy_exceptions WHERE active = TRUE AND ${MANAGED_EXCEPTION_SCOPE_SQL}`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM vlan_policies WHERE vlan_id BETWEEN 1 AND 4094 AND (exempt = TRUE OR blocking_enabled = FALSE OR monitoring_enabled = FALSE)`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM vlan_policies WHERE vlan_id BETWEEN 1 AND 4094 AND exempt = FALSE AND blocking_enabled = TRUE AND monitoring_enabled = TRUE`),
             ]),
-            this.listVlans(),
+            retryTransientDb(() => this.listVlans()),
             Promise.all([
-                pool.query(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked'`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'allowed'`),
-                pool.query(`SELECT COUNT(DISTINCT domain)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '7 days' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST})`),
-                pool.query(`SELECT COUNT(DISTINCT client_ip)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST})`),
-                pool.query(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '5 minutes' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked'`),
-                pool.query(`SELECT TO_CHAR(date_trunc('hour', occurred_at), 'HH24:00') AS hour, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY 1 ORDER BY 1`),
-                pool.query(`SELECT vlan_id, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY vlan_id ORDER BY total DESC NULLS LAST LIMIT 1`),
-                pool.query(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 1`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked'`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'allowed'`),
+                readQuery(`SELECT COUNT(DISTINCT domain)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '7 days' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST})`),
+                readQuery(`SELECT COUNT(DISTINCT client_ip)::int AS total FROM access_events WHERE occurred_at >= date_trunc('day', NOW()) AND vlan_id IN (${MANAGED_VLAN_SQL_LIST})`),
+                readQuery(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '5 minutes' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) AND action = 'blocked'`),
+                readQuery(`SELECT TO_CHAR(date_trunc('hour', occurred_at), 'HH24:00') AS hour, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY 1 ORDER BY 1`),
+                readQuery(`SELECT vlan_id, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY vlan_id ORDER BY total DESC NULLS LAST LIMIT 1`),
+                readQuery(`SELECT domain, COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND vlan_id IN (${MANAGED_VLAN_SQL_LIST}) GROUP BY domain ORDER BY total DESC NULLS LAST LIMIT 1`),
             ]),
-            pool.query(`SELECT action, message, created_at FROM action_audit_logs WHERE success = FALSE ORDER BY created_at DESC LIMIT 1`),
+            readQuery(`SELECT action, message, created_at FROM action_audit_logs WHERE success = FALSE ORDER BY created_at DESC LIMIT 1`),
             dnsContingencyService.getStatus().catch(() => null),
-            this.listEmergencyVlanBypasses({ skipReconcile: true }),
+            retryTransientDb(() => this.listEmergencyVlanBypasses({ skipReconcile: true })),
         ]);
 
         const [blockCount, allowCount, exceptionCount, exemptCount, protectedCount] = policyCounts;
@@ -2506,6 +2609,9 @@ class BlockingReleaseService {
         if ((status.stdout || '').trim() !== 'active') {
             throw new Error('Unbound não ficou ativo após reload');
         }
+        // Purga cache após reload para que regras RPZ/VIP entrem em vigor imediatamente
+        // sem aguardar o TTL das entradas NXDOMAIN em cache (até 300s)
+        await runCommand('unbound-control', ['flush_zone', '.'], { elevated: true, allowFailure: true });
         return status;
     }
 

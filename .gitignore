@@ -53,3 +53,8 @@ frontend/dist/
 backend/dist/
 
 .codex
+.codex-checkpoints/
+
+# Runtime identity/check-in data. Keep service code and templates versioned,
+# but never publish collected endpoint identity data.
+data/identity/

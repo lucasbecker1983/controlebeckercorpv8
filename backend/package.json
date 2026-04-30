@@ -32,6 +32,7 @@
     "@types/express": "^4.17.25",
     "@types/jsonwebtoken": "^9.0.2",
     "@types/node": "^18.19.130",
+    "@types/pdfkit": "^0.17.6",
     "@types/pg": "^8.6.1"
   }
 }

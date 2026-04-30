@@ -17,8 +17,10 @@ import Security from './pages/Security';
 import Settings from './pages/Settings';
 import DataGovernance from './pages/DataGovernance';
 import ApprovalsExceptions from './pages/ApprovalsExceptions';
-import InstitutionalTrail from './pages/InstitutionalTrail';
 import Lgpd from './pages/Lgpd';
+import Reports from './pages/Reports';
+import Hotspot from './pages/Hotspot';
+import HotspotPortal from './pages/HotspotPortal';
 import { api, resetAuthInvalidation } from './services/api';
 import { resetAuthFetchInvalidation } from './services/authFetch';
 
@@ -114,6 +116,10 @@ export default function App() {
     return <div className="flex min-h-screen items-center justify-center bg-surface text-on-surface">Carregando sessão institucional...</div>;
   }
 
+  if (window.location.pathname.startsWith('/hotspot/portal')) {
+    return <HotspotPortal />;
+  }
+
   if (!user?.id && !user?.username) {
     return <Login onLogin={(nextUser) => {
       resetAuthInvalidation();
@@ -167,10 +173,12 @@ export default function App() {
           <Route path="/governanca-dados" element={<DataGovernance />} />
           <Route path="/lgpd" element={<Lgpd />} />
           <Route path="/aprovacoes-excecoes" element={<ApprovalsExceptions />} />
-          <Route path="/trilha-institucional" element={<InstitutionalTrail />} />
+          <Route path="/trilha-institucional" element={<Navigate to="/relatorios" />} />
+          <Route path="/relatorios" element={<Reports />} />
           <Route path="/control" element={<Control />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />
+          <Route path="/hotspot" element={<Hotspot />} />
           <Route
             path="/settings"
             element={(

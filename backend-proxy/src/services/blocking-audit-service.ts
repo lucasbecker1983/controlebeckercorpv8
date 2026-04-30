@@ -4,6 +4,8 @@ import PDFDocument from 'pdfkit';
 import { pool } from '../config/db';
 import { env } from '../config/env';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
+import { identityEnrichmentService } from './identity-enrichment-service';
+import { dnsIgnoredService } from './dns-ignored-service';
 import { MANAGED_VLAN_SQL_LIST } from './blocking-release-scope';
 
 type AuditFilters = Record<string, any>;
@@ -108,10 +110,14 @@ export class BlockingAuditService {
             hostnames.set(ip, reverse || UNKNOWN_HOSTNAME);
         }
 
-        const enriched = events.map((event) => ({
-            ...event,
-            hostname: hostnames.get(event.client_ip) || UNKNOWN_HOSTNAME,
-        }));
+        const identityByIp = identityEnrichmentService.loadLatestByIp();
+        const enriched = events.map((event) => {
+            const withIdentity = identityEnrichmentService.enrichRow(event, identityByIp);
+            return {
+                ...withIdentity,
+                hostname: withIdentity.identity_computer || hostnames.get(event.client_ip) || UNKNOWN_HOSTNAME,
+            };
+        });
 
         if (!hostnameFilter) return enriched;
         const needle = normalizeText(hostnameFilter);
@@ -293,6 +299,9 @@ export class BlockingAuditService {
             )`);
         }
 
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'u.domain');
+
         params.push(limit);
         const { rows } = await pool.query(
             `
@@ -316,6 +325,7 @@ export class BlockingAuditService {
                     u.policy_label
                 FROM unified_access_events u
                 WHERE ${clauses.join(' AND ')}
+                  ${noiseFilter}
                 ORDER BY u.occurred_at DESC
                 LIMIT $${params.length}
             `,

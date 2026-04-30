@@ -67,6 +67,7 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose })
                         ? currentUrl === item.path || location.pathname === item.path.split('?')[0]
                         : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
                     const Icon = item.icon;
+
                     return (
                       <Link
                         key={item.path}

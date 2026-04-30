@@ -153,6 +153,11 @@ export class InterceptionService {
         });
     }
 
+    async commandExists(command: string) {
+        const result = await runCommand('sh', ['-lc', `command -v ${command}`], { allowFailure: true });
+        return result.code === 0;
+    }
+
     async readBeforeRules() {
         return fs.readFileSync(env.ufwBeforeRulesFile, 'utf8');
     }
@@ -220,12 +225,16 @@ export class InterceptionService {
             await this.clearLegacyRuntimeRules();
             await this.validateBeforeRules(candidate);
             fs.writeFileSync(env.ufwBeforeRulesFile, candidate);
-            await runCommand('ufw', ['reload'], { elevated: true });
+            if (await this.commandExists('ufw')) {
+                await runCommand('ufw', ['reload'], { elevated: true });
+            }
             await this.clearLegacyRuntimeRules();
         } catch (error) {
             fs.writeFileSync(env.ufwBeforeRulesFile, original);
             try {
-                await runCommand('ufw', ['reload'], { elevated: true, allowFailure: true });
+                if (await this.commandExists('ufw')) {
+                    await runCommand('ufw', ['reload'], { elevated: true, allowFailure: true });
+                }
                 await this.clearLegacyRuntimeRules();
             } catch {
                 // noop

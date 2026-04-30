@@ -1,3 +1,4 @@
+import PDFDocument from 'pdfkit';
 import { pool } from '../../config/db';
 
 type LgpdActor = {
@@ -633,6 +634,139 @@ export const lgpdService = {
         );
         await this.logAudit({ entityType: 'incident', entityId: rows[0]?.id, action: 'create', actor, payload: data, message: 'Incidente LGPD criado.' });
         return rows[0];
+    },
+
+    async exportInventoryPdf(activities: any[], program: any) {
+        const ENTITY = 'Secretaria de Comércio, Indústria, Serviços e Inovação';
+        const SYSTEM = 'SGCG — Sistema de Governança e Controle Governamental';
+        const LOGO_PATH = '/opt/controlebeckercorp-v8/frontend/public/jmb-logo-clean.png';
+        const W = 511;
+        const M = 42;
+        const fmtDate = (d: any) => {
+            if (!d) return '—';
+            return new Date(d).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour12: false }).replace(',', '');
+        };
+        const riskLabel: Record<string, string> = { baixo: 'Baixo', medio: 'Médio', alto: 'Alto', critico: 'Crítico' };
+        const statusLabel: Record<string, string> = { mapeado: 'Mapeado', revisao: 'Em revisão', aprovado: 'Aprovado', suspenso: 'Suspenso' };
+
+        return new Promise<Buffer>((resolve, reject) => {
+            const doc = new PDFDocument({ size: 'A4', margin: M, bufferPages: true });
+            const chunks: Buffer[] = [];
+            doc.on('data', (c: Buffer) => chunks.push(c));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            let y = M;
+            let pageNum = 1;
+
+            const drawHeader = () => {
+                doc.rect(M, y, W, 74).fillColor('#0f172a').fill();
+                doc.fillColor('#f1f5f9').font('Helvetica-Bold').fontSize(11)
+                    .text('PREFEITURA MUNICIPAL DE JACAREZINHO — PARANÁ', M + 12, y + 8, { width: W - 24 });
+                doc.fillColor('#cbd5e1').font('Helvetica').fontSize(8.5)
+                    .text(ENTITY, M + 12, y + 26, { width: W - 24 });
+                doc.fillColor('#64748b').font('Helvetica').fontSize(7.5)
+                    .text(SYSTEM, M + 12, y + 42, { width: W - 24 });
+                doc.fillColor('#86efac').font('Helvetica-Bold').fontSize(9)
+                    .text('Inventário de Operações de Tratamento — Art. 37, Lei nº 13.709/2018 (LGPD)', M + 12, y + 57, { width: W - 24 });
+                y += 84;
+                doc.rect(M, y, W, 18).fillColor('#14532d').fill();
+                doc.fillColor('#86efac').font('Helvetica').fontSize(7)
+                    .text('⚖  Art. 37: Registro das operações de tratamento   ·   Art. 46: Medidas de segurança e prevenção   ·   Lei nº 13.709/2018 (LGPD)', M + 8, y + 5, { width: W - 16 });
+                y += 26;
+            };
+
+            drawHeader();
+
+            if (program?.controller_name) {
+                doc.rect(M, y, W, 28).fillColor('#f8fafc').fillAndStroke('#e2e8f0').fill();
+                doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7.5).text(`Controlador: ${program.controller_name}   |   Unidade: ${program.controller_unit || '—'}   |   DPO: ${program.dpo_name || '—'}`, M + 10, y + 6, { width: W - 20 });
+                doc.fillColor('#64748b').font('Helvetica').fontSize(7).text(`Emitido em: ${fmtDate(new Date())}   |   Última revisão: ${fmtDate(program.last_review_at)}   |   Frequência: ${program.review_frequency_days || 180} dias`, M + 10, y + 17, { width: W - 20 });
+                y += 36;
+            }
+
+            const total = activities.length;
+            const approved = activities.filter((a) => a.status === 'aprovado').length;
+            const highRisk = activities.filter((a) => ['alto', 'critico'].includes(a.risk_level)).length;
+            const stats = [['Total de tratamentos', total], ['Aprovados formalmente', approved], ['Alto risco / Crítico', highRisk]];
+            let sx = M;
+            const cw = (W - 8) / 3;
+            for (const [label, val] of stats) {
+                doc.roundedRect(sx, y, cw - 4, 34, 3).fillAndStroke('#f8fafc', '#e2e8f0');
+                doc.fillColor('#64748b').font('Helvetica').fontSize(6.5).text(String(label).toUpperCase(), sx + 8, y + 6, { width: cw - 16 });
+                doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(14).text(String(val), sx + 8, y + 17, { width: cw - 16 });
+                sx += cw;
+            }
+            y += 42;
+
+            const cols = [
+                { label: 'Processo / Finalidade', w: 148 },
+                { label: 'Base Legal', w: 92 },
+                { label: 'Risco', w: 48 },
+                { label: 'Status', w: 58 },
+                { label: 'Retenção', w: 74 },
+                { label: 'Controlador', w: 91 },
+            ];
+
+            const drawTableHeader = () => {
+                doc.rect(M, y, W, 18).fillColor('#334155').fill();
+                let cx = M;
+                for (const c of cols) {
+                    doc.fillColor('#e2e8f0').font('Helvetica-Bold').fontSize(7).text(c.label, cx + 4, y + 5, { width: c.w - 8 });
+                    cx += c.w;
+                }
+                y += 22;
+            };
+
+            drawTableHeader();
+
+            let row = 0;
+            for (const a of activities) {
+                if (y > 760) {
+                    doc.moveTo(M, 775).lineTo(M + W, 775).strokeColor('#e2e8f0').stroke();
+                    try { doc.image(LOGO_PATH, M + W - 132, 772, { width: 46, height: 20 }); } catch (_) {}
+                    doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7)
+                        .text('JMB Tecnologia', M + W - 82, 777, { width: 82, align: 'right' });
+                    doc.fillColor('#64748b').font('Helvetica').fontSize(6.5)
+                        .text(`Página ${pageNum}`, M + W - 82, 787, { width: 82, align: 'right' });
+                    doc.addPage({ size: 'A4', margin: M });
+                    pageNum++;
+                    y = M;
+                    drawTableHeader();
+                }
+                const isHigh = ['alto', 'critico'].includes(a.risk_level);
+                doc.rect(M, y, W, 20).fillColor(row % 2 === 0 ? '#f8fafc' : '#fff').fill();
+                if (isHigh) doc.rect(M, y, 3, 20).fillColor('#ef4444').fill();
+                const purpose = String(a.purpose || '').substring(0, 35);
+                const cells = [
+                    `${String(a.process_name || '—').substring(0, 28)}${purpose ? `\n${purpose}` : ''}`,
+                    String(a.legal_basis || '—').substring(0, 22),
+                    riskLabel[a.risk_level] || a.risk_level || '—',
+                    statusLabel[a.status] || a.status || '—',
+                    String(a.retention_period || '—').substring(0, 18),
+                    String(a.controller_name || '—').substring(0, 22),
+                ];
+                let cx = M;
+                for (let i = 0; i < cols.length; i++) {
+                    const color = i === 2 && isHigh ? '#dc2626' : '#1e293b';
+                    doc.fillColor(color).font(i === 2 ? 'Helvetica-Bold' : 'Helvetica').fontSize(7)
+                        .text(cells[i], cx + 4, y + 5, { width: cols[i].w - 8, ellipsis: true });
+                    cx += cols[i].w;
+                }
+                y += 20;
+                row++;
+            }
+
+            doc.moveTo(M, 775).lineTo(M + W, 775).strokeColor('#e2e8f0').stroke();
+            doc.fillColor('#64748b').font('Helvetica').fontSize(7)
+                .text(`Gerado em ${fmtDate(new Date())} • Documento de uso institucional restrito — LGPD Art. 37`, M, 780, { width: 300 });
+            try { doc.image(LOGO_PATH, M + W - 132, 772, { width: 46, height: 20 }); } catch (_) {}
+            doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7)
+                .text('JMB Tecnologia', M + W - 82, 777, { width: 82, align: 'right' });
+            doc.fillColor('#64748b').font('Helvetica').fontSize(6.5)
+                .text(`Página ${pageNum}`, M + W - 82, 787, { width: 82, align: 'right' });
+            doc.end();
+        });
     },
 
     async listAuditLogs(limit = 120) {

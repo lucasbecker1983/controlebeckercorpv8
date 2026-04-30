@@ -9,6 +9,7 @@ import {
   Cpu,
   Database,
   Download,
+  EyeOff,
   Filter,
   Flame,
   Globe2,
@@ -70,6 +71,7 @@ const TABS = [
   { key: 'engine', label: 'Motor de Controle', icon: Cpu },
   { key: 'contingency', label: 'Contingência DNS', icon: Flame },
   { key: 'metrics', label: 'Telemetria', icon: Activity },
+  { key: 'ignored', label: 'Domínios Ignorados', icon: EyeOff },
 ];
 
 const MODE_LABELS = {
@@ -91,6 +93,200 @@ const CONTINGENCY_PROVIDERS = [
   { key: 'cloudflare', label: 'Cloudflare' },
   { key: 'quad9', label: 'Quad9' },
 ];
+
+// ── DnsIgnoredTab ─────────────────────────────────────────────────────────────
+
+const MATCH_TYPE_LABELS = {
+  exact: 'Exato',
+  contains: 'Contém',
+  suffix: 'Sufixo',
+  prefix: 'Prefixo',
+};
+
+const MATCH_TYPE_EXAMPLES = {
+  exact: 'ex: neverssl.com',
+  contains: 'ex: vlan (ignora tudo com "vlan")',
+  suffix: 'ex: .local (ignora *.local)',
+  prefix: 'ex: api- (ignora api-*)',
+};
+
+function DnsIgnoredTab() {
+  const [patterns, setPatterns] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [form, setForm] = useState({ pattern: '', match_type: 'contains', reason: '' });
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await authFetch('/api/dns/ignored');
+      const json = await res.json();
+      setPatterns(json.patterns || []);
+    } catch {
+      setError('Falha ao carregar padrões.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const add = async (e) => {
+    e.preventDefault();
+    if (!form.pattern.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await authFetch('/api/dns/ignored', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) { const j = await res.json(); throw new Error(j.error); }
+      setForm({ pattern: '', match_type: 'contains', reason: '' });
+      await load();
+    } catch (err) {
+      setError(err.message || 'Erro ao adicionar padrão.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggle = async (id) => {
+    try {
+      await authFetch(`/api/dns/ignored/${id}/toggle`, { method: 'PATCH' });
+      await load();
+    } catch {
+      setError('Falha ao alternar padrão.');
+    }
+  };
+
+  const remove = async (id) => {
+    setRemoving(id);
+    try {
+      await authFetch(`/api/dns/ignored/${id}`, { method: 'DELETE' });
+      await load();
+    } catch {
+      setError('Falha ao remover padrão.');
+    } finally {
+      setRemoving(null);
+    }
+  };
+
+  const active = patterns.filter((p) => p.active);
+  const inactive = patterns.filter((p) => !p.active);
+
+  return (
+    <div className="space-y-6">
+      <SectionCard
+        title="Novo padrão ignorado"
+        subtitle="Domínios que corresponderem serão excluídos do radar, métricas e relatórios de acesso."
+      >
+        <form onSubmit={add} className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto]">
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Padrão</label>
+            <input
+              type="text"
+              value={form.pattern}
+              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value.toLowerCase() }))}
+              placeholder={MATCH_TYPE_EXAMPLES[form.match_type]}
+              required
+              className="h-10 w-full rounded-xl border border-outline/20 bg-surface-high/60 px-3 text-sm text-on-surface outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Tipo</label>
+            <select
+              value={form.match_type}
+              onChange={(e) => setForm((f) => ({ ...f, match_type: e.target.value }))}
+              className="h-10 rounded-xl border border-outline/20 bg-surface-high/60 px-3 text-sm text-on-surface outline-none focus:border-primary/40"
+            >
+              {Object.entries(MATCH_TYPE_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Motivo (opcional)</label>
+            <input
+              type="text"
+              value={form.reason}
+              onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))}
+              placeholder="Descreva brevemente o motivo"
+              className="h-10 w-full rounded-xl border border-outline/20 bg-surface-high/60 px-3 text-sm text-on-surface outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+            />
+          </div>
+          <div className="flex items-end">
+            <ActionButton tone="primary" icon={Plus} type="submit" disabled={saving || !form.pattern.trim()}>
+              {saving ? 'Adicionando...' : 'Adicionar'}
+            </ActionButton>
+          </div>
+        </form>
+        {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+      </SectionCard>
+
+      <SectionCard
+        title={`Padrões ativos — ${active.length}`}
+        subtitle="Consultas DNS que correspondem a qualquer padrão abaixo são filtradas automaticamente."
+        actions={<ActionButton tone="ghost" icon={RefreshCcw} onClick={load} disabled={loading}>Atualizar</ActionButton>}
+      >
+        {loading ? (
+          <div className="py-8 text-center text-sm text-on-surface/40">Carregando...</div>
+        ) : active.length === 0 ? (
+          <EmptyStateBlock icon={EyeOff} title="Nenhum padrão ativo" description="Adicione padrões acima para suprimir ruído de hardware dos relatórios." />
+        ) : (
+          <div className="divide-y divide-outline/10">
+            {active.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 py-3">
+                <span className="rounded-lg bg-primary/10 px-2 py-0.5 text-[10px] font-black uppercase text-primary">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
+                <span className="flex-1 font-mono text-sm text-on-surface">{p.pattern}</span>
+                {p.reason && <span className="hidden text-xs text-on-surface/45 sm:block">{p.reason}</span>}
+                <button
+                  onClick={() => toggle(p.id)}
+                  title="Desativar temporariamente"
+                  className="rounded-lg p-1.5 text-on-surface/40 transition hover:bg-warning/10 hover:text-warning"
+                ><Power size={14} /></button>
+                <button
+                  onClick={() => remove(p.id)}
+                  disabled={removing === p.id}
+                  title="Remover permanentemente"
+                  className="rounded-lg p-1.5 text-on-surface/40 transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                ><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {inactive.length > 0 && (
+        <SectionCard title={`Padrões desativados — ${inactive.length}`} subtitle="Clique em ativar para reativar o filtro.">
+          <div className="divide-y divide-outline/10">
+            {inactive.map((p) => (
+              <div key={p.id} className="flex items-center gap-3 py-3 opacity-50">
+                <span className="rounded-lg border border-outline/20 px-2 py-0.5 text-[10px] font-black uppercase text-on-surface/40">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
+                <span className="flex-1 font-mono text-sm text-on-surface/50 line-through">{p.pattern}</span>
+                {p.reason && <span className="hidden text-xs text-on-surface/35 sm:block">{p.reason}</span>}
+                <button
+                  onClick={() => toggle(p.id)}
+                  title="Reativar padrão"
+                  className="rounded-lg p-1.5 text-on-surface/40 transition hover:bg-success/10 hover:text-success"
+                ><Power size={14} /></button>
+                <button
+                  onClick={() => remove(p.id)}
+                  disabled={removing === p.id}
+                  title="Remover permanentemente"
+                  className="rounded-lg p-1.5 text-on-surface/40 transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
+                ><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
 
 const VIP_RUNTIME_BADGES = [
   { label: 'VIP real', tone: 'primary' },
@@ -2179,7 +2375,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         if (auditFilters.vlan !== 'all' && String(row.vlan_id || '') !== String(auditFilters.vlan)) return false;
         if (auditFilters.source !== 'all' && row.source !== auditFilters.source) return false;
         if (!search) return true;
-        return [row.client_ip, row.hostname, row.domain, row.action, row.policy_label, row.matched_policy_name, row.category]
+        return [row.client_ip, row.hostname, row.identity_user, row.identity_display_user, row.identity_computer, row.domain, row.action, row.policy_label, row.matched_policy_name, row.category]
           .some((value) => normalizeText(value).includes(search));
       })
       .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
@@ -2194,12 +2390,25 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         if (radarFilters.source !== 'all' && row.source !== radarFilters.source) return false;
         if (radarFilters.vlan !== 'all' && String(row.vlan_id || '') !== String(radarFilters.vlan)) return false;
         if (!search) return true;
-        return [row.client_ip, row.hostname, row.domain, row.policy_label, row.matched_policy_name, row.category]
+        return [row.client_ip, row.hostname, row.identity_user, row.identity_display_user, row.identity_computer, row.domain, row.policy_label, row.matched_policy_name, row.category]
           .some((value) => normalizeText(value).includes(search));
       })
       .sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
   }, [data.realtimeRadar, deferredRadarSearch, radarFilters]);
-  const realtimeRadarSummary = data.realtimeRadar?.summary || {};
+  const realtimeRadarSummary = useMemo(() => {
+    const evts = data.realtimeRadar?.events || [];
+    return {
+      total: evts.length,
+      dns: evts.filter((e) => e.source === 'dns').length,
+      proxy: evts.filter((e) => e.source === 'proxy').length,
+      blocked: evts.filter((e) => e.action === 'blocked').length,
+      allowed: evts.filter((e) => e.action === 'allowed').length,
+      bypassed: evts.filter((e) => e.action === 'bypassed').length,
+      unique_ips: new Set(evts.map((e) => e.client_ip).filter(Boolean)).size,
+      unique_domains: new Set(evts.map((e) => e.domain).filter(Boolean)).size,
+      last_seen_at: evts[0]?.timestamp || evts[0]?.occurred_at || null,
+    };
+  }, [data.realtimeRadar?.events]);
   const globalAllowedCount = namedPolicies.filter((item) => item.enabled && item.scope_type === 'global' && item.policy_type === 'allow').length;
   const globalBlockedCount = namedPolicies.filter((item) => item.enabled && item.scope_type === 'global' && item.policy_type === 'block').length;
   const vlansWithOwnPolicy = vlanPolicies.filter((item) => item.allowedCategories.length || item.blockedCategories.length || item.conflictCategories.length).length;
@@ -2686,23 +2895,26 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const saveVip = async (form) => {
     setWorking((current) => ({ ...current, vip: true }));
     try {
-      const payload = vipEditor.item
-        ? {
-            ...vipEditor.item,
-            ip: form.ip.trim(),
-            description: form.description.trim(),
-            notes: form.reason.trim(),
-            exception_type: 'bypass total',
-            bypass_total: true,
-          }
-        : {
-            ip: form.ip.trim(),
-            description: form.description.trim(),
-            notes: form.reason.trim(),
-            exception_type: 'bypass total',
-            bypass_total: true,
-            active: true,
-          };
+      const payload = {
+        ip: form.ip.trim(),
+        description: form.description.trim(),
+        notes: form.reason.trim(),
+        governance_summary: form.governance_summary || form.reason.trim(),
+        legal_basis: form.legal_basis || null,
+        requested_by: form.requested_by || null,
+        approval_scope: form.approval_scope || null,
+        lifecycle_status: form.lifecycle_status || null,
+        review_date: form.review_date || null,
+        approved_by: form.approved_by || null,
+        approved_at: form.approved_at || null,
+        effective_from: form.effective_from || null,
+        expires_at: form.expires_at || null,
+        revoked_by: form.revoked_by || null,
+        revoked_at: form.revoked_at || null,
+        exception_type: 'bypass total',
+        bypass_total: true,
+        active: vipEditor.item ? Boolean(vipEditor.item.active) : true,
+      };
 
       if (vipEditor.item?.id) {
         await requestAction(`exceptions/${vipEditor.item.id}`, 'PATCH', payload);
@@ -2952,9 +3164,45 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   useEffect(() => {
     if (activeTab !== 'observability' || loading) return undefined;
     loadRealtimeRadar(true);
-    const timer = window.setInterval(() => loadRealtimeRadar(true), 5000);
-    return () => window.clearInterval(timer);
-  }, [activeTab, loading, radarFilters.window, radarFilters.action, radarFilters.source, radarFilters.vlan]);
+  }, [activeTab, loading, radarFilters.window]);
+
+  useEffect(() => {
+    if (activeTab !== 'observability' || loading) return undefined;
+    const token = localStorage.getItem('becker_token') || '';
+    const es = new EventSource(`/api/dns/radar/live?token=${encodeURIComponent(token)}`);
+
+    es.onmessage = (event) => {
+      try {
+        const raw = JSON.parse(event.data);
+        const normalized = {
+          source: raw.source || 'dns',
+          event_uid: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          timestamp: raw.occurred_at,
+          client_ip: raw.client_ip,
+          vlan_id: raw.vlan_id,
+          domain: raw.domain,
+          url_or_host: raw.domain,
+          action: raw.action,
+          policy_source: raw.policy_source,
+          category: raw.category,
+          matched_rule: raw.matched_rule,
+          identity_user: raw.identity_user,
+          identity_computer: raw.identity_computer,
+          hostname: raw.identity_computer,
+          source_detail: raw.source || 'dns',
+        };
+        setData((current) => {
+          const prev = current.realtimeRadar?.events || [];
+          const next = [normalized, ...prev].slice(0, 500);
+          return { ...current, realtimeRadar: { ...current.realtimeRadar, events: next } };
+        });
+      } catch {
+        // payload inválido
+      }
+    };
+
+    return () => es.close();
+  }, [activeTab, loading]);
 
   return (
     <div className="blocking-module space-y-5 pb-6 xl:space-y-6 xl:pb-8" style={googleFontStyle}>
@@ -3904,6 +4152,10 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         </div>
       ) : null}
 
+      {!loading && activeTab === 'ignored' ? (
+        <DnsIgnoredTab />
+      ) : null}
+
       {!loading && activeTab === 'observability' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
@@ -3979,7 +4231,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-base font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
-                          <StateBadge label={item.hostname || 'hostname não identificado'} tone="neutral" />
+                          <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
+                          <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                           {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                           <StateBadge label={actionLabel(item.action)} tone={actionTone(item.action)} />
                           <StateBadge label={item.source === 'dns' ? 'DNS' : 'Proxy'} tone={item.source === 'dns' ? 'success' : 'warning'} />
@@ -4087,7 +4340,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                         <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/42">Quem acessou</div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-base font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
-                          <StateBadge label={item.hostname || 'hostname não identificado'} tone="neutral" />
+                          <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
+                          <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                           {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                           <StateBadge label={actionLabel(item.action)} tone={actionTone(item.action)} />
                           <StateBadge label={item.source === 'dns' ? 'DNS' : 'Squid'} tone="neutral" />

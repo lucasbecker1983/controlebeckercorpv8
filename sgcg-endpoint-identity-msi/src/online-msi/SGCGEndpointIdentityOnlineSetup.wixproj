@@ -1,0 +1,13 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+  <PropertyGroup>
+    <OutputName>SGCGEndpointIdentity-OnlineSetup</OutputName>
+    <OutputType>Package</OutputType>
+    <Platform>x64</Platform>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <RootDir>$(MSBuildThisFileDirectory)..\..</RootDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Util.wixext" Version="7.0.0" />
+  </ItemGroup>
+</Project>

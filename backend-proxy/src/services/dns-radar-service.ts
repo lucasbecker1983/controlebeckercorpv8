@@ -5,7 +5,9 @@ import { spawn } from 'child_process';
 import { pool } from '../config/db';
 import { env } from '../config/env';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
+import { identityEnrichmentService } from './identity-enrichment-service';
 import { policyResolutionService } from './policy-resolution-service';
+import { dnsIgnoredService } from './dns-ignored-service';
 
 type PendingRpz = {
     matchedRule: string | null;
@@ -106,7 +108,18 @@ export class DnsRadarService {
         if (rpz) this.pendingRpz.delete(key);
 
         const resolved = await policyResolutionService.resolveDnsDecision(parsed.clientIp, parsed.queryName);
+
+        // LGPD Art. 6º III (necessidade) — IP sem VLAN identificada não é rastreável,
+        // portanto não há base legal para o tratamento do dado.
+        if (resolved.vlan_id === null) return null;
+
+        if (await dnsIgnoredService.shouldIgnore(parsed.queryName)) return null;
+
         const action = rpz && resolved.action !== 'bypassed' ? 'blocked' : resolved.action;
+
+        const identityByIp = identityEnrichmentService.loadLatestByIp();
+        const identity = identityByIp.get(parsed.clientIp) || null;
+
         const payload = {
             parser: 'journalctl-short-iso',
             rpz,
@@ -116,6 +129,13 @@ export class DnsRadarService {
             cache_flag: parsed.cacheFlag,
             answer_size: parsed.answerSize,
             raw_line: line,
+            identity: identity ? {
+                user: identity.user,
+                display_user: identity.display_user,
+                computer: identity.computer,
+                agent_id: identity.agent_id,
+                checked_at: identity.checked_at,
+            } : null,
         };
         const fingerprint = sha256([
             parsed.occurredAt,
@@ -143,7 +163,9 @@ export class DnsRadarService {
                     matched_rule,
                     resolver,
                     raw_payload,
-                    fingerprint
+                    fingerprint,
+                    identity_user,
+                    identity_computer
                 )
                 VALUES (
                     $1::timestamptz,
@@ -159,7 +181,9 @@ export class DnsRadarService {
                     $11,
                     $12,
                     $13::jsonb,
-                    $14
+                    $14,
+                    $15,
+                    $16
                 )
                 ON CONFLICT (fingerprint) DO NOTHING
             `,
@@ -178,8 +202,27 @@ export class DnsRadarService {
                 this.resolver,
                 JSON.stringify(payload),
                 fingerprint,
+                identity?.display_user || null,
+                identity?.computer || null,
             ],
         );
+        const livePayload = JSON.stringify({
+            source: 'dns',
+            occurred_at: parsed.occurredAt,
+            client_ip: parsed.clientIp || null,
+            vlan_id: resolved.vlan_id,
+            domain: parsed.queryName,
+            query_type: parsed.queryType,
+            response_code: parsed.responseCode,
+            action,
+            policy_source: resolved.policy_source,
+            category: resolved.category,
+            matched_rule: rpz?.matchedRule || resolved.matched_rule || null,
+            identity_user: identity?.display_user || null,
+            identity_computer: identity?.computer || null,
+        });
+        pool.query(`SELECT pg_notify('dns_radar_live', $1)`, [livePayload]).catch(() => null);
+
         return { ...parsed, action, resolved, rpz };
     }
 
@@ -252,11 +295,15 @@ export class DnsRadarService {
     async getOverview(range = '24h') {
         await ensureBlockingReleaseSchema();
         const interval = range === '7d' ? '7 days' : range === '30d' ? '30 days' : '24 hours';
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
+
         const [topDomains, topBlockedDomains, topIps, topVlans, topCategories, totals] = await Promise.all([
             pool.query(`
                 SELECT query_name AS domain, COUNT(*)::int AS total
                 FROM dns_policy_events
                 WHERE occurred_at >= NOW() - INTERVAL '${interval}'
+                  ${noiseFilter}
                 GROUP BY query_name
                 ORDER BY total DESC, domain ASC
                 LIMIT 8
@@ -266,6 +313,7 @@ export class DnsRadarService {
                 FROM dns_policy_events
                 WHERE occurred_at >= NOW() - INTERVAL '${interval}'
                   AND action = 'blocked'
+                  ${noiseFilter}
                 GROUP BY query_name
                 ORDER BY total DESC, domain ASC
                 LIMIT 8
@@ -285,6 +333,7 @@ export class DnsRadarService {
                 FROM dns_policy_events
                 WHERE occurred_at >= NOW() - INTERVAL '${interval}'
                   AND vlan_id IS NOT NULL
+                  ${noiseFilter}
                 GROUP BY vlan_id
                 ORDER BY total DESC, vlan_id ASC
                 LIMIT 8
@@ -294,6 +343,7 @@ export class DnsRadarService {
                 FROM dns_policy_events
                 WHERE occurred_at >= NOW() - INTERVAL '${interval}'
                   AND action = 'blocked'
+                  ${noiseFilter}
                 GROUP BY 1
                 ORDER BY total DESC, category ASC
                 LIMIT 8
@@ -307,6 +357,7 @@ export class DnsRadarService {
                     COUNT(DISTINCT client_ip)::int AS unique_ips
                 FROM dns_policy_events
                 WHERE occurred_at >= NOW() - INTERVAL '${interval}'
+                  ${noiseFilter}
             `),
         ]);
 
@@ -315,7 +366,7 @@ export class DnsRadarService {
             cards: totals.rows[0] || {},
             topDomains: topDomains.rows,
             topBlockedDomains: topBlockedDomains.rows,
-            topBlockedIps: topIps.rows,
+            topBlockedIps: identityEnrichmentService.enrichRows(topIps.rows),
             topVlans: topVlans.rows,
             topBlockedCategories: topCategories.rows,
         };
@@ -351,26 +402,41 @@ export class DnsRadarService {
             const interval = filters.range === '7d' ? '7 days' : filters.range === '30d' ? '30 days' : '24 hours';
             where.push(`occurred_at >= NOW() - INTERVAL '${interval}'`);
         }
+        if (filters.identity_user) {
+            params.push(`%${String(filters.identity_user).toLowerCase()}%`);
+            where.push(`LOWER(COALESCE(identity_user, '')) LIKE $${params.length}`);
+        }
+        if (filters.identity_computer) {
+            params.push(`%${String(filters.identity_computer).toLowerCase()}%`);
+            where.push(`LOWER(COALESCE(identity_computer, '')) LIKE $${params.length}`);
+        }
+
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
 
         params.push(limit);
         const { rows } = await pool.query(
             `
                 SELECT id, occurred_at, host(client_ip) AS client_ip, vlan_id, query_name, query_type, response_code,
-                       action, policy_source, category, rule_id, matched_rule, resolver
+                       action, policy_source, category, rule_id, matched_rule, resolver,
+                       identity_user, identity_computer
                 FROM dns_policy_events
                 WHERE ${where.join(' AND ')}
+                  ${noiseFilter}
                 ORDER BY occurred_at DESC
                 LIMIT $${params.length}
             `,
             params,
         );
-        return rows;
+        return identityEnrichmentService.enrichRows(rows);
     }
 
     async getTimeline(range = '24h') {
         await ensureBlockingReleaseSchema();
         const interval = range === '7d' ? '7 days' : range === '30d' ? '30 days' : '24 hours';
         const bucket = range === '24h' ? 'hour' : 'day';
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
         const { rows } = await pool.query(`
             SELECT
                 TO_CHAR(date_trunc('${bucket}', occurred_at), '${bucket === 'hour' ? 'YYYY-MM-DD HH24:00' : 'YYYY-MM-DD'}') AS bucket,
@@ -380,6 +446,7 @@ export class DnsRadarService {
                 COUNT(*) FILTER (WHERE action = 'bypassed')::int AS bypassed
             FROM dns_policy_events
             WHERE occurred_at >= NOW() - INTERVAL '${interval}'
+              ${noiseFilter}
             GROUP BY 1
             ORDER BY 1 ASC
         `);

@@ -21,6 +21,8 @@ import dataGovernanceRoutes from './routes/data-governance-routes';
 import { blockingReleaseService } from './services/blocking-release-service';
 import { dnsContingencyService } from './services/dns-contingency-service';
 import { dnsRadarService } from './services/dns-radar-service';
+import { dnsIgnoredService } from './services/dns-ignored-service';
+import { startLiveListener } from './services/dns-radar-live';
 
 const app = express();
 const PORT = env.proxyPort;
@@ -124,7 +126,9 @@ https.createServer(options, app).listen(PORT, '0.0.0.0', () => {
     proxyEngineService.bootstrap().catch((error) => {
         console.error('[PROXY API] Falha no bootstrap do módulo Proxy & Logs:', error);
     });
-    blockingReleaseService.syncTelemetry().catch((error) => {
+    blockingReleaseService.ensureReady()
+        .then(() => blockingReleaseService.syncTelemetry())
+        .catch((error) => {
         console.error('[PROXY API] Falha no bootstrap de Bloqueios e Liberações:', error);
     });
     dnsContingencyService.bootstrap().catch((error) => {
@@ -132,5 +136,11 @@ https.createServer(options, app).listen(PORT, '0.0.0.0', () => {
     });
     dnsRadarService.ensureRunning().catch((error) => {
         console.error('[PROXY API] Falha no bootstrap do Radar DNS real:', error);
+    });
+    dnsIgnoredService.seed().catch((error) => {
+        console.error('[PROXY API] Falha no seed de domínios ignorados:', error);
+    });
+    startLiveListener().catch((error) => {
+        console.error('[PROXY API] Falha ao iniciar Radar Live:', error);
     });
 });

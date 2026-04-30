@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Include>
+  <?define ProductName = "SGCG Endpoint Identity" ?>
+  <?define Manufacturer = "JMB Tecnologia" ?>
+  <?define ProductVersion = "0.1.0" ?>
+  <?define ServiceName = "SGCGEndpointIdentity" ?>
+  <?define DisplayName = "SGCG Endpoint Identity Service" ?>
+  <?define InstallFolderName = "SGCG Endpoint Identity" ?>
+  <?define UpgradeCode = "9F0E9B2B-8E5F-4E2F-A0E7-2E4B71D3B3F1" ?>
+</Include>

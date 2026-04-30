@@ -1,0 +1,10 @@
+{
+  "server_url": "__SERVERURL__",
+  "token": "__AGENTTOKEN__",
+  "interval_seconds": 300,
+  "agent_version": "0.1.0",
+  "vendor": "JMB Tecnologia",
+  "product": "SGCG Endpoint Identity",
+  "site": "Prefeitura de Jacarezinho",
+  "log_level": "info"
+}

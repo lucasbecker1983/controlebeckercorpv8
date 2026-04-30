@@ -6,6 +6,8 @@ const PUBLIC_ROUTES = new Set([
     '/api/auth/refresh',
     '/api/auth/logout',
     '/api/ping',
+    '/api/identity/health',
+    '/api/identity/checkin',
 ]);
 
 export type AuthenticatedRequest = Request & {
@@ -35,5 +37,6 @@ export const requireJwt = (req: AuthenticatedRequest, res: Response, next: NextF
 
 export const globalJwtGuard = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (PUBLIC_ROUTES.has(req.path)) return next();
+    if (req.path.startsWith('/api/hotspot/public/')) return next();
     return requireJwt(req, res, next);
 };

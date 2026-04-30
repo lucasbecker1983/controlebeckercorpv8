@@ -98,7 +98,7 @@ function RadarTab() {
     const normalized = String(search || '').toLowerCase();
     return entries.filter((item) => {
       if (!normalized) return true;
-      return [item.client_ip, item.domain, item.hostname, item.query_type]
+      return [item.client_ip, item.domain, item.hostname, item.identity_user, item.identity_display_user, item.identity_computer, item.query_type]
         .some((value) => String(value || '').toLowerCase().includes(normalized));
     });
   }, [entries, search]);
@@ -151,7 +151,7 @@ function RadarTab() {
               <input
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Filtrar por IP, domínio ou tipo"
+                placeholder="Filtrar por IP, usuário, estação, domínio ou tipo"
                 className="w-full bg-transparent text-sm text-on-surface outline-none placeholder:text-on-surface/45"
               />
             </label>
@@ -167,6 +167,7 @@ function RadarTab() {
               <tr className="text-left text-[11px] font-semibold tracking-tight text-on-surface/52">
                 <th className="px-3 py-2">Quando</th>
                 <th className="px-3 py-2">IP cliente</th>
+                <th className="px-3 py-2">Usuário / Estação</th>
                 <th className="px-3 py-2">Domínio</th>
                 <th className="px-3 py-2">Tipo</th>
                 <th className="px-3 py-2">Evidência</th>
@@ -176,12 +177,16 @@ function RadarTab() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-on-surface/56">Carregando telemetria DNS...</td>
+                  <td colSpan={7} className="px-3 py-8 text-center text-on-surface/56">Carregando telemetria DNS...</td>
                 </tr>
               ) : filteredEntries.length ? filteredEntries.map((item, index) => (
                 <tr key={`${item.timestamp || index}-${item.client_ip || index}`} className="rounded-2xl border border-outline/10 bg-surface-high/56">
                   <td className="rounded-l-2xl px-3 py-3 text-on-surface/68">{fmt(item.timestamp)}</td>
                   <td className="px-3 py-3 font-mono text-primary">{item.client_ip || '—'}</td>
+                  <td className="px-3 py-3 text-xs">
+                    <div className="font-bold text-on-surface">{item.identity_display_user || item.identity_user || 'sem identidade'}</div>
+                    <div className="font-mono text-[10px] text-on-surface/50">{item.identity_computer || item.hostname || 'estação não identificada'}</div>
+                  </td>
                   <td className="px-3 py-3 text-on-surface">{item.domain || '—'}</td>
                   <td className="px-3 py-3 text-on-surface/68">{item.query_type || '—'}</td>
                   <td className="px-3 py-3">
@@ -193,7 +198,7 @@ function RadarTab() {
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-on-surface/56">Nenhum evento encontrado no recorte atual.</td>
+                  <td colSpan={7} className="px-3 py-8 text-center text-on-surface/56">Nenhum evento encontrado no recorte atual.</td>
                 </tr>
               )}
             </tbody>

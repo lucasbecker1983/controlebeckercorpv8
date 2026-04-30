@@ -23,6 +23,10 @@ const proxyablePrefixes = [
 ];
 
 const proxyLocalRoutes = ['/api/proxy/stats', '/api/proxy/logs'];
+const proxyAgent = new https.Agent({
+    keepAlive: true,
+    rejectUnauthorized: false,
+});
 
 const shouldProxy = (path: string) =>
     !proxyLocalRoutes.some((local) => path === local || path.startsWith(`${local}/`)) &&
@@ -57,6 +61,17 @@ const sanitizeHeaders = (req: Request & { auth?: { id?: number; username?: strin
     return headers;
 };
 
+const finishWithProxyError = (res: Response, message: string) => {
+    if (res.writableEnded) return;
+
+    if (res.headersSent) {
+        res.end();
+        return;
+    }
+
+    res.status(502).json({ error: message });
+};
+
 export const runtimeProxyMiddleware = (req: Request, res: Response, next: NextFunction) => {
     if (!shouldProxy(req.path)) {
         return next();
@@ -70,10 +85,12 @@ export const runtimeProxyMiddleware = (req: Request, res: Response, next: NextFu
     const proxyReq = https.request({
         protocol: targetUrl.protocol,
         hostname: targetUrl.hostname,
-        port: targetUrl.port,
+        port: targetUrl.port || 443,
         path: `${targetUrl.pathname}${targetUrl.search}`,
         method: req.method,
         headers: sanitizeHeaders(req, bodyBuffer),
+        agent: proxyAgent,
+        servername: env.appDomain,
     }, (proxyRes) => {
         res.status(proxyRes.statusCode || 502);
 
@@ -83,12 +100,24 @@ export const runtimeProxyMiddleware = (req: Request, res: Response, next: NextFu
             res.setHeader(headerName, headerValue as string | string[]);
         }
 
+        proxyRes.on('error', (error) => {
+            finishWithProxyError(res, `Falha ao ler resposta do backend-proxy: ${error.message}`);
+        });
+
         proxyRes.pipe(res);
     });
 
+    proxyReq.setTimeout(20000, () => {
+        proxyReq.destroy(new Error('Timeout ao acessar backend-proxy.'));
+    });
+
     proxyReq.on('error', (error) => {
-        if (!res.headersSent) {
-            res.status(502).json({ error: `Falha ao acessar backend-proxy: ${error.message}` });
+        finishWithProxyError(res, `Falha ao acessar backend-proxy: ${error.message}`);
+    });
+
+    res.on('close', () => {
+        if (!proxyReq.destroyed) {
+            proxyReq.destroy();
         }
     });
 

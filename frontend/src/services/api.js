@@ -13,6 +13,10 @@ const isAuthRoute = (requestUrl = '') => (
     || requestUrl.includes('/api/auth/refresh')
     || requestUrl.includes('/api/auth/logout')
 );
+const isPublicRoute = (requestUrl = '') => (
+    isAuthRoute(requestUrl)
+    || requestUrl.includes('/api/hotspot/public/')
+);
 
 export const api = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL || fallbackBaseUrl,
@@ -20,15 +24,15 @@ export const api = axios.create({
     withCredentials: true,
 });
 
-const shouldSkipRefresh = (requestUrl = '') => isAuthRoute(requestUrl);
+const shouldSkipRefresh = (requestUrl = '') => isPublicRoute(requestUrl);
 
 api.interceptors.request.use((config) => {
     const requestUrl = String(config?.url || '');
-    if (isSessionInvalidated() && !isAuthRoute(requestUrl)) {
+    if (isSessionInvalidated() && !isPublicRoute(requestUrl)) {
         return Promise.reject(new axios.Cancel('Sessão invalidada.'));
     }
     const token = readStoredAccessToken();
-    if (token && !isAuthRoute(requestUrl)) {
+    if (token && !isPublicRoute(requestUrl)) {
         config.headers = config.headers || {};
         config.headers.Authorization = `Bearer ${token}`;
     }

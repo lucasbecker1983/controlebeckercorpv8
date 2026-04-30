@@ -19,7 +19,7 @@ export const requireJwt = (req: Request, res: Response, next: NextFunction) => {
 
     const authHeader = req.headers.authorization || '';
     const [, bearerToken] = authHeader.split(' ');
-    const token = bearerToken || parseCookies(req).sgcg_access;
+    const token = bearerToken || parseCookies(req).sgcg_access || String(req.query?.token || '');
 
     if (!token) {
         return res.status(401).json({ error: 'Token ausente.' });

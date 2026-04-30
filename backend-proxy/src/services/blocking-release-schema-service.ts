@@ -370,6 +370,19 @@ ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 
+CREATE TABLE IF NOT EXISTS dns_ignored_domains (
+    id BIGSERIAL PRIMARY KEY,
+    pattern TEXT NOT NULL,
+    match_type TEXT NOT NULL DEFAULT 'contains',
+    reason TEXT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ux_dns_ignored_domains_pattern UNIQUE (pattern)
+);
+
+ALTER TABLE dns_policy_events ADD COLUMN IF NOT EXISTS identity_user TEXT;
+ALTER TABLE dns_policy_events ADD COLUMN IF NOT EXISTS identity_computer TEXT;
+
 CREATE OR REPLACE VIEW unified_access_events AS
 WITH unified AS (
     SELECT
@@ -535,19 +548,9 @@ export const ensureBlockingReleaseSchema = async () => {
     if (schemaPromise) return schemaPromise;
 
     schemaPromise = (async () => {
-        if (await schemaExists()) {
-            schemaReady = true;
-            return;
-        }
-
         const client = await pool.connect();
         try {
             await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_KEY]);
-
-            if (await schemaExists()) {
-                schemaReady = true;
-                return;
-            }
 
             await client.query(schemaSql);
             await client.query(`

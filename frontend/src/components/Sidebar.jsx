@@ -1,4 +1,4 @@
-import { Boxes, Eye, FileCheck2, Fingerprint, Landmark, LayoutDashboard, Network, ScanEye, ScrollText, ServerCog, Settings2, ShieldCheck, UserCog, Waypoints } from 'lucide-react';
+import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, UserCog, Waypoints, Wifi } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -11,7 +11,7 @@ const menu = [
       { label: 'LGPD & Proteção de Dados', icon: ShieldCheck, path: '/lgpd' },
       { label: 'Governança de Dados', icon: ScrollText, path: '/governanca-dados' },
       { label: 'Aprovações & Exceções', icon: FileCheck2, path: '/aprovacoes-excecoes' },
-      { label: 'Trilha Institucional', icon: ScanEye, path: '/trilha-institucional' },
+      { label: 'Relatórios Forenses', icon: FileText, path: '/relatorios' },
       { label: 'Identidades & Perfis', icon: UserCog, path: '/users' },
       { label: 'Configurações Institucionais', icon: Settings2, path: '/settings' },
     ],
@@ -24,6 +24,7 @@ const menu = [
       { label: 'Infraestrutura', icon: ServerCog, path: '/server' },
       { label: 'Radar Operacional & Observabilidade', icon: Eye, path: '/proxy' },
       { label: 'Segurança Operacional', icon: Network, path: '/security' },
+      { label: 'Hotspot', icon: Wifi, path: '/hotspot' },
       { label: 'Operações Técnicas', icon: Boxes, path: '/control' },
       { label: 'Continuidade & Backup', icon: LayoutDashboard, path: '/backups' },
     ],

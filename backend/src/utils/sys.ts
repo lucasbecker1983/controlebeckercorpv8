@@ -9,8 +9,14 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'ufw-read', pattern: /^sudo ufw status numbered$/ },
     { name: 'ufw-write', pattern: /^(sudo )?(echo ['"]?y['"]?\s*\|\s*)?sudo ufw (allow|deny|delete|enable|reset).+$/ },
     { name: 'fail2ban', pattern: /^sudo fail2ban-client (status sshd|set sshd (banip|unbanip) [0-9.]+|unban --all)$/ },
+    { name: 'iptables-save-read', pattern: /^iptables-save -t filter$/ },
+    { name: 'hotspot-ipset', pattern: /^ipset (create sgcg_hotspot_v70_auth hash:ip timeout 43200 -exist|add sgcg_hotspot_v70_auth 192\.168\.70\.\d{1,3} timeout 43200 -exist|del sgcg_hotspot_v70_auth 192\.168\.70\.\d{1,3}|list sgcg_hotspot_v70_auth)$/ },
+    { name: 'hotspot-conntrack', pattern: /^conntrack -D -(s|d) 192\.168\.70\.\d{1,3}$/ },
+    { name: 'hotspot-iptables-nat-check', pattern: /^iptables -t nat -(C PREROUTING|I PREROUTING 1) -i enp6s0\.70 -p tcp --dport 80 -m set ! --match-set sgcg_hotspot_v70_auth src -j DNAT --to-destination 192\.168\.70\.1:80$/ },
+    { name: 'hotspot-iptables-forward-check', pattern: /^iptables -(C FORWARD|I FORWARD 1) -i enp6s0\.70 -o enp8s0 -m set ! --match-set sgcg_hotspot_v70_auth src -j REJECT --reject-with icmp-port-unreachable$/ },
     { name: 'ping', pattern: /^ping( -4)? -c 1 -W 1( -I [\w.@-]+)? [0-9.]+( > \/dev\/null 2>&1 && echo true \|\| echo false)?$/ },
     { name: 'ip-read', pattern: /^(ip -o -4 addr show|ip -o link show|ip( -4)? (a|addr|o link|o -4 addr show)( .+)?)$/ },
+    { name: 'ip-neigh-read', pattern: /^ip neigh show [0-9.]+$/ },
     { name: 'proc-read', pattern: /^(cat \/proc\/uptime \| awk '\{print \$1\}'|cat \/proc\/uptime|cat \/proc\/cpuinfo \| grep 'cpu MHz' \| head -1 \| awk '\{print \$4\}'|cat \/proc\/net\/dev)$/ },
     { name: 'host-read', pattern: /^(uname -r|grep PRETTY_NAME \/etc\/os-release \| cut -d'"' -f2|lscpu \| grep 'CPU max MHz' \| awk '\{print \$4\}'|vmstat 1 2 \| tail -1 \| awk '\{print 100-\$15\}'|free \| grep Mem \| awk '\{print \$3\/\$2 \* 100\}'|free -m \| awk '\/\^Mem:\/ \{print \$3, \$2, \$3\/\$2 \* 100\}'|free -m \| awk '\/\^Mem:\/ \{print \$3, \$2, \$3\/\$2 \* 100\}')$/ },
     { name: 'filesystem-read', pattern: /^(mount \| grep "on .+ " \|\| echo ""|df -B1 --output=size,used,pcent .+ \| tail -1|chmod \+x .+)$/ },
@@ -21,6 +27,8 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'user-mgmt', pattern: /^sudo (useradd|userdel|mkdir|chown|chmod|smbpasswd|chpasswd).+$/ },
     { name: 'iptables-forward', pattern: /^sudo iptables (-I|-D) FORWARD .+$/ },
     { name: 'tc', pattern: /^sudo tc .+$/ },
+    { name: 'modprobe-ifb', pattern: /^sudo modprobe ifb( numifbs=\d+)?$/ },
+    { name: 'ip-link-write', pattern: /^sudo ip link (add [\w.-]+ type ifb|set dev [\w.-]+ up)$/ },
     { name: 'journal-grep', pattern: /^sudo (grep 'UFW BLOCK' \/var\/log\/kern\.log .+|grep 'Ban ' \/var\/log\/fail2ban\.log .+)$/ },
     { name: 'journalctl', pattern: /^sudo journalctl -u unbound --no-pager -n 5000$/ },
     { name: 'dig', pattern: /^dig @127\.0\.0\.1 .+ \+short$/ },
@@ -50,6 +58,28 @@ export const execCmd = (cmd: string): Promise<string> => {
             if (error) {
                 console.warn(`[CMD FAIL] ${normalized}: ${stderr}`);
                 resolve('');
+                return;
+            }
+            resolve(stdout.trim());
+        });
+    });
+};
+
+export const execCmdStrict = (cmd: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const normalized = cmd.trim();
+        if (!isAllowedCommand(normalized)) {
+            const error = new Error(`Comando fora da allowlist: ${normalized}`);
+            console.error(`[SHELL BLOCKED] ${error.message}`);
+            reject(error);
+            return;
+        }
+
+        exec(normalized, { shell: '/bin/bash' }, (error, stdout, stderr) => {
+            if (error) {
+                const message = stderr?.trim() || error.message || `Falha ao executar comando: ${normalized}`;
+                console.error(`[CMD FAIL] ${normalized}: ${message}`);
+                reject(new Error(message));
                 return;
             }
             resolve(stdout.trim());

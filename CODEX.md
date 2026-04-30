@@ -23,6 +23,20 @@ Esta regra vale para:
 
 Se houver documentacao complementar em `docs/`, o resumo executivo e o estado atual ainda assim devem ser refletidos aqui.
 
+## Regra inegociavel de firewall
+
+- o firewall principal do servidor SGCG e o `UFW`
+- o `UFW` deve permanecer instalado, habilitado e ativo como camada oficial de administracao do firewall
+- nenhuma alteracao operacional, pacote, script, rotina automatica ou decisao arquitetural pode remover, substituir ou desabilitar o `UFW` sem autorizacao explicita
+- se o `UFW` nao for capaz de atender uma necessidade tecnica especifica, a solucao deve trabalhar em paralelo com ele
+- camadas complementares como `iptables`, `nftables`, `tc`, scripts de hardening ou regras runtime podem existir, mas devem complementar o `UFW`, nunca assumir o papel de firewall principal
+- qualquer uso complementar fora do `UFW` deve ser documentado neste arquivo, incluindo:
+  - motivo tecnico
+  - escopo
+  - comandos ou servicos envolvidos
+  - impacto esperado
+  - forma de validacao
+
 ## Condicional obrigatoria de build
 
 Se qualquer modulo, pagina, componente, rota, ativo ou configuracao passar por validacao com `build`, o `CODEX.md` deve ser atualizado imediatamente depois.
@@ -546,16 +560,117 @@ Ao final de cada sessao:
   - expurgo manual inicial de sessoes sociais recentes do `oceano`
   - confirmacao de que VIPs ativos permaneceram preservados
 
+## Atualizacao operacional Relatorios Forenses — 2026-04-28
+
+- campo `Acao` na aba `Auditoria do Sistema` passou a exibir descricao humanizada em portugues
+  - mapeamento explicito de acoes tecnicas brutas (`login`, `compile_policy`, `emergency_bypass`, etc.) para texto institucional legivel
+  - fallback automatico para acoes desconhecidas: substituicao de `_` por espaco com capitalizacao
+  - humanizacao aplicada tanto na interface web (`Reports.jsx`) quanto no PDF de auditoria exportado (`reports-service.ts`)
+- eventos gerados pelo operador `codex` excluidos de todas as fontes de auditoria do sistema:
+  - `action_audit_logs` — filtro por `requested_by`
+  - `auth_activity_logs` — filtro por `username`
+  - `lgpd_audit_logs` — filtro por `actor_username`
+  - `domain_policy_audit_logs` — filtro por `requested_by`
+  - exclusao aplicada diretamente no SQL com `LOWER(COALESCE(...)) <> 'codex'`
+
+### Build
+
+- `cd backend && npm run build` — compilacao TypeScript concluida sem erros
+- `cd frontend && npm run build` — `✓ built in 2.74s`
+- `pm2 restart bcc-backend bcc-frontend` — ambos `online`
+
+## Correcao barra legal LGPD em Relatorios Forenses — 2026-04-28
+
+- corrigida invisibilidade da barra de fundamento legal no tema Light
+- causa: Tailwind v4 processa `dark:` via `@media (prefers-color-scheme: dark)` (preferencia do OS), nao pelo `data-theme` do SGCG
+  - quando OS esta em dark e SGCG em Light, `dark:text-white` aplicava texto branco sobre fundo claro
+- solucao: removidos todos os `dark:` da barra e substituidos por tokens do design system
+  - `text-on-surface` — adapta automaticamente ao `data-theme`
+  - `bg-surface-high` — superficie correta em qualquer tema
+  - `border-outline/20` — borda proporcional ao tema
+  - `bg-primary/8` e `text-primary` nas pills — destaque institucional correto em ambos os temas
+- sidebar LGPD revertido ao estilo padrao (remocao do highlight emerald aplicado em rodada anterior)
+
+## Reestruturacao de navegacao e identidade LGPD — 2026-04-28
+
+### Decisao arquitetural
+
+`Trilha Institucional` foi removida da navegacao lateral porque sua funcao foi integralmente absorvida por dois modulos mais maduros:
+- `Relatórios Forenses`: evidencia forense real com 4 fontes de auditoria, imutabilidade por trigger e exportacao PDF institucional
+- `LGPD & Proteção de Dados`: trilha de acesso com contexto normativo, programa institucional, titulares, incidentes e auditoria LGPD dedicada
+
+A remocao elimina redundancia navegacional e reduz ambiguidade para gestores e operadores.
+
+Qualquer acesso antigo a `/trilha-institucional` e redirecionado automaticamente para `/relatorios`.
+
+### LGPD como modulo de destaque institucional
+
+O item `LGPD & Proteção de Dados` passou a ter tratamento visual diferenciado na barra lateral:
+- fundo e borda em verde esmeralda permanente, mesmo sem estar ativo
+- icone em verde esmeralda com glow ao ficar ativo
+- badge `LEI 13.709` visivel ao lado do nome do modulo
+- sublabel `Conformidade & Proteção de Dados` sempre visivel
+- sinaliza de forma inequivoca que o sistema opera sob a Lei 13.709/2018 (LGPD)
+
+### Build
+
+- `cd frontend && npm run build` — `✓ built in 2.60s`
+- `pm2 restart bcc-frontend` — `online`
+
 ## Proximo passo recomendado
 
-Transformar os novos blocos de governanca em modulos com funcionalidade propria:
+Se houver demanda de gestores ou auditores externos, criar modulo dedicado de `Histórico de Decisões de Governança`:
+- linha do tempo de criacao, aprovacao, vigencia e revogacao de politicas
+- consumindo `domain_policy_audit_logs` e campos institucionais ja persistidos em `domain_policies`
+- identidade clara e distinta de Relatórios Forenses (que mostra eventos tecnicos) e de LGPD (que mostra tratamento de dados pessoais)
 
-1. consolidar `Governança de Dados e Conformidade` como centro de evidencia, base legal, retencao e exportacao institucional
-2. aprofundar `Aprovações & Exceções` com timeline institucional propria, filtros por vigencia e trilha de workflow separada da auditoria operacional
-3. aprofundar `Trilha Institucional` para incorporar incidentes e correlacao entre decisao administrativa e efeito tecnico
-4. revisar os modulos restantes para mover decisao institucional para a governanca e manter a camada de controle focada em execucao tecnica
+## Modulo Relatorios Forenses - 2026-04-27
+
+- novo modulo `Relatorios Forenses` adicionado ao frontend na rota `/relatorios`
+- o modulo opera em dois eixos:
+  - `Relatorio de Navegacao`: dados SARG-like consumindo `proxy_radar_events`, com visao por evento e visao agrupada por IP
+  - `Auditoria do Sistema`: consolidacao de quatro fontes em um unico painel — `action_audit_logs`, `auth_activity_logs`, `lgpd_audit_logs`, `domain_policy_audit_logs`
+- filtros disponiveis para navegacao: periodo, IP de origem, VLAN, dominio/URL, acao (block/allow), intervalo personalizado
+- filtros disponiveis para auditoria: periodo, operador, IP, fonte, acao/modulo, resultado (sucesso/falha), intervalo personalizado
+- exportacao em PDF institucional para ambos os relatorios (geracao server-side com PDFKit, landscape para navegacao, portrait para auditoria)
+- os PDFs incluem cabecalho institucional, barra de fundamento legal LGPD e resumo executivo
+- imutabilidade dos logs garantida por triggers PostgreSQL em quatro tabelas:
+  - `trg_immutable_action_audit` -> `action_audit_logs`
+  - `trg_immutable_auth_activity` -> `auth_activity_logs`
+  - `trg_immutable_lgpd_audit` -> `lgpd_audit_logs`
+  - `trg_immutable_domain_policy_audit` -> `domain_policy_audit_logs`
+- qualquer tentativa de UPDATE ou DELETE nessas tabelas dispara excecao com mensagem: `SGCG: Registros de auditoria sao imutaveis. Fundamento: Lei 13.709/2018 (LGPD), Art. 46.`
+- fundamento legal exibido no modulo: Lei 13.709/2018 (LGPD) Art. 6 I, Art. 37, Art. 46, Art. 48
+- `Relatorios Forenses` adicionado ao sidebar na secao `Governanca` apos `Trilha Institucional`
+- `@types/pdfkit` instalado no `backend`
+- indices adicionados em `proxy_radar_events` para otimizar queries de relatorios por VLAN, IP e status de bloqueio
 
 ## Ultima validacao registrada
+
+- `cd backend && npm run build`
+- compilacao TypeScript concluida com o novo modulo de relatorios forenses
+- `cd frontend && npm run build`
+- `✓ built in 2.73s`
+- `pm2 restart bcc-backend bcc-frontend`
+- ambos voltaram `online`
+- `GET /api/reports/navigation?period=24h&limit=3` -> `200` com sumario correto
+- `GET /api/reports/audit?period=24h&limit=3` -> `200` com eventos de autenticacao reais
+- `UPDATE action_audit_logs SET message = 'teste' WHERE id = 1` -> `ERROR: SGCG: Registros de auditoria sao imutaveis...` (trigger funcional)
+
+## Correcao fonte de dados do relatorio de navegacao - 2026-04-27
+
+- confirmado que o sistema usa DNS + ACL (Unbound + RPZ), nao Squid como proxy transparente
+- `proxy_audit_log` tinha apenas registros antigos (14/04); dados reais estavam em `dns_policy_events`
+- relatorio de navegacao migrado para `dns_policy_events` como fonte principal
+- `dns_policy_events` contem: 2,4 milhoes de registros, atualizado em tempo real pelo ingester do backend-proxy
+- campos utilizados: `occurred_at`, `client_ip` (inet, convertido com `host()`), `vlan_id` (integer ja resolvido), `query_name` (dominio consultado), `query_type` (A/AAAA), `response_code`, `action` (allowed/blocked/bypassed), `category`, `matched_rule`
+- acoes possiveis: `allowed`, `blocked`, `bypassed` (VIP ou excecao esporadica)
+- filtros de exclusao: loopback (`127.0.0.1`, `::1`), dominios `.local` e `.arpa`
+- colunas da tabela frontend atualizadas: `Dominio consultado`, `Tipo` (query_type), `Resposta DNS` (response_code), `Categoria`; removidos `URL`, `Metodo`, `Volume`
+- barra de fundamento legal LGPD alterada para cor preta com suporte dark mode
+- validacao: `GET /api/reports/navigation?period=24h` retorna 429.043 eventos, 15.741 bloqueados, 413.302 liberados, 1.884 IPs unicos, 3.697 dominios unicos
+
+## Proximo passo recomendado
 
 - `cd backend-proxy && npm run build`
 - compilacao TypeScript concluida apos o ajuste da contingencia DNS e filtragem de VIPs `/32`
@@ -589,3 +704,2121 @@ Transformar os novos blocos de governanca em modulos com funcionalidade propria:
 - compilacao TypeScript concluida com suporte a ACL por URL no motor complementar
 - `cd frontend && npm run build`
 - `✓ built in 2.83s`
+
+## Hardening Preventivo de Rede — 2026-04-27
+
+### Objetivo
+Endurecer toda a infraestrutura contra: sniffing, DoS, SYN flood, port scan, ARP spoofing, DNS amplificação, brute force, e acesso não autenticado a endpoints sensíveis.
+
+### Arquivos criados/modificados
+
+#### Sistema operacional
+- `/etc/sysctl.d/99-sgcg-hardening.conf` — parâmetros de kernel: rp_filter, TCP syncookies, timeouts, ICMP rate limit, ARP announce/ignore, desabilita source routing/redirects, log_martians, ASLR
+- `/etc/sgcg/hardening-rules.sh` — script iptables com chain `SGCG_GUARD`: DROP NULL/XMAS/FIN scan, SYN flood (>20/s por IP via hashlimit), ICMP flood (>5/s), UDP flood (>50/s), connlimit >100, smurf/broadcast ICMP, pacotes fragmentados, bloqueio WAN direto às portas internas 6778/6777/8901
+- `/etc/systemd/system/sgcg-hardening.service` — service oneshot que aplica o script acima no boot, inserido antes do fail2ban
+
+#### DNS
+- `/etc/unbound/unbound.conf.d/99-ratelimit.conf` — rate limiting DNS: 1000 req/s global, 200/s por IP, 200/s por domínio NXDOMAIN, max UDP 3072, hide-identity/version, QNAME minimisation, caps-for-id
+
+#### Fail2ban
+- `/etc/fail2ban/filter.d/sgcg-api.conf` — detecta 401/403 em /api/auth/login e /api/security/*
+- `/etc/fail2ban/jail.d/sgcg-api.conf` — dois jails: `sgcg-api` (5 falhas/2min → ban 1h) e `sgcg-api-aggressive` (15 falhas/5min → ban 24h), logs: beckercorp-access.log + beckercorp_access.log
+
+#### ARP spoofing
+- `arpwatch` instalado via apt
+- `arpwatch@enp6s0.10/30/40/50/70/80/99.service` — monitoramento por VLAN, usando unit template oficial do pacote, arquivos .dat em /var/lib/arpwatch/
+
+#### Backend SGCG
+- `backend/src/server.ts` — adicionado `express-rate-limit`: global 300 req/min por IP, auth 10 req/2min por IP
+- `backend/src/modules/security/security-routes.ts` — corrigido: `/f2b/ban`, `/f2b/unban`, `/ufw/delete`, `/setup-cockpit` agora exigem `requireJwt`; adicionada validação de IP (regex IPv4 + CIDR) e validação de ID de regra UFW (somente dígitos)
+
+### Validações executadas
+- `sysctl -p /etc/sysctl.d/99-sgcg-hardening.conf` — OK
+- `unbound-checkconf` — OK (sem erros)
+- `systemctl start sgcg-hardening.service` — OK (`active (exited)`)
+- `systemctl restart unbound` — `active (running)`
+- `fail2ban-client reload` — OK, jails ativos: cockpit-becker, sgcg-api, sgcg-api-aggressive, sshd, vsftpd
+- `arpwatch@enp6s0.{10,30,40,50,70,80,99}` — todos `active`
+- `npm run build` (backend) — compilação TypeScript sem erros
+- `pm2 restart bcc-backend` — `online`
+
+### Build
+- `cd backend && npm run build` — compilação TypeScript concluída com rate limiting e correção de endpoints sem auth
+
+## Conformidade LGPD — Filtro de eventos sem VLAN — 2026-04-28
+
+### Fundamento
+Lei 13.709/2018 (LGPD), Art. 6º, III (necessidade): só é lícito tratar dados pessoais na medida mínima necessária à finalidade.
+IPs sem VLAN identificada não são rastreáveis a nenhum usuário da rede institucional, portanto não há base legal para o tratamento.
+
+### Alterações
+
+**`backend-proxy/src/services/dns-radar-service.ts`**
+- Adicionado guard em `ingestLine()`: se `resolved.vlan_id === null`, o evento é descartado antes do INSERT
+- Comentário cita explicitamente LGPD Art. 6º III
+
+**PostgreSQL — tabela `dns_policy_events`**
+- Adicionada constraint `chk_vlan_id_not_null CHECK (vlan_id IS NOT NULL)`
+- Garante conformidade na camada de dados independentemente do código
+
+**Registros pré-existentes**
+- 959.584 registros com `vlan_id IS NULL` removidos via DELETE + VACUUM ANALYZE
+- Restam 1.534.290 registros — todos com VLAN identificada
+
+### Build
+- `cd backend-proxy && npm run build` — compilação TypeScript concluída sem erros
+- `pm2 restart backend-proxy-ingester` — online
+
+## Refatoração do módulo LGPD & Proteção de Dados — 2026-04-28
+
+### Motivação
+
+O layout anterior do módulo era um formulário longo e sem estrutura navegacional. Para o contexto GovTech a leitura de conformidade, inventário, titulares e auditoria precisam de densidade separada.
+
+### Alterações no frontend
+
+**`frontend/src/pages/Lgpd.jsx`** — reescrita completa:
+
+- Estrutura de 5 abas via `SegmentedTabs` (primitive existente):
+  1. **Painel Executivo** — 4 KPI cards (2×2 mobile / 4×1 lg) + card de programa institucional (6 campos em grid) + lacunas de conformidade (semáforo de 3 itens) + direitos do titular (9 slots) + lista de atividades de alto risco
+  2. **Inventário (Art. 37)** — FilterBar (pesquisa + risco + status) + botão Export PDF + tabela paginada de atividades de tratamento
+  3. **Titulares (Art. 18)** — FilterBar (pesquisa + tipo + status) + tabela com highlight de vencidos
+  4. **Incidentes (Art. 48)** — FilterBar (severidade + status) + tabela de incidentes
+  5. **Auditoria LGPD** — sub-abas: "Alterações LGPD" (lgpd_audit_logs) e "Evidência de Acesso" (auth_activity_logs)
+
+- Filtros client-side com `useMemo` por aba (sem round-trips desnecessários)
+- Todos os diálogos preservados: `ProgramDialog`, `ProcessingDialog`, `RequestDialog`, `IncidentDialog`
+- Função `exportInventoryPdf()` com autenticação Bearer — baixa PDF da rota `/api/lgpd/processing-activities/export.pdf`
+
+### Alterações no backend
+
+**`backend/src/modules/lgpd/lgpd-service.ts`**:
+- Adicionado `import PDFDocument from 'pdfkit'`
+- Novo método `exportInventoryPdf(activities, program)`:
+  - PDF A4 portrait
+  - Cabeçalho institucional escuro com SGCG, entidade e Art. 37
+  - Barra LGPD verde com referências normativas
+  - Linha de metadados do programa (controlador, unidade, DPO, data)
+  - Linha de estatísticas (total, aprovadas, alto risco)
+  - Tabela: Processo/Finalidade | Base Legal | Risco | Status | Retenção | Controlador
+  - Linha vermelha em atividades de alto risco
+  - Rodapé com data de geração e aviso de confidencialidade
+
+**`backend/src/modules/lgpd/lgpd-routes.ts`**:
+- Nova rota `GET /api/lgpd/processing-activities/export.pdf` adicionada ANTES da rota geral para evitar conflito de path no Express
+- Retorna `Content-Type: application/pdf` com nome de arquivo datado
+
+### Build
+
+- `cd backend && npm run build` — compilação TypeScript concluída sem erros
+- `cd frontend && npm run build` — `✓ built in 2.60s`
+- `pm2 restart bcc-backend bcc-frontend` — ambos `online`
+
+## Cabeçalho institucional e branding JMB nos PDFs — 2026-04-28
+
+### Alterações
+
+Todos os três geradores de PDF (LGPD inventário, Relatório de Navegação, Relatório de Auditoria) foram atualizados:
+
+**Cabeçalho** — reestruturado de 3 para 4 linhas com hierarquia institucional explícita:
+1. `PREFEITURA MUNICIPAL DE JACAREZINHO — PARANÁ` (branco, negrito, destaque máximo)
+2. `Secretaria de Comércio, Indústria, Serviços e Inovação` (cinza claro, 8.5pt)
+3. `SGCG — Sistema de Governança e Controle Governamental` (cinza médio, 7.5pt)
+4. Título do relatório (cor de acento por módulo — verde para LGPD, azul para Relatórios Forenses)
+
+**Rodapé** — reestruturado com branding institucional JMB Tecnologia:
+- Esquerda: data de geração + aviso de uso institucional restrito
+- Direita: logotipo `jmb-logo-clean.png` (46×20pt, fundo transparente) + "JMB Tecnologia" em negrito + número de página
+- O logotipo é carregado do filesystem local; falha silenciosa (try/catch) caso arquivo seja movido
+
+**Arquivos alterados:**
+- `backend/src/modules/lgpd/lgpd-service.ts` — `exportInventoryPdf()`
+- `backend/src/modules/reports/reports-service.ts` — `exportNavigationPdf()` e `exportAuditPdf()`
+
+### Build
+
+- `cd backend && npm run build` — compilação TypeScript concluída sem erros
+- `pm2 restart bcc-backend` — online
+
+## Atualização operacional do módulo QoS - 2026-04-28
+
+- revisão corretiva aplicada no módulo `QoS` em `Controle de Rede`
+- o diagnóstico confirmou divergência entre persistência e runtime:
+  - `net_qos_policies` e `net_qos_vips` continham dados válidos
+  - o kernel estava com `tc` legado em parte das VLANs, sem refletir exatamente o que a UI mostrava
+- o backend `backend/src/modules/qos/qos-routes.ts` foi reescrito para endurecimento operacional:
+  - passou a garantir schema próprio com `net_qos_policies` e `net_qos_vips`
+  - passou a validar interfaces gerenciadas e IPs IPv4 de VIP antes de qualquer aplicação
+  - deixou de tratar falha de `tc` como sucesso silencioso no fluxo de QoS
+  - agora expõe o estado real do kernel por interface, incluindo:
+    - modo `managed`
+    - modo `legacy`
+    - modo `absent`
+    - contagem de filtros VIP aplicados
+    - sincronização entre banco e runtime
+  - foi adicionada a ação `POST /api/qos/reconcile` para reaplicar no kernel tudo o que já está persistido no banco
+- o utilitário `backend/src/utils/sys.ts` recebeu `execCmdStrict` para permitir que o QoS falhe corretamente quando um comando do kernel não aplicar
+- a interface `frontend/src/components/QosLimiter.jsx` foi revisada:
+  - o módulo agora mostra quando a VLAN está fora de sincronia com o runtime real
+  - foi adicionada ação explícita de `Reconciliar runtime`
+  - o campo de `upload` deixou de prometer shaping ativo e passou a ficar visível apenas como referência histórica
+  - a área de `VIPs do QoS` passou a deixar claro que a exceção só é válida quando o `tc` real está aplicado
+- validação operacional desta rodada:
+  - inspeção do PostgreSQL confirmou políticas e VIPs persistidos em `net_qos_policies` e `net_qos_vips`
+  - inspeção do `tc` real confirmou drift entre banco e kernel em VLANs com runtime legado
+  - `cd backend && npm run build` validado
+  - `cd frontend && npm run build` validado
+  - `pm2 restart bcc-backend` executado com sucesso
+  - `pm2 restart bcc-frontend` executado com sucesso
+
+## Próximo passo recomendado
+
+- executar `Reconciliar runtime` no módulo QoS ou reaplicar as VLANs diretamente na UI para substituir o `tc` legado pelas regras novas do SGCG
+- validar em ambiente real com teste de banda:
+  - um host comum da VLAN deve obedecer ao `down_limit`
+  - um VIP do QoS da mesma VLAN deve sair da classe limitada
+- se houver necessidade institucional de limitar `upload`, a próxima rodada deve implementar shaping real de uplink com arquitetura própria em vez de manter semântica ambígua no formulário
+
+## Continuação corretiva do módulo QoS - 2026-04-28
+
+- corrigida falha `500` ao abrir o módulo `QoS`
+- causa confirmada:
+  - o banco em produção possuía schema legado de `net_qos_policies` e `net_qos_vips`
+  - faltavam as colunas `updated_at` e `created_at` que a nova leitura do módulo passou a consultar
+  - a tabela `net_qos_vips` também permanece com `ip` em `VARCHAR`, e não `INET`, no schema legado
+- correção aplicada no backend:
+  - `backend/src/modules/qos/qos-routes.ts` passou a executar `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` para compatibilizar o schema legado sem migração manual
+  - a leitura e escrita de VIPs do QoS passaram a aceitar `ip::text`, preservando compatibilidade com o tipo atual do banco
+  - o serviço de schema do QoS passou a inicializar no boot do backend, sem depender do primeiro acesso autenticado ao módulo
+  - `backend/src/server.ts` agora garante `qosSchemaService.ensureSchema()` na subida da aplicação
+- validação desta continuação:
+  - `cd backend && npm run build` validado
+  - `pm2 restart bcc-backend` executado com sucesso
+  - confirmação no PostgreSQL:
+    - `net_qos_policies.updated_at` criado
+    - `net_qos_vips.created_at` criado
+
+## Implementação de shaping real de upload no QoS - 2026-04-28
+
+- o módulo `QoS` deixou de tratar `upload` como campo apenas histórico
+- o backend passou a aplicar controle real de subida por VLAN com arquitetura Linux `tc + ifb`
+  - cada interface gerenciada agora pode usar uma `ifb` dedicada derivada da VLAN, como `ifb10`, `ifb30`, `ifb40`, `ifb50`, `ifb70` e `ifb80`
+  - o tráfego de ingresso da VLAN é redirecionado com `mirred` para a `ifb`, onde o shaping de upload é aplicado com `htb`
+  - os VIPs do QoS continuam fora da classe limitada:
+    - no download, por filtro `dst` na interface da VLAN
+    - no upload, por filtro `src` na `ifb`
+- o runtime do QoS foi aprofundado:
+  - `backend/src/modules/qos/qos-routes.ts` agora inspeciona separadamente estado de download e upload
+  - a sincronização entre banco e kernel passou a considerar:
+    - qdisc raiz da VLAN
+    - redirecionamento de `ingress`
+    - qdisc e classes da `ifb`
+    - quantidade de filtros VIP nas duas direções
+- o utilitário `backend/src/utils/sys.ts` recebeu novas entradas de allowlist para suportar:
+  - `sudo modprobe ifb`
+  - `sudo ip link add ... type ifb`
+  - `sudo ip link set dev ... up`
+- a interface `frontend/src/components/QosLimiter.jsx` voltou a permitir edição do campo de upload
+- o texto operacional do módulo foi atualizado para refletir o modelo real:
+  - download moldado na própria VLAN
+  - upload moldado por `IFB`
+
+### Build
+
+- `cd backend && npm run build` — compilação TypeScript concluída sem erros
+- `cd frontend && npm run build` — `✓ built in 3.70s`
+
+### Observação operacional
+
+- a inspeção não intrusiva do host confirmou suporte do kernel ao driver `ifb`
+- esta rodada validou compilação e leitura do `tc`, mas não aplicou regras novas em produção durante a sessão
+
+## Consolidação operacional do módulo QoS - 2026-04-28
+
+- o módulo `QoS` foi ajustado para ficar operacional mesmo após restart do backend
+- o backend agora reconcilia automaticamente o runtime de QoS no boot:
+  - `backend/src/modules/qos/qos-routes.ts` passou a expor `qosRuntimeService.reconcileAllPolicies()`
+  - `backend/src/server.ts` agora executa a reconciliação automática logo após garantir o schema
+- isso elimina o cenário em que:
+  - o banco contém `down_limit`, `up_limit` e VIPs válidos
+  - mas o kernel volta sem as regras de `tc` e `ifb` após reinício do serviço
+- publicação operacional concluída:
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+- validação real no host após o restart:
+  - todas as VLANs gerenciadas ficaram com `qdisc ingress`
+  - todas as VLANs gerenciadas passaram a redirecionar ingresso para `ifb10`, `ifb30`, `ifb40`, `ifb50`, `ifb70` e `ifb80`
+  - todas as `ifb` receberam `htb` com os limites de upload persistidos no banco
+  - a VLAN `enp6s0.10` manteve filtros VIP também na `ifb`, preservando prioridade no upload
+- efeito prático:
+  - download segue moldado na própria VLAN
+  - upload passa a ser moldado de verdade no kernel
+  - reinício do backend não volta mais o módulo para estado inconsistente entre banco e runtime
+
+### Build
+
+- `cd backend && npm run build` — compilação TypeScript concluída sem erros
+
+## Refino visual do módulo QoS - 2026-04-28
+
+- removido dos cards de VLAN o alerta textual:
+  - `O kernel não está refletindo exatamente o que foi salvo neste módulo. Reaplique esta VLAN ou use "Reconciliar runtime".`
+- o estado operacional do QoS foi preservado:
+  - badges de `Ativa/Inativa`
+  - badge de `QoS aplicado/Runtime legado/Sem runtime`
+  - warnings técnicos continuam disponíveis na área de avisos do card quando necessários
+- objetivo do ajuste:
+  - reduzir ruído visual recorrente nos cards
+  - manter a interface mais limpa sem alterar a lógica de reconciliação do runtime
+
+### Build
+
+- `cd frontend && npm run build` — `✓ built in 2.77s`
+
+## Liberação operacional de Google Workspace - 2026-04-28
+
+- adicionadas liberações globais para:
+  - `docs.google.com`
+  - `drive.google.com`
+- complemento conservador aplicado para anexos e conteúdo hospedado do Workspace:
+  - `googleusercontent.com`
+- a liberação foi persistida em `release_policies` com escopo `global`
+- efeito operacional:
+  - os dois domínios passam a valer para todas as VLANs gerenciadas pelo módulo (`10`, `30`, `50` e `70`)
+  - a allowlist compilada do proxy e do enforcement institucional passou a incluir os três domínios
+- validação executada:
+  - confirmação no PostgreSQL em `release_policies`
+  - confirmação nos artefatos compilados:
+    - `backend-proxy/regras/generated/proxy_whitelist.acl`
+    - `backend-proxy/regras/generated/proxy_protected_ssl.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/allowlist-global.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/export.json`
+- observação:
+  - a aplicação do motor retornou `success: true` e `no_op: true`, indicando convergência do runtime compilado sem necessidade de alterar modo do Squid
+  - o catálogo-base `Sites Google` em `backend-proxy/src/services/blocking-release-service.ts` também foi ampliado com `docs.google.com`, `drive.google.com` e `googleusercontent.com`
+
+### Build
+
+- `cd backend-proxy && npm run build` — compilação TypeScript concluída sem erros
+- `pm2 restart backend-proxy` — processo republicado com o catálogo-base atualizado
+
+## Estabilização da contingência DNS no módulo Bloqueios & Liberações - 2026-04-28
+
+- endurecido o bootstrap da contingência DNS em `backend-proxy/src/services/dns-contingency-service.ts`
+- a reconciliação de firewall passou a usar retry curto antes de falhar:
+  - `3` tentativas
+  - `1500ms` entre tentativas
+- objetivo do ajuste:
+  - absorver falhas transitórias de `iptables-restore` durante bootstrap/reload
+  - evitar degradação desnecessária do módulo por corrida momentânea no firewall
+- validação operacional:
+  - `dnsContingencyService.ensureFirewallState()` executado manualmente com sucesso
+  - `cd backend-proxy && npm run build` concluído sem erros
+  - logs do `backend-proxy` foram limpos e o processo foi reiniciado
+  - novo bootstrap do `backend-proxy` subiu limpo:
+    - log de saída apenas com `Rodando com HTTPS na porta 6779`
+    - log de erro vazio após a reinicialização limpa
+
+### Build
+
+- `cd backend-proxy && npm run build` — compilação TypeScript concluída sem erros
+- `pm2 restart backend-proxy` — bootstrap republicado e validado sem novo erro no log
+
+## Liberação operacional de serviço governamental do Paraná - 2026-04-28
+
+- liberado o host `interno.empresafacil.pr.gov.br`
+- a liberação foi persistida em `release_policies` com escopo `global`, cobrindo todas as VLANs gerenciadas do módulo
+- o catálogo-base `Governo` em `backend-proxy/src/services/blocking-release-service.ts` também foi ampliado com esse host
+- validação executada:
+  - confirmação no PostgreSQL em `release_policies`
+  - confirmação nos artefatos compilados:
+    - `backend-proxy/regras/generated/proxy_whitelist.acl`
+    - `backend-proxy/regras/generated/proxy_protected_ssl.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/allowlist-global.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/export.json`
+- observação operacional:
+  - a liberação foi aplicada no nível de domínio/host, que é o escopo real suportado pelo motor de enforcement do módulo
+
+## Correção do upgrade de URL em políticas nomeadas - 2026-04-28
+
+- validado que o código do módulo já tinha suporte a entradas do tipo `url`, inclusive com `entry_type` e `normalized_host_domain` em `domain_policy_entries`
+- identificado o descompasso real:
+  - o bootstrap do schema encerrava cedo demais quando a tabela já existia
+  - por isso, os `ALTER TABLE ... ADD COLUMN IF NOT EXISTS ...` do upgrade não rodavam em bases legadas
+- correção aplicada em `backend-proxy/src/services/blocking-release-schema-service.ts`:
+  - `ensureBlockingReleaseSchema()` agora sempre executa o bloco idempotente de schema/migração sob lock advisory
+- endurecimento de bootstrap em `backend-proxy/src/server.ts`:
+  - o serviço de Bloqueios & Liberações agora chama `blockingReleaseService.ensureReady()` antes de iniciar `syncTelemetry()`
+- reconciliação de dados executada no PostgreSQL:
+  - preenchido `normalized_host_domain` para entradas legadas do tipo domínio
+  - inseridos nas políticas nomeadas:
+    - `docs.google.com`
+    - `drive.google.com`
+    - `googleusercontent.com`
+    - `interno.empresafacil.pr.gov.br`
+- validações executadas:
+  - `cd backend-proxy && npm run build`
+  - `pm2 restart backend-proxy`
+  - confirmação de novas colunas em `domain_policy_entries`
+  - confirmação do novo índice único `(policy_id, entry_type, normalized_domain)`
+  - `domainPolicyManagerService.get(10)` voltou a responder sem erro
+
+## Liberação ampliada de portais governamentais e correlatos - 2026-04-28
+
+- ampliado o catálogo-base `Governo` em `backend-proxy/src/services/blocking-release-service.ts` com os hosts:
+  - `fomentonet.pr.gov.br`
+  - `www8.receita.fazenda.gov.br`
+  - `cadin.pr.gov.br`
+  - `sebrae.com.br`
+  - `consulta-crf.caixa.gov.br`
+  - `salas-apps-pr.sebrae.com.br`
+  - `receita.pr.gov.br`
+  - `webapp1-jacarezinho.cidade360.cloud`
+  - `cidade360.cloud`
+  - `governancabrasil.com.br`
+  - `pncp.gov.br`
+  - `jacarezinho.pr.leg.br`
+- persistidas liberações globais em `release_policies` para esses hosts, cobrindo todas as VLANs gerenciadas
+- adicionadas URLs exatas na política nomeada global `Governo`:
+  - `cadin.pr.gov.br/publico/pendencia/consultar`
+  - `sebrae.com.br/empreendedor`
+  - `gov.br/receitafederal`
+- durante a ativação das URLs, identificado e corrigido bug real no compilador:
+  - `backend-proxy/src/services/policy-compiler-service.ts` gerava regex com sintaxe `(?:...)`, incompatível com o `url_regex` do Squid nesta instalação
+  - o compilador passou a gerar regex compatível com POSIX/Squid para URLs liberadas
+- validações executadas:
+  - `cd backend-proxy && npm run build`
+  - `blockingReleaseService.apply('codex')` concluído com sucesso
+  - `pm2 restart backend-proxy`
+  - confirmação nos artefatos:
+    - `backend-proxy/regras/generated/proxy_whitelist.acl`
+    - `backend-proxy/regras/generated/proxy_protected_ssl.acl`
+    - `backend-proxy/regras/generated/proxy_whitelist_url.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/allowlist-global.acl`
+    - `backend-proxy/regras/generated/bloqueios-liberacoes/allowlist-global-url.acl`
+
+## Bypass emergencial total de internet para VLANs - 2026-04-28
+
+- medida aplicada em carater emergencial para restaurar saida de internet de todas as VLANs, de forma independente do `Unbound`
+- causa operacional observada no host:
+  - `FORWARD` estava historicamente preso a combinacao de politica restritiva no `UFW` com regras seletivas em `ufw-user-forward`
+  - o `nat` ainda mantinha redirecionamentos legados de `DNS 53` para o `Unbound`, o que impedia um bypass realmente total
+- mudancas aplicadas no host:
+  - `/etc/default/ufw` ficou com `DEFAULT_FORWARD_POLICY="ACCEPT"`
+  - `/etc/ufw/before.rules` teve o bloco `BECKERCORP_EARLY_FORWARD` alterado para `-A ufw-before-forward -i enp6s0+ -j ACCEPT`
+  - os redirecionamentos `PREROUTING` de `TCP/UDP 53` das VLANs para o `Unbound` foram removidos do arquivo persistente
+  - os redirects antigos ainda carregados em runtime no `nat` foram limpos manualmente do `iptables`
+- estado final validado no host:
+  - `net.ipv4.ip_forward = 1`
+  - chain `FORWARD` em `ACCEPT`
+  - `nat` sem redirects de `DNS 53` para as VLANs
+  - `MASQUERADE` de saida pela `WAN enp8s0` preservado
+- trilha de seguranca e rollback:
+  - backup salvo em `/opt/controlebeckercorp-v8/backups/bypass-total-20260428-122936`
+  - utilitarios operacionais criados para esta acao:
+    - `scripts/bypass_total_ufw.py`
+    - `scripts/flush_dns_redirects_runtime.py`
+- observacao obrigatoria:
+  - esta liberacao foi assumida explicitamente como medida emergencial
+  - depois sera necessario normalizar o ambiente, reinstalando o enforcement institucional de `UFW`, `Unbound`, `RPZ`, `ACL` e interceptacao seletiva conforme a politica operacional vigente
+
+## Bypass total confirmado e diagnostico - 2026-04-28
+
+### O que estava bloqueando a navegacao
+
+Tres problemas encadeados impediam a navegacao mesmo com `FORWARD policy ACCEPT` e `nftables forward chain` com ACCEPT para VLANs:
+
+1. **`before.rules` revertia a cada `ufw reload`** — o bloco `BECKERCORP_EARLY_FORWARD` voltava com regras VIP-only e DROPs do Telegram, sem ACCEPT geral para as VLANs
+2. **DNS REDIRECT quebrava resolucao** — o `PREROUTING REDIRECT` mudava o destino de `8.8.8.8:53` para `192.168.10.1:53`, mas a resposta voltava com origem `192.168.10.1`, e o cliente rejeitava por nao bater com o servidor consultado
+3. **`INPUT policy DROP` bloqueava TCP porta 53** — queries DNS via TCP (usadas por dispositivos modernos para respostas grandes e DoT fallback) chegavam na `192.168.10.1:53` mas nao recebiam SYN-ACK porque o INPUT chain nao tinha regra explicita para porta 53 vinda das VLANs
+
+### Estado atual do bypass (runtime — nao persiste apos reboot)
+
+Regras aplicadas em runtime via `iptables`:
+
+```bash
+# FORWARD — ACCEPT para cada VLAN antes de SGCG_GUARD e UFW chains
+iptables -I FORWARD 1 -i enp6s0.10 -o enp8s0 -j ACCEPT
+iptables -I FORWARD 2 -i enp8s0 -o enp6s0.10 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+# (idem para VLANs 30, 40, 50, 70, 80, 99)
+
+# INPUT — DNS TCP e UDP das VLANs chegam ao Unbound
+iptables -I INPUT 1 -i enp6s0+ -p udp --dport 53 -j ACCEPT
+iptables -I INPUT 2 -i enp6s0+ -p tcp --dport 53 -j ACCEPT
+```
+
+Unbound RPZ suspenso via `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` (sem zonas rpz ativas).
+
+### Como reverter — passo a passo
+
+**Passo 1: Remover regras de bypass do FORWARD chain**
+
+```bash
+# Remover os ACCEPT inseridos em runtime para cada VLAN
+for vlan in 10 30 40 50 70 80 99; do
+  iptables -D FORWARD -i enp6s0.$vlan -o enp8s0 -j ACCEPT 2>/dev/null
+  iptables -D FORWARD -i enp8s0 -o enp6s0.$vlan -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null
+done
+```
+
+**Passo 2: Remover regras de DNS do INPUT chain**
+
+```bash
+iptables -D INPUT -i enp6s0+ -p udp --dport 53 -j ACCEPT 2>/dev/null
+iptables -D INPUT -i enp6s0+ -p tcp --dport 53 -j ACCEPT 2>/dev/null
+```
+
+**Passo 3: Restaurar `before.rules` com enforcement institucional**
+
+Editar `/etc/ufw/before.rules` e substituir o bloco `BECKERCORP_EARLY_FORWARD` de volta para as regras institucionais (VIPs + bloqueios por VLAN). Remover as linhas de `PREROUTING REDIRECT` de DNS da secao `*nat` se nao quiser mais o redirect.
+
+```bash
+ufw reload
+```
+
+**Passo 4: Reativar RPZ no Unbound**
+
+Editar `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` e reintroduzir as zonas `rpz:` geradas pelo `Policy Compiler` do SGCG via interface `Bloqueios & Liberacoes > Politicas Institucionais > Aplicar`.
+
+```bash
+unbound-control reload
+```
+
+**Passo 5: Validar enforcement restaurado**
+
+```bash
+dig @127.0.0.1 instagram.com +short     # deve retornar NXDOMAIN se VLAN bloqueada
+iptables -L FORWARD -n | head -5        # nao deve ter ACCEPT amplo para enp6s0.x
+ufw status                              # deve mostrar regras ativas
+```
+
+**Passo 6: Limpar sessoes ativas que ficaram abertas durante o bypass**
+
+```bash
+conntrack -D --src-nat 2>/dev/null || true
+# ou especifico por VLAN:
+conntrack -D -s 192.168.10.0/24 2>/dev/null || true
+```
+
+### Proximos passos para normalizacao
+
+- reativar enforcement VLAN por VLAN, validando conectividade essencial antes de cada etapa
+- reintroduzir bloqueio de redes sociais via RPZ para VLANs 10, 30, 50, 70 (exceto VIPs e excecoes esporadicas)
+- reativar bloqueio de DoT (`TCP 853`) e QUIC social (`UDP 443`) apenas apos confirmar que WhatsApp e gov.br continuam funcionando
+- testar PontoRH e portais governamentais antes de fechar o enforcement
+
+## Recuperacao de regra SSH IPv4 na VLAN 10 — 2026-04-28
+
+- identificada assimetria nas regras UFW: a porta `22/tcp` IPv4 na interface interna `enp6s0.10` estava ausente
+- a regra IPv6 `22/tcp (v6) on enp6s0.10 ALLOW IN` existia, mas o equivalente IPv4 havia sido perdido
+- causa provavel: `ufw reset` executado em 2026-03-09 entre 10:39 e 11:07 que reconstruiu o `user.rules` sem reincluir a regra IPv4 da VLAN 10
+- efeito: SSH via porta 22 funcionava apenas externamente via porta `18122/tcp on enp8s0`; conexoes internas da VLAN 10 (192.168.10.x) eram derrubadas pelo `deny (incoming)` padrao
+- correcao aplicada:
+  - `ufw allow in on enp6s0.10 to any port 22 proto tcp comment "SSH Padrão - VLAN 10 (Admin)"` — regra `[48]`
+  - `ufw allow in on enp6s0.10 to any port 18122 proto tcp comment "SSH Custom - VLAN 10 (Admin)"` — regra `[49]`
+- IPv4 e IPv6 agora simetricos na VLAN 10 para as duas portas SSH
+
+## Normalizacao do bypass emergencial — VLAN 70 — 2026-04-28
+
+### Contexto
+
+O bypass emergencial total ativado anteriormente mantinha regras de ACCEPT direto no chain `FORWARD` do iptables para todas as VLANs, com RPZ do Unbound suspenso. Esta rodada inicia a normalizacao pela VLAN 70 (`192.168.70.0/24`, interface `enp6s0.70`).
+
+### Diagnostico pre-normalizacao
+
+- `FORWARD` chain: politica `ACCEPT`, com regras `ACCEPT` diretas por VLAN adicionadas em runtime
+- `nat PREROUTING` em runtime: vazio (redirects de DNS sem efeito em runtime apesar de presentes no `before.rules`)
+- `before.rules`: redirects de DNS para `enp6s0+` ja presentes nas linhas 17-18; block de Telegram para todas VLANs em BECKERCORP_EARLY_FORWARD
+- Unbound RPZ: suspenso globalmente; arquivos compilados para VLAN 70 (`blocklist-vlan-70.rpz` 186 linhas, `allowlist-vlan-70.rpz`) existentes e atualizados
+
+### Alteracoes aplicadas
+
+**Runtime (iptables — imediato, nao persiste apos reboot sem before.rules):**
+- `nat PREROUTING`: adicionado redirect `enp6s0.70 UDP/53 → :53` e `enp6s0.70 TCP/53 → :53`
+- `FORWARD`: inserido `DROP enp6s0.70 TCP/853` (bloqueio DoT) na posicao 6
+- `FORWARD`: removido `ACCEPT enp6s0.70 → enp8s0` (bypass de emergencia da VLAN 70)
+
+**`/etc/ufw/before.rules`** (persistencia apos reboot/ufw reload):
+- adicionado `-A ufw-before-forward -i enp6s0.70 -p tcp --dport 853 -j DROP` no bloco BECKERCORP_EARLY_FORWARD
+- redirects DNS (`enp6s0+`) ja estavam presentes, cobrem VLAN 70 automaticamente
+
+**`/etc/unbound/unbound.conf.d/becker_policy_compiler.conf`**:
+- removida linha de bypass global do RPZ
+- adicionadas zonas RPZ com `tags: "vlan_70"` para isolar enforcement apenas na VLAN 70:
+  - `rpz.vippass.becker.local.` — bypass por client-ip para VIPs
+  - `rpz.allow.vlan70.becker.local.` — allowlist especifica da VLAN 70
+  - `rpz.block.vlan70.becker.local.` com `rpz-action-override: nxdomain` — blocklist (88 dominios de redes sociais e pornografia)
+  - `rpz.allow.becker.local.` com `tags: "vlan_70"` — allowlist global aplicada apenas a VLAN 70
+  - `rpz.block.becker.local.` com `tags: "vlan_70"` — blocklist global aplicada apenas a VLAN 70
+
+### Estado apos normalizacao da VLAN 70
+
+- VLANs 10, 30, 50: ainda em bypass de emergencia (regras ACCEPT no FORWARD chain, RPZ suspenso)
+- VLAN 70: normalizada — DNS interceptado pelo Unbound, RPZ ativo, DoT bloqueado, Telegram bloqueado por IP
+- `unbound-checkconf`: sem erros
+- `unbound-control reload`: executado com sucesso
+- logs do Unbound confirmam queries de `192.168.70.x` passando pelo Unbound
+
+### Observacao operacional
+
+- o redirect DNS em runtime para VLAN 70 foi adicionado diretamente por `iptables -t nat`
+- o `before.rules` ja tinha `PREROUTING -i enp6s0+ REDIRECT :53` que cobre todas as VLANs, mas esse bloco nao estava ativo em runtime (nat PREROUTING estava vazio)
+- ao normalizar as demais VLANs, o `ufw reload` podera ser executado para ativar o bloco `*nat` do before.rules para todas as VLANs simultaneamente
+
+## Normalizacao VLAN 10 e correcao RPZ VLAN 70 — 2026-04-29
+
+### Diagnostico pre-normalizacao (Passo 2 — validacao)
+
+- Unbound: `active`
+- PREROUTING runtime: redirect DNS apenas para VLAN 70 (VLAN 10 ainda sem redirect no runtime)
+- FORWARD runtime: VLAN 10 com bypass `ACCEPT enp6s0.10 → enp8s0` ativo
+- `becker_policy_compiler.conf`: sem zonas RPZ (comentario de bypass emergencial no lugar)
+- Arquivos RPZ de VLAN 10 existentes e atualizados:
+  - `/etc/unbound/becker/blocklist-vlan-10.rpz` — 186 linhas (redes sociais, adulto)
+  - `/etc/unbound/becker/allowlist-vlan-10.rpz` — 28 linhas (Netflix, Akamai)
+- Identificado: VLAN 70 parcialmente normalizada (iptables OK, RPZ ausente do config)
+
+### Alteracoes aplicadas (Passo 1 — fechar VLAN 10)
+
+**`/etc/unbound/unbound.conf.d/becker_policy_compiler.conf`**:
+- Removido comentario de bypass emergencial
+- Adicionadas zonas RPZ para VLAN 10 e VLAN 70:
+  - `rpz.vippass.becker.local.` com `tags: "vlan_10 vlan_70"` — VIP client-ip passthrough
+  - `rpz.allow.vlan10.becker.local.` com `tags: "vlan_10"` — allowlist especifica VLAN 10
+  - `rpz.block.vlan10.becker.local.` com `tags: "vlan_10"` + `rpz-action-override: nxdomain`
+  - `rpz.allow.vlan70.becker.local.` com `tags: "vlan_70"` — allowlist especifica VLAN 70
+  - `rpz.block.vlan70.becker.local.` com `tags: "vlan_70"` + `rpz-action-override: nxdomain`
+  - `rpz.allow.becker.local.` com `tags: "vlan_10 vlan_70"` — allowlist global
+  - `rpz.block.becker.local.` com `tags: "vlan_10 vlan_70"` — blocklist global
+
+**`/etc/ufw/before.rules`**:
+- Adicionado no bloco `BECKERCORP_EARLY_FORWARD`:
+  - `-A ufw-before-forward -i enp6s0.10 -p tcp --dport 853 -j DROP` — DoT bloqueado VLAN 10
+  - `-A ufw-before-forward -i enp6s0.70 -p tcp --dport 853 -j DROP` — DoT bloqueado VLAN 70 (faltava)
+
+**iptables runtime (PREROUTING nat)**:
+- Adicionado: `-I PREROUTING 1 -i enp6s0.10 -p udp --dport 53 -j REDIRECT --to-port 53`
+- Adicionado: `-I PREROUTING 2 -i enp6s0.10 -p tcp --dport 53 -j REDIRECT --to-port 53`
+
+**iptables runtime (FORWARD)**:
+- Adicionado: `DROP enp6s0.10 tcp dpt:853` (posicao 2, antes do bypass)
+- Removido: `ACCEPT enp6s0.10 → enp8s0` (bypass emergencial da VLAN 10)
+
+**Unbound**:
+- `unbound-checkconf`: sem erros
+- `unbound-control reload`: executado com sucesso
+
+### Estado apos normalizacao
+
+- VLAN 10: **normalizada** — DNS interceptado pelo Unbound, RPZ ativo, DoT bloqueado, bypass removido
+- VLAN 70: **normalizada** — iptables OK (sessao anterior), RPZ agora ativo (corrigido nesta sessao)
+- VLANs 30, 50: ainda em bypass emergencial (ACCEPT direto no FORWARD chain, sem RPZ)
+- VLANs 40, 80, 99: em bypass (sem enforcement institucional)
+- VIPs da VLAN 10 (IPs: .127, .143, .187, .26, .40, .49): bypass via RPZ client-ip passthrough
+
+### Validacao executada
+
+- `unbound-checkconf` — sem erros
+- `unbound-control reload` — ok
+- PREROUTING: redirect VLAN 10 UDP+TCP 53 confirmado em runtime
+- FORWARD: DoT DROP VLAN 10 na posicao 2, bypass ACCEPT removido
+- `dig @127.0.0.1 google.com` → resolve (127.0.0.1 sem tag = comportamento esperado)
+- Clientes VLAN 10 receberao NXDOMAIN para dominios bloqueados (instagram.com, tiktok.com, etc.)
+
+## Proximo passo recomendado
+
+- validar em ambiente real na VLAN 10:
+  - navegacao normal (Google, gov.br, WhatsApp, PontoRH) deve funcionar
+  - redes sociais (Instagram, TikTok, Facebook) devem retornar falha de resolucao DNS
+  - VIPs cadastrados devem continuar acessando redes sociais normalmente
+- apos confirmacao, prosseguir com normalizacao das VLANs 30 e 50 na mesma sequencia
+- ao normalizar VLANs 30 e 50, adicionar suas zonas RPZ ao `becker_policy_compiler.conf` e fazer `unbound-control reload`
+
+---
+
+## Auditoria e Correcao do Modulo QoS — 2026-04-29
+
+### Problemas identificados e corrigidos
+
+**`backend/src/modules/qos/routes.ts` — arquivo morto removido**
+- Arquivo legado sem importacao em nenhum ponto do sistema
+- Usava TBF (token bucket filter) em vez de HTB — sem suporte a VIP
+- Credencial hardcoded: `postgres://postgres:becker_admin_secure@...`
+- Tabela errada `control_qos_policies` (tabela real: `net_qos_policies`)
+- `ON CONFLICT (id)` incoerente (tabela nao tem `id` unico)
+- Arquivo deletado
+
+**`backend/src/modules/qos/qos-routes.ts` — correcoes aplicadas**
+
+1. `POST /apply` — warnings sempre retornavam `[]`
+   - Warnings (modo legado, IFB redirect nao ativo) eram computados em `loadPolicies` mas nunca no apply
+   - Corrigido: agora o `POST /apply` computa e retorna warnings reais baseados no runtime apos aplicacao
+   - Antes: usuario via "QoS aplicado com sucesso" mesmo com divergencias de runtime
+   - Depois: alert exibe warnings reais se existirem
+
+2. `reconcileAllPolicies` — nao limpava interfaces gerenciadas sem politica no DB
+   - Se tc estava ativo manualmente em uma interface sem entrada em `net_qos_policies`, o reconcile ignorava
+   - Corrigido: reconcile agora itera sobre `MANAGED_INTERFACES union DB policies` e aplica 0/0 nas que nao tem entrada (limpando o tc)
+
+### Logica dos VIPs (validada, sem alteracao)
+
+- Classe default `1:10`: `rate downLim ceil downLim` — trafico regular com teto duro
+- Classe VIP `1:20`: `rate 1000mbit ceil 1000mbit` — VIP sem teto (bypass do limite)
+- Download: filtro `u32 match ip dst vip.ip/32 flowid 1:20` — VIP recebe sem restricao
+- Upload (IFB): filtro `u32 match ip src vip.ip/32 flowid 1:20` — idem para egress
+- `runtime_synced` verifica: default class `1:10`, contagem de filtros VIP = contagem no DB, IFB redirect ativo
+- Logica esta correta e sem alteracoes
+
+### Build
+
+- `npm run build` (backend): sem erros de TypeScript
+- Arquivo `dist/modules/qos/routes.js` (legado) removido junto com o source
+
+---
+
+## Scripts de Bypass Emergencial — 2026-04-29
+
+### Contexto
+
+Em 2026-04-28 a rede ficou inoperante sem mecanismo rapido de recuperacao.
+Os scripts existentes (bypass_total_ufw.py) editam arquivos e fazem `ufw reload`,
+criando janela de instabilidade e risco de corrupcao de estado.
+
+### Abordagem adotada: runtime-only (sem reload, sem restart)
+
+Injecao direta de regras no kernel via iptables/tc.
+- Efeito em milissegundos
+- Sessao SSH instavel nao desfaz o que ja foi aplicado
+- Reboot restaura o estado UFW persistente automaticamente (failsafe natural)
+- --undo reverte sem reboot
+
+### Camadas afetadas pelo bypass
+
+1. iptables FORWARD: injeta ACCEPT antes de todos os DROPs por VLAN
+2. NAT PREROUTING: remove redirect DNS (libera resolucao sem Unbound/RPZ)
+3. QoS (tc): limpa limitacao de banda por interface
+
+Squid: opera em modo explicito (sem intercept transparente), nao e afetado.
+
+### Scripts criados
+
+**`scripts/bypass_vlan.py`** — bypass por VLAN especifica
+```
+sudo python3 scripts/bypass_vlan.py <vlan_id>           # ativa
+sudo python3 scripts/bypass_vlan.py <vlan_id> --undo    # restaura
+```
+VLANs: 10, 30, 40, 50, 70, 80, 99
+
+**`scripts/bypass_all_vlans.py`** — bypass de todas as VLANs de uma vez
+```
+sudo python3 scripts/bypass_all_vlans.py           # ativa tudo
+sudo python3 scripts/bypass_all_vlans.py --undo    # restaura tudo
+```
+
+### Pos-bypass (ao restaurar)
+
+- QoS NAO e restaurado automaticamente pelo --undo (estado vem do banco)
+- Apos restaurar enforcement, re-aplicar QoS via SGCG > Controle de Rede > QoS > Reconciliar runtime
+- Log das operacoes em: /var/log/sgcg-bypass.log
+
+---
+
+## Acesso Interno/Offline ao Console — 2026-04-29
+
+### Objetivo
+
+Garantir acesso administrativo ao SGCG pela rede interna mesmo se o link externo ou a resolucao publica de `console.jacarezinho.cloud` cair.
+
+### Nomes internos configurados
+
+- `https://console.interno.jacarezinho` — nome operacional recomendado
+- `https://console.local.jacarezinho` — alias interno alternativo
+- `https://console.jacarezinho.local` — alias `.local` solicitado, com ressalva de possivel conflito com mDNS/Bonjour em alguns clientes
+
+Todos resolvem internamente para:
+
+```
+192.168.10.1
+```
+
+### DNS interno
+
+O Unbound local passou a responder zonas internas estaticas:
+
+- `interno.jacarezinho.`
+- `local.jacarezinho.`
+- `jacarezinho.local.`
+
+Arquivo de configuracao:
+
+```
+/etc/unbound/unbound.conf.d/10-console-interno-jacarezinho.conf
+```
+
+O DHCP da VLAN 10 ja entrega `192.168.10.1` como DNS:
+
+```
+/etc/dhcp/dhcpd.conf
+```
+
+### Nginx interno
+
+Foi criado um virtual host dedicado para os nomes internos:
+
+```
+/etc/nginx/sites-available/console.interno.jacarezinho
+/etc/nginx/sites-enabled/console.interno.jacarezinho
+```
+
+As rotas preservam a arquitetura atual:
+
+- `/` -> frontend em `https://127.0.0.1:6777`
+- `/api/` -> backend core em `http://127.0.0.1:6778`
+- `/api/proxy`, `/api/rules`, `/api/cert`, `/api/dns`, `/api/bloqueios-liberacoes`, `/api/data-governance` -> backend-proxy em `https://127.0.0.1:6779`
+
+### Certificado interno
+
+Foi criada uma CA interna SGCG e um certificado TLS para os nomes internos.
+
+CA raiz:
+
+```
+/etc/sgcg/pki/sgcg-internal-root-ca.crt
+/etc/sgcg/pki/sgcg-internal-root-ca.key
+```
+
+Certificado do console interno:
+
+```
+/etc/sgcg/pki/console-interno-jacarezinho.crt
+/etc/sgcg/pki/console-interno-jacarezinho.key
+```
+
+SANs do certificado:
+
+- `DNS:console.interno.jacarezinho`
+- `DNS:console.local.jacarezinho`
+- `DNS:console.jacarezinho.local`
+- `IP:192.168.10.1`
+
+Validade atual:
+
+- inicio: `2026-04-29`
+- fim: `2028-08-01`
+
+Para remover aviso de certificado nos navegadores, instalar a CA raiz nos clientes como autoridade confiavel:
+
+```
+/etc/sgcg/pki/sgcg-internal-root-ca.crt
+```
+
+Download interno disponibilizado pelo Nginx:
+
+```
+http://console.interno.jacarezinho/sgcg-root-ca.crt
+http://console.interno.jacarezinho/sgcg-root-ca.cer
+```
+
+Fingerprint SHA-256 da CA raiz para conferencia no cliente:
+
+```
+D4:4E:F0:B6:A8:13:D6:E6:7E:95:34:04:11:DD:C4:48:2C:B5:EB:62:20:94:13:CB:C6:FA:6A:19:38:14:26:29
+```
+
+Observacao para Firefox: em alguns ambientes o Firefox nao usa automaticamente a loja de certificados do Windows/Linux. Nesses casos, importar a CA em `Configurações > Privacidade e Segurança > Certificados > Ver certificados > Autoridades > Importar` e marcar confianca para identificar sites.
+
+Observacao para Chrome/Edge: usam a loja de certificados do sistema operacional. No Windows, importar a CA em `Certificados - Computador Local > Autoridades de Certificacao Raiz Confiaveis`. Importar em `Pessoal` ou apenas abrir o arquivo nao remove o alerta de seguranca.
+
+Em 2026-04-29 a CA e o certificado interno foram regenerados com extensoes explicitas para navegadores modernos:
+
+- CA raiz: `Basic Constraints CA:TRUE`, `Key Usage Certificate Sign, CRL Sign`
+- certificado do console: `Basic Constraints CA:FALSE`, `Key Usage Digital Signature, Key Encipherment`, `Extended Key Usage TLS Web Server Authentication`
+- backup anterior: `/etc/sgcg/backups/internal-console-cert-hardening-20260429-100150`
+
+Ainda em 2026-04-29, apos erro `SEC_ERROR_BAD_SIGNATURE` no Firefox, a CA foi reemitida com CN versionado para evitar colisao com CA antiga ja importada/cacheada no cliente:
+
+- CA nova: `SGCG Jacarezinho Internal Root CA 2026`
+- certificado do console emitido por essa CA nova
+- fingerprint SHA-256 da CA nova: `D4:4E:F0:B6:A8:13:D6:E6:7E:95:34:04:11:DD:C4:48:2C:B5:EB:62:20:94:13:CB:C6:FA:6A:19:38:14:26:29`
+- fingerprint SHA-256 do certificado do site: `3B:82:45:8D:B9:05:AF:72:39:B5:ED:BC:0D:42:60:9F:F8:83:DF:AF:78:8B:A2:57:04:DF:72:65:95:42:E1:EE`
+- backup anterior: `/etc/sgcg/backups/internal-console-ca-versioned-20260429-100318`
+- acao necessaria nos clientes: remover CAs antigas `SGCG Jacarezinho Internal Root CA` e instalar novamente a CA baixada de `http://console.interno.jacarezinho/sgcg-root-ca.crt`
+
+### Ajuste no frontend
+
+O service legado `frontend/src/services/apiProxy.js` deixou de montar URL direta para `https://<hostname>:6779/api/proxy`.
+
+Agora usa:
+
+```
+/api/proxy
+```
+
+Motivo: evitar quebra em acesso interno por porta direta, mismatch de certificado ou dependencia do dominio publico. A comunicacao passa sempre pelo mesmo origin do console e pelo Nginx.
+
+Em 2026-04-29 foi corrigido tambem o login pelo acesso interno:
+
+- problema observado: ao abrir `https://console.interno.jacarezinho`, o frontend ainda tentava autenticar em `https://console.jacarezinho.cloud/api/auth/login`
+- efeito: navegador bloqueava a requisicao por CORS e a UI exibia `Sessão não iniciada. Verifique backend/proxy.`
+- causa: `frontend/.env` tinha `VITE_API_BASE_URL=https://console.jacarezinho.cloud`, valor embutido no bundle do Vite
+- correcao aplicada: `VITE_API_BASE_URL=` para forcar chamadas de API pelo mesmo origin do navegador
+- validacao: bundle novo nao contem mais `console.jacarezinho.cloud/api`; `POST https://console.interno.jacarezinho/api/auth/login` chegou ao backend e retornou `401 Credenciais invalidas` com payload ficticio, comprovando ausencia de CORS
+- deploy: `npm run build` no frontend e `pm2 restart bcc-frontend --update-env`
+- observacao para clientes: se o navegador ainda chamar `console.jacarezinho.cloud`, limpar cache/hard reload porque esta carregando JS antigo
+
+### Validacoes realizadas
+
+```
+nginx -t
+unbound-checkconf
+systemctl reload nginx
+systemctl reload unbound
+dig +short @127.0.0.1 console.interno.jacarezinho
+dig +short @127.0.0.1 console.local.jacarezinho
+dig +short @127.0.0.1 console.jacarezinho.local
+curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt -I --resolve console.interno.jacarezinho:443:192.168.10.1 https://console.interno.jacarezinho
+curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt -I --resolve console.jacarezinho.local:443:192.168.10.1 https://console.jacarezinho.local
+npm run build
+pm2 restart bcc-frontend --update-env
+```
+
+Resultados:
+
+- DNS interno retornou `192.168.10.1`
+- HTTPS interno retornou `HTTP/2 200`
+- rotas de API internas responderam pelo Nginx; sem token retornam `401 Token ausente`, comportamento esperado
+- build do frontend concluido com sucesso
+- processo `bcc-frontend` reiniciado via PM2
+
+### Backup
+
+Backup dos arquivos de infraestrutura antes da alteracao:
+
+```
+/etc/sgcg/backups/internal-console-20260429-095107
+```
+
+## Correção de revogação de sessão do Hotspot — 2026-04-30
+
+- corrigido o comportamento em que uma sessão revogada do hotspot voltava a navegar livremente ao reconectar na rede
+- causa confirmada no backend:
+  - `GET /api/hotspot/public/context` reconhecia qualquer dispositivo previamente cadastrado e ativo pelo MAC
+  - esse fluxo criava automaticamente uma nova sessão `mac_auto`
+  - na prática, a revogação removia o IP do `ipset`, mas o próximo acesso ao portal recriava a autorização sem exigir novo login
+- `backend/src/modules/hotspot/hotspot-routes.ts` foi ajustado:
+  - `POST /api/hotspot/sessions/:id/revoke` agora revoga também sessões ativas correlatas por `device_id`, `mac_address` ou `client_ip`
+  - os IPs correlatos são removidos do `ipset` `sgcg_hotspot_v70_auth`
+  - o vínculo automático por MAC em `hotspot_devices` foi preservado por decisão operacional
+  - dispositivo conhecido e ativo continua fazendo `login automático por MAC` quando acessa o portal cativo
+- efeito operacional esperado:
+  - ao revogar uma sessão, o cliente perde a autorização runtime
+  - ao reconectar na VLAN 70, a navegação direta não deve ficar livre sem passar pelo fluxo do portal
+  - ao abrir o portal cativo, se o MAC já estiver cadastrado e ativo, o backend cria nova sessão `mac_auto` e libera o acesso sem exigir CPF e senha
+  - se o MAC não estiver cadastrado, o portal exige cadastro ou login por CPF e senha
+- validação:
+  - `cd backend && npm run build` concluído sem erros de TypeScript
+
+### Recomendacao operacional
+
+Usar `https://console.interno.jacarezinho` como endereco principal dentro da prefeitura/rede institucional.
+
+Manter `https://console.jacarezinho.cloud` para acesso publico/externo.
+
+---
+
+## Normalizacao VLANs 50 e 30 — 2026-04-29
+
+### Contexto
+
+Continuacao da sequencia de normalizacao iniciada nas VLANs 70 e 10. As VLANs 50 (SINE) e 30 ainda estavam em bypass emergencial: regra `ACCEPT` direta no `ip filter FORWARD` do nftables, sem enforcement institucional de DNS/RPZ ativo para elas.
+
+### Diagnostico pre-normalizacao
+
+- `ip filter FORWARD` (nftables runtime):
+  - `iifname "enp6s0.50" oifname "enp8s0" ... accept` — handle 188 (bypass ativo)
+  - `iifname "enp6s0.30" oifname "enp8s0" ... accept` — handle 186 (bypass ativo)
+- DNS redirect `enp6s0*` UDP+TCP/53 ja ativo no `ip nat PREROUTING` (cobre VLANs 50 e 30)
+- `becker_policy_compiler.conf`: zonas RPZ para `vlan_30` e `vlan_50` ja presentes (compiladas pelo Policy Compiler em sessao anterior)
+- `blocklist-vlan-50.rpz` e `blocklist-vlan-30.rpz`: 180 entradas cada
+- `allowlist-vlan-50.rpz` e `allowlist-vlan-30.rpz`: ativas
+- Sem VIPs ativos em nenhuma das duas VLANs
+- `before.rules`: DoT global `enp6s0+ -p tcp --dport 853 -j DROP` ja cobre ambas
+
+### Correcao aplicada — reloadUnbound() com flush de cache
+
+Identificado que `systemctl reload unbound` (SIGHUP) preserva o cache DNS. Ao adicionar um VIP e recompilar, entradas NXDOMAIN em cache persistiam por ate 300s antes de o passthru do RPZ ser aplicado. Correcao aplicada em `blocking-release-service.ts` linha 2574:
+
+```typescript
+async reloadUnbound() {
+    await runCommand('systemctl', ['reload', 'unbound'], { elevated: true });
+    // ...status check...
+    // Purga cache para que regras RPZ/VIP entrem em vigor imediatamente
+    await runCommand('unbound-control', ['flush_zone', '.'], { elevated: true, allowFailure: true });
+    return status;
+}
+```
+
+Rebuild e reinicio do `backend-proxy` via PM2 executados.
+
+### Alteracoes aplicadas — VLAN 50
+
+**nftables runtime:**
+- Removido: `iifname "enp6s0.50" oifname "enp8s0" accept` (handle 188)
+- Adicionado: `iifname "enp6s0.50" tcp dport 853 counter drop` (DoT block)
+
+**Unbound:**
+- `unbound-control flush_zone .` executado — cache purgado
+- `systemctl reload unbound` executado
+
+**Conntrack:**
+- Sessoes ESTABLISHED da VLAN 50 limpas via `conntrack -D -s 192.168.50.0/24`
+
+### Alteracoes aplicadas — VLAN 30
+
+**nftables runtime:**
+- Removido: `iifname "enp6s0.30" oifname "enp8s0" accept` (handle 186)
+- Adicionado: `iifname "enp6s0.30" tcp dport 853 counter drop` (DoT block)
+
+**Unbound:**
+- `unbound-control flush_zone .` executado — 7 rrsets removidos do cache
+- `systemctl reload unbound` executado
+
+**Conntrack:**
+- Sessoes ESTABLISHED da VLAN 30 limpas via `conntrack -D -s 192.168.30.0/24`
+
+### Estado apos normalizacao
+
+- VLAN 10: normalizada (sessao anterior)
+- VLAN 30: **normalizada** — DNS interceptado pelo Unbound, RPZ ativo, DoT bloqueado, bypass removido
+- VLAN 40: bypass livre (sem enforcement institucional — por design)
+- VLAN 50: **normalizada** — DNS interceptado pelo Unbound, RPZ ativo, DoT bloqueado, bypass removido
+- VLAN 70: normalizada (sessao anterior)
+- VLANs 80 e 99: bypass livre (sem enforcement institucional — por design)
+
+### Observacao arquitetural
+
+O `/etc/nftables.conf` define `iifname $lan_vlans oifname $wan_if accept` para todas as VLANs — isso e intencional. O enforcement nao e por bloqueio IP/firewall, mas por DNS/RPZ: o Unbound retorna NXDOMAIN para dominios bloqueados pela politica da VLAN. O firewall IP permite o encaminhamento; o Unbound impede a resolucao.
+
+### Validacao executada
+
+- `nft list chain ip filter FORWARD` — sem `accept` para enp6s0.30 ou enp6s0.50
+- DoT DROP ativo para ambas as VLANs
+- `becker_policy_compiler.conf` — 8 zonas RPZ por VLAN (vippass, allow/block por VLAN, allow/block global)
+- Squid blocklist: 88 dominios para cada VLAN
+- Cache DNS purgado apos reload
+
+Em contingencia de link, desde que o servidor `192.168.10.1`, Nginx, Unbound e DHCP estejam ativos, a administracao deve continuar acessivel pela LAN sem depender de DNS publico ou internet.
+
+## Correcao do modulo Seguranca Operacional - 2026-04-29
+
+- corrigida falha operacional do modulo `Seguranca Operacional` quando o host nao possui mais o binario `ufw`
+- diagnostico confirmado:
+  - o backend registrava repetidamente `sudo: ufw: command not found`
+  - `systemctl status ufw` ainda exibia estado residual `active (exited)`, mas a unit estava `Loaded: not-found`
+  - o runtime real de firewall permanecia ativo via `iptables/nftables`, com regras institucionais presentes
+- o backend `backend/src/modules/security/security-routes.ts` passou a:
+  - detectar explicitamente a ausencia de `/usr/sbin/ufw`
+  - evitar chamada a `sudo ufw status numbered` quando o UFW nao estiver instalado
+  - usar `iptables-save -t filter` como leitura de fallback para o dashboard
+  - devolver `installed`, `runtime_source` e mensagem operacional no payload de `/api/security/dashboard`
+  - bloquear acoes dependentes de UFW com `503` explicito quando o binario estiver ausente
+- o utilitario `backend/src/utils/sys.ts` passou a permitir leitura controlada de `iptables-save -t filter`
+- a interface `frontend/src/pages/Security.jsx` passou a:
+  - exibir a fonte real do firewall (`ufw` ou `iptables`)
+  - mostrar aviso institucional quando a leitura vier do runtime `iptables`
+  - preservar a listagem de regras em modo somente leitura quando o UFW nao estiver disponivel
+  - propagar mensagens reais de erro em acoes de blindagem/remocao
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+  - `GET /api/security/dashboard` autenticado retornou `200`, `runtime_source=iptables`, `installed=false`, regras reais do runtime e Fail2Ban ativo
+
+## Proximo passo recomendado
+
+- decidir institucionalmente se o SGCG deve reinstalar e voltar a operar UFW como camada de administracao, ou se o modulo `Seguranca Operacional` deve evoluir formalmente para gerenciamento nativo de `nftables/iptables`
+- enquanto o UFW estiver ausente, manter a tela de firewall como observabilidade somente leitura para evitar alteracoes destrutivas em runtime sem contrato administrativo claro
+
+## Restauracao oficial do UFW - 2026-04-29
+
+- decisao operacional revisada: o UFW deve permanecer como camada oficial de administracao do firewall no SGCG
+- auditoria confirmou a origem da remocao:
+  - em `2026-04-28 16:03:01`, foi executado `apt-get install -y iptables-persistent netfilter-persistent`
+  - `apt history` registrou `Requested-By: sinturs (1000)`
+  - a instalacao de `iptables-persistent` e `netfilter-persistent` removeu `ufw 0.36.2-6` por conflito de pacote
+  - `dpkg.log` confirmou `remove ufw:all 0.36.2-6` em `2026-04-28 16:03:02`
+  - o `etckeeper` em `/etc` registrou commit com autor `sinturs <sinturs@invovacaoserver>` para essa transacao
+- restauracao executada:
+  - `apt-get install -y ufw`
+  - isso reinstalou `ufw 0.36.2-6` e removeu `iptables-persistent` e `netfilter-persistent`
+  - os arquivos existentes em `/etc/ufw` foram preservados
+  - `ufw reload` executado com sucesso
+- validacao operacional:
+  - `ufw status numbered` retornou `Status: active`
+  - 121 regras numeradas foram listadas pelo UFW
+  - os arquivos persistidos contem regras adicionais nas camadas base:
+    - `/etc/ufw/before.rules`: 36 regras `ufw-*`
+    - `/etc/ufw/before6.rules`: 68 regras `ufw6-*`
+    - `/etc/ufw/user.rules`: 55 regras `ufw-*`
+    - `/etc/ufw/user6.rules`: 80 regras `ufw6-*`
+  - `iptables-save -t filter` confirmou chains `ufw-*` carregadas no runtime IPv4
+  - `ip6tables-save -t filter` confirmou chains `ufw6-*` carregadas no runtime IPv6
+- correcao complementar no backend:
+  - o parser de `backend/src/modules/security/security-routes.ts` passou a reconhecer regras `FWD`, alem de `IN` e `OUT`
+  - isso garante que o modulo `Seguranca Operacional` exiba corretamente as regras de encaminhamento do UFW
+- validacao do SGCG:
+  - `cd backend && npm run build` concluido sem erros
+  - `pm2 restart bcc-backend`
+  - `GET /api/security/dashboard` autenticado retornou:
+    - `ufw.active=true`
+    - `ufw.installed=true`
+    - `ufw.runtime_source=ufw`
+    - `121` regras expostas para a interface
+
+## Proximo passo recomendado
+
+- impedir novas instalacoes de `iptables-persistent` e `netfilter-persistent` sem aprovacao, pois esses pacotes removem o UFW neste host
+- se for necessario persistir regras manuais fora do UFW, documentar antes a arquitetura para nao substituir a camada oficial de firewall do SGCG
+
+## Modulo Hotspot institucional - 2026-04-29
+
+- criado o modulo administrativo `Hotspot` no SGCG, acessivel pela navegacao principal em `/hotspot`
+- criado o portal publico `/hotspot/portal` para visitantes, com foco 100% mobile-first e tom institucional/governamental
+- identidade visual/textual do portal:
+  - `Hotspot Institucional`
+  - `Prefeitura Municipal de Jacarezinho`
+  - `Secretaria do Comercio, Industria, Servicos e Inovacao`
+  - termo de uso da rede e aviso de identificacao obrigatoria
+- fluxo publico implementado:
+  - primeiro acesso com cadastro de `Nome completo`, `CPF`, `Data de nascimento`, `Nome da mae` e `Senha`
+  - login posterior com `CPF` e `Senha`
+  - tentativa de identificacao automatica do MAC pelo gateway via `ip neigh show <ip>`
+  - associacao do MAC ao cadastro quando o gateway conseguir inferir o dispositivo
+  - login automatico futuro quando o MAC ja estiver cadastrado e ativo
+- persistencia criada no backend:
+  - `hotspot_visitors`
+  - `hotspot_devices`
+  - `hotspot_sessions`
+- auditoria institucional:
+  - todos os eventos publicos e administrativos do Hotspot sao registrados em `action_audit_logs`
+  - eventos humanizados nos relatorios: MAC ausente/desconhecido, login automatico, cadastro, login e revogacao de sessao
+- regra arquitetural da VLAN 70:
+  - o Hotspot identifica visitantes e registra sessoes
+  - o Hotspot nao substitui nem enfraquece enforcement, DNS, ACL ou RPZ
+  - a VLAN 70 permanece sujeita aos bloqueios institucionais ja existentes
+  - qualquer pivot futuro da VLAN 30 para Hotspot deve preservar a mesma regra
+- regra de firewall preservada:
+  - o UFW continua sendo o firewall principal e inegociavel do servidor
+  - iptables/nftables/tc podem atuar apenas em paralelo/complemento documentado, nunca como substituto silencioso do UFW
+- ajustes tecnicos:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `backend/src/middleware/auth.ts` liberando apenas `/api/hotspot/public/*` sem JWT
+  - `backend/src/server.ts` registrando rotas e schema do Hotspot
+  - `backend/src/utils/sys.ts` permitindo leitura controlada de `ip neigh show <ip>`
+  - `frontend/src/pages/Hotspot.jsx`
+  - `frontend/src/pages/HotspotPortal.jsx`
+  - `frontend/src/services/api.js` tratando `/api/hotspot/public/*` como rota publica independente da sessao administrativa
+  - `frontend/src/App.jsx` e `frontend/src/components/Sidebar.jsx`
+- validacao executada:
+  - `cd backend && npm run build`
+  - `cd frontend && npm run build`
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+  - `GET /api/hotspot/public/context` retornou contexto publico sem exigir JWT
+  - `GET https://127.0.0.1:6777/hotspot/portal` retornou `200` e carregou os assets de producao do frontend
+  - `POST /api/hotspot/public/register` com payload vazio retornou validacao em portugues
+  - `GET /api/hotspot/overview` autenticado retornou totais iniciais do modulo
+- observacao de validacao visual:
+  - nao havia Playwright/Chromium instalado no ambiente para screenshot automatizado
+  - o portal publico foi estruturado como mobile-first: layout de uma coluna, inputs/botoes com altura adequada ao toque, textos curtos, largura responsiva e sem tabelas ou paineis largos na jornada do visitante
+
+## Fechamento do Hotspot cativo VLAN 70 - 2026-04-29
+
+- implantado vhost Nginx `/etc/nginx/sites-available/sgcg-hotspot-captive`
+  - HTTP institucional em `192.168.70.1`
+  - rota publica `/hotspot/portal`
+  - proxy de `/api/hotspot/public/*` para o backend core `127.0.0.1:6778`
+  - assets do frontend servidos via proxy interno para `127.0.0.1:6777`
+  - hosts comuns de deteccao de portal cativo redirecionados para `http://192.168.70.1/hotspot/portal`
+- enforcement complementar do portal cativo:
+  - `ipset` `sgcg_hotspot_v70_auth` com timeout de 12 horas
+  - `iptables -t nat PREROUTING` redireciona HTTP de nao autenticados da `enp6s0.70` para `192.168.70.1:80`
+  - `iptables FORWARD` rejeita saida WAN de nao autenticados na VLAN 70
+  - login/cadastro/auto-login autorizam o IP do visitante no `ipset`
+  - revogacao de sessao remove o IP do runtime quando aplicavel
+- regra institucional preservada:
+  - UFW continua sendo o firewall principal
+  - `ipset`/`iptables` foram usados somente como camada complementar de runtime para captive portal
+  - DNS, ACL, RPZ, DoT block e demais politicas da VLAN 70 continuam ativos depois da autenticacao
+- modulo administrativo `Hotspot` passou a exibir estado do enforcement:
+  - interface
+  - gateway
+  - quantidade de IPs liberados
+  - acao `Reconciliar`
+- validacao executada:
+  - `nginx -t` com sucesso
+  - `systemctl reload nginx`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou o conjunto criado
+  - `iptables -t nat -S PREROUTING` confirmou DNAT cativo da VLAN 70
+  - `iptables -S FORWARD` confirmou rejeicao WAN para nao autenticados
+  - `GET http://127.0.0.1/hotspot/portal` com `Host: 192.168.70.1` retornou `200`
+  - `GET http://127.0.0.1/generate_204` com host de captive check retornou `302` para `http://192.168.70.1/hotspot/portal`
+  - `cd backend && npm run build`
+  - `cd frontend && npm run build`
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+
+## Correção do bypass emergencial por VLAN — 2026-04-29
+
+Três problemas identificados e corrigidos no fluxo de `Liberação emergencial por VLAN` em `Operações Táticas`.
+
+### Problema 1 — Firewall UFW não isentava VLAN emergencial do DROP global de DoT
+
+**`backend-proxy/src/services/dns-contingency-service.ts`**
+
+- `buildEarlyFirewallBlock()` passou a aceitar `emergencyVlans: VlanRow[]`
+- Para cada VLAN em bypass emergencial, gera `-A ufw-before-forward -i <iface> -p tcp --dport 853 -j ACCEPT` **antes** do DROP global `enp6s0+`
+- Isso garante que DoT não seja bloqueado pelo UFW em VLANs que estão com enforcement suspenso
+
+- `applyRuntimeVipBypassRules()` passou a aceitar `emergencyVlans: VlanRow[]`
+- Gerencia regras iptables runtime com comentário `sgcg-emergency-bypass`:
+  - Adiciona `FORWARD ACCEPT src <subnet> → WAN` e `FORWARD ACCEPT dst <subnet> RELATED,ESTABLISHED`
+  - Adiciona `FORWARD ACCEPT iifname <iface> tcp dport 853` (DoT liberado em runtime)
+  - Remove regras stale de VLANs que saíram do bypass
+
+- `applyFirewallBlock()` passou a aceitar e propagar `emergencyVlans` para ambos os métodos acima
+
+- `ensureFirewallState()` passou a buscar VLANs em bypass emergencial via `listEmergencyVlanRows()` e passá-las para `applyFirewallBlock()`
+
+- `listEmergencyVlanRows()` — novo helper que consulta `emergency_vlan_bypass WHERE active = TRUE` e faz join com `vlan_policies` para retornar `interface_name` e `subnet_cidr` das VLANs afetadas
+
+### Problema 2 — Camada nftables de DoT não era gerenciada pelo sistema
+
+**`backend-proxy/src/services/blocking-release-service.ts`**
+
+- `activateEmergencyVlanBypass()` passou a chamar `applyNftablesDotExemption(vlanId, true)` após `ensureFirewallState()`:
+  - Insere regra nftables `ACCEPT` para DoT na chain `ip filter FORWARD` para a interface da VLAN, com comentário `sgcg-emergency-bypass`
+  - Essa regra precede qualquer DROP existente na chain, liberando DoT em runtime
+
+- `deactivateEmergencyVlanBypass()` passou a chamar `applyNftablesDotExemption(vlanId, false)` após `ensureFirewallState()`:
+  - Lista `nft -a list chain ip filter FORWARD`, localiza handles de regras com comentário `sgcg-emergency-bypass` para a interface da VLAN, e as remove via `nft delete rule`
+
+- `applyNftablesDotExemption()` — novo método privado que executa as operações nftables acima
+
+### Problema 3 — Comentário contraditório no compilador
+
+**`backend-proxy/src/services/policy-compiler-service.ts`**
+
+- Corrigido comentário nas linhas 308-310 que afirmava que VLANs em bypass emergencial não teriam bypass DNS total
+- O código as inclui em `dnsBypassEntries` → zona VIP passthru → passthru total no Unbound/RPZ
+- Comentário atualizado para descrever o comportamento real
+
+### Problema 4 — Unbound não era recarregado automaticamente ao ativar/desativar bypass
+
+**`backend-proxy/src/services/blocking-release-service.ts`**
+
+- `activateEmergencyVlanBypass()` passou a chamar `this.reloadUnbound()` imediatamente após `writeGeneratedArtifacts()`
+- `deactivateEmergencyVlanBypass()` recebeu o mesmo ajuste
+- `reloadUnbound()` já executa `systemctl reload unbound` seguido de `unbound-control flush_zone .`, garantindo que:
+  - As novas zonas RPZ (com o passthru da VLAN) entrem em vigor imediatamente
+  - Entradas NXDOMAIN em cache sejam purgas sem esperar o TTL de 300s
+- O operador não precisa de acesso ao terminal para que o bypass DNS tenha efeito imediato
+
+### Build
+
+- `cd backend-proxy && npm run build` — compilação TypeScript concluída sem erros
+- `pm2 restart backend-proxy --update-env` — online (duas rodadas de build/restart nesta sessão)
+
+## CRUD administrativo de visitantes do Hotspot - 2026-04-29
+
+- o painel `Hotspot -> Visitantes` deixou de ser somente leitura e passou a ter CRUD administrativo
+- backend:
+  - `POST /api/hotspot/visitors`
+  - `GET /api/hotspot/visitors/:id`
+  - `PUT /api/hotspot/visitors/:id`
+  - `DELETE /api/hotspot/visitors/:id`
+- exclusao e desativacao sao logicas:
+  - preservam historico e auditoria
+  - desativam dispositivos associados
+  - revogam sessoes ativas
+  - removem IPs autorizados do `ipset` quando aplicavel
+- frontend:
+  - modal responsivo para criar/editar visitante
+  - campos: nome completo, CPF, data de nascimento, nome da mae, senha e cadastro ativo
+  - acoes de editar/excluir aparecem no `mouse hover` da linha em desktop
+  - no mobile as acoes ficam visiveis, pois toque nao possui hover confiavel
+- auditoria:
+  - `hotspot_visitor_created`
+  - `hotspot_visitor_create_failed`
+  - `hotspot_visitor_updated`
+  - `hotspot_visitor_update_failed`
+  - `hotspot_visitor_deleted`
+- validacao executada:
+  - `cd backend && npm run build`
+  - `cd frontend && npm run build`
+  - `pm2 restart bcc-backend`
+
+## Correcao ClamAV e limpeza de historico — 2026-04-29
+
+### Problema diagnosticado
+
+- a acao `Atualizar ClamAV` (sincronizar assinaturas antimalware) falhava com o erro `Failed to lock the log file /var/log/clamav/freshclam.log: Resource temporarily unavailable`
+- causa raiz: o backend chamava `freshclam --stdout` diretamente, mas o daemon `clamav-freshclam` ja mantinha o lock exclusivo do arquivo de log
+- chamar uma segunda instancia de `freshclam` enquanto o daemon esta rodando e invalido pelo design do proprio ClamAV
+
+### Correcao aplicada
+
+- `backend/src/modules/control/control-routes.ts`:
+  - acao `clamav_update` deixou de chamar `execClam('sudo', ['freshclam', '--stdout'])`
+  - passou a usar `sudo systemctl restart clamav-freshclam`, que forca a nova instancia a verificar e sincronizar assinaturas imediatamente na inicializacao
+  - apos o restart, o backend verifica `systemctl is-active clamav-freshclam` e registra o resultado no historico `control_antimalware_runs` normalmente
+  - isso elimina o conflito de lock sem alterar a semantica da operacao
+- novo endpoint `DELETE /api/control/clamav/runs`:
+  - limpa todo o historico de execucoes do ClamAV, exceto varreduras com status `running`
+  - `control_antimalware_findings` associados sao removidos em cascata pelo `ON DELETE CASCADE`
+- `frontend/src/pages/Control.jsx`:
+  - botao `Limpar historico` adicionado ao lado do titulo `Ultimas execucoes` na secao `ClamAV institucional`
+  - o botao aparece somente quando houver registros no historico
+  - exige confirmacao antes de executar
+  - recarrega os dados apos a limpeza
+
+### Estado do ClamAV confirmado
+
+- `clamav-daemon`: `active`
+- `clamav-freshclam`: `active` — assinaturas `daily 27986 / 2026-04-29`
+- `clamav-clamonacc`: `active`
+- superficies de varredura acessiveis: `/mnt/cftv_storage`, `/mnt/nextcloud_data`
+
+### Build
+
+- `cd backend && npm run build` — compilacao TypeScript concluida sem erros
+- `pm2 restart bcc-backend` — online
+  - `pm2 restart bcc-frontend`
+
+## Hotspot — Metricas e Relatorio Institucional — 2026-04-29
+
+### O que foi adicionado
+
+O modulo Hotspot ganhou tres abas: **Visao Geral** (existente), **Metricas** e **Relatorio**.
+
+#### Aba Metricas
+
+- cards de resumo: sessoes do mes, usuarios unicos do mes, dias com acesso, top usuario
+- grafico de barras: usuarios unicos por dia (ultimos 7 dias)
+- grafico de distribuicao horaria (24h, acumulado 30 dias)
+- ranking de usuarios por numero de sessoes (barra de progresso + cpf mascarado)
+- breakdown de metodos de autenticacao com barra de porcentagem
+- distribuicao por VLAN
+- nota informativa sobre integracao com log DNS para "sites mais visitados"
+
+#### Aba Relatorio
+
+- filtros: periodo (De / Ate), usuario (select populado da lista de visitantes), VLAN
+- botao `Gerar Relatorio` — carrega ate 200 registros na tela
+- botao `Sincronizar Log` — popula a tabela imutavel `hotspot_access_log` a partir das sessoes encerradas
+- botao `Imprimir / Salvar PDF` — gera janela de impressao com layout governamental
+- cards de metricas do periodo: sessoes, usuarios unicos, tempo total acumulado
+- tabela com: data, hora, usuario, cpf mascarado, ip, vlan, metodo auth, duracao, site, banda
+
+#### Relatorio PDF — layout governamental
+
+- **Cabecalho**: logotipo da Prefeitura Municipal de Jacarezinho (carregado de `jacarezinho.pr.gov.br`), nome da prefeitura em azul `#003087`, estado do Parana, secretaria, titulo do relatorio
+- **Fallback de logo**: se a imagem nao carregar, exibe circulo "PMJ PARANA"
+- **Bloco meta**: periodo, total de sessoes, usuarios unicos, data/hora de emissao
+- **Tabela**: todas as colunas, fundo alternado, cabecalho azul governo
+- **Rodape**: identificacao do sistema SGCG, data de geracao, nota de validade institucional, numero de documento unico (`SGCG-HS-<hex>`)
+- Formato A4 paisagem, `window.print()` dispara automaticamente ao abrir a janela
+
+### Novos endpoints de backend
+
+| Metodo | Rota | Auth | Descricao |
+|--------|------|------|-----------|
+| GET | `/api/hotspot/metrics` | JWT | Metricas de uso: diario, mensal, top usuarios, auth methods, vlan, horario |
+| POST | `/api/hotspot/access-log/sync` | JWT | Sincroniza sessoes encerradas para a tabela imutavel `hotspot_access_log` |
+| GET | `/api/hotspot/report` | JWT | Relatorio paginado com filtros de periodo, usuario e vlan |
+
+### Nova tabela de banco de dados
+
+```sql
+CREATE TABLE hotspot_access_log (
+    id BIGSERIAL PRIMARY KEY,
+    logged_at TIMESTAMPTZ DEFAULT NOW(),
+    session_id BIGINT,          -- referencia a hotspot_sessions (sem FK para manter imutabilidade)
+    visitor_id BIGINT,
+    visitor_name TEXT,
+    cpf_masked TEXT,
+    client_ip INET,
+    mac_address TEXT,
+    vlan_id INTEGER,
+    auth_method TEXT,
+    session_started_at TIMESTAMPTZ,
+    session_ended_at TIMESTAMPTZ,
+    duration_seconds INTEGER,
+    bytes_up BIGINT DEFAULT 0,
+    bytes_down BIGINT DEFAULT 0,
+    top_domain TEXT,
+    notes TEXT
+);
+-- IMUTAVEL: apenas INSERT. REVOKE DELETE, UPDATE FROM PUBLIC executado no ensureAccessLogSchema.
+```
+
+Indices: `idx_hotspot_access_log_date`, `idx_hotspot_access_log_visitor`, `idx_hotspot_access_log_vlan`
+
+### Arquivos alterados
+
+- `backend/src/modules/hotspot/hotspot-routes.ts` — funcao `ensureAccessLogSchema()` + 3 novos routes + export `hotspotSchemaService` atualizado
+- `frontend/src/pages/Hotspot.jsx` — reescrito com TabBar + MetricsTab + ReportTab; aba Visao Geral preservada sem alteracoes
+
+### Build
+
+- `cd backend && npm run build` — TypeScript compilado sem erros
+- `pm2 restart bcc-backend` — online (confirmado via `pm2 list`)
+- endpoints verificados: `/api/hotspot/metrics`, `/api/hotspot/access-log/sync`, `/api/hotspot/report` retornam 401 (JWT obrigatorio) — correto
+
+---
+
+## Sessão 2026-04-29 — Módulo Hotspot: Métricas, Relatório Institucional e PDF
+
+### Visão geral
+
+Expansão completa do módulo Hotspot com sistema de abas (3 tabs), painel de métricas com gráficos CSS, relatório institucional com filtros e impressão PDF em layout A4 landscape com identidade visual da Prefeitura Municipal de Jacarezinho.
+
+---
+
+### Backend — `backend/src/modules/hotspot/hotspot-routes.ts`
+
+#### Nova tabela imutável `hotspot_access_log`
+
+Criada via `ensureAccessLogSchema()`, chamada antes de `ensureSchema()` na inicialização:
+
+```sql
+CREATE TABLE IF NOT EXISTS hotspot_access_log (
+    id BIGSERIAL PRIMARY KEY,
+    logged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    session_id BIGINT,
+    visitor_id BIGINT,
+    visitor_name TEXT,
+    cpf_masked TEXT,
+    client_ip INET,
+    mac_address TEXT,
+    vlan_id INTEGER,
+    auth_method TEXT,
+    session_started_at TIMESTAMPTZ,
+    session_ended_at TIMESTAMPTZ,
+    duration_seconds INTEGER,
+    bytes_up BIGINT DEFAULT 0,
+    bytes_down BIGINT DEFAULT 0,
+    top_domain TEXT,
+    notes TEXT
+);
+-- Imutabilidade: REVOKE DELETE, UPDATE ON hotspot_access_log FROM PUBLIC
+```
+
+Índices: `idx_hotspot_access_log_date`, `idx_hotspot_access_log_visitor`, `idx_hotspot_access_log_vlan`
+
+#### Novos endpoints
+
+| Método | Rota | Auth | Descrição |
+|--------|------|------|-----------|
+| GET | `/api/hotspot/metrics` | JWT | Métricas: diário (30d), mensal, top 10 usuários, auth methods (%), VLAN, distribuição horária (24h) |
+| POST | `/api/hotspot/access-log/sync` | JWT | Sincroniza sessões encerradas para `hotspot_access_log` (dedup por `session_id`) |
+| GET | `/api/hotspot/report` | JWT | Relatório paginado; filtros: `from`, `to`, `visitor_id`, `vlan_id`, `page`, `limit` (máx 1000) |
+
+**Padrão de SQL dinâmico no `/report`:**
+- Condições montadas com `params.length + 1` para evitar conflito de índice
+- `baseParams = [...params]` snapshot antes de adicionar LIMIT/OFFSET — reusado em `COUNT` e `summary`
+- CPF mascarado via `REGEXP_REPLACE(v.cpf, '(\\d{3})(\\d{3})(\\d{3})(\\d{2})', '\\1.***.***-\\4')` (duplo escape TypeScript)
+
+**Export atualizado:**
+```typescript
+export const hotspotSchemaService = { ensureSchema, ensureHotspotEnforcement, ensureAccessLogSchema };
+```
+
+---
+
+### Frontend — `frontend/src/pages/Hotspot.jsx`
+
+Arquivo reescrito completamente (~875 linhas). Aba **Visão Geral** preservada sem alterações funcionais.
+
+#### Novos imports
+
+```javascript
+import { BarChart2, Clock, FileText, Filter, Printer, Users } from 'lucide-react';
+```
+
+#### Helpers adicionados
+
+| Função | Descrição |
+|--------|-----------|
+| `formatDuration(seconds)` | Converte segundos em `Xh Ym` / `Xm Ys` |
+| `formatBytes(bytes)` | Formata bytes em B / KB / MB |
+
+#### Novo componente `TabBar`
+
+3 abas com indicador ativo (`bg-primary text-on-primary`). Rótulos ocultos em mobile (`hidden sm:inline`).
+
+| Key | Label | Ícone |
+|-----|-------|-------|
+| `overview` | Visão Geral | `Wifi` |
+| `metrics` | Métricas | `BarChart2` |
+| `report` | Relatório | `FileText` |
+
+#### Novo componente `SelectField`
+
+Select estilizado com label uppercase, mesmo visual dos `Field` inputs.
+
+#### Novo componente `MetricsTab`
+
+- **Loading**: spinner `Activity` animado
+- **Empty state**: botão "Carregar Métricas"
+- **4 cards de métrica**: sessões mês, usuários únicos mês, dias com acesso, top usuário
+- **Gráfico de barras CSS** — últimos 7 dias (usuários únicos por dia, altura proporcional ao máximo)
+- **Gráfico de barras CSS** — distribuição horária 0–23h
+- **Ranking de usuários** com barra de progresso percentual (top 10)
+- **Métodos de autenticação**: barras coloridas (`bg-primary`, `bg-info`, `bg-orange-500`) com %
+- **Distribuição por VLAN**: chips coloridos
+- Nota sobre `top_domain` (requer integração com dnsmasq/unbound por IP)
+
+#### Novo componente `ReportTab`
+
+**Estado:** `filters` (from, to, visitor_id, vlan_id), `reportData`, `loading`, `syncing`, `printing`
+
+**Funções:**
+- `buildParams()` — monta query string a partir dos filtros ativos
+- `loadReport()` — busca até 200 linhas em `/api/hotspot/report`
+- `syncLog()` — chama `POST /access-log/sync` e exibe contagem inserida
+- `printReport()` — busca até 1000 linhas, abre janela com HTML institucional e `setTimeout(window.print, 500)`
+
+**Filtros disponíveis:** período (de/até), visitante (select), VLAN (select)
+
+**Colunas da tabela de resultados:**
+`Data`, `Hora`, `IP`, `MAC`, `Usuário`, `CPF`, `VLAN`, `Método Auth`, `Duração`, `Site`
+
+#### Função `printReport` — template HTML institucional
+
+- **Formato:** A4 landscape, margens `1.2cm 1.5cm 2.2cm`
+- **Logo:** `https://www.jacarezinho.pr.gov.br/uploads/siteDescricao/logoprincipal493_(107).png` com fallback `onerror` para bloco estilizado "PMJ PARANÁ"
+- **Cabeçalho:**
+  ```
+  H1 — Prefeitura Municipal de Jacarezinho        (cor #003087)
+  H2 — Estado do Paraná
+  H3 — Secretaria do Comércio, Indústria, Serviços e Inovação
+  H4 — Relatório Oficial do Hotspot Institucional  ← título oficial
+  p  — Relatório de Acesso ao Hotspot Municipal    ← subtítulo descritivo
+  ```
+- **Bloco meta:** Período, Total de Sessões, Usuários Únicos, Emissão (data/hora)
+- **Tabela:** cabeçalho azul `#003087`, linhas alternadas
+- **Rodapé:** "Sistema de Governança e Controle Governamental (SGCG)", número único `SGCG-HS-<hex>` (`Date.now().toString(36).toUpperCase()`), nota de validade institucional
+- **Auto-print:** `setTimeout(window.print, 500)` ao abrir a janela
+
+#### Componente principal `Hotspot`
+
+Novo estado: `tab` (default `'overview'`), `metrics`, `metricsLoading`
+
+`useEffect` auto-carrega métricas ao mudar para a aba `metrics` (apenas se `metrics` ainda nulo).
+
+Renderização condicional por `tab`:
+```jsx
+{tab === 'overview' && <...visão geral...>}
+{tab === 'metrics' && <MetricsTab ... />}
+{tab === 'report'  && <ReportTab ... />}
+```
+
+---
+
+### Ajuste de cabeçalho do relatório PDF (2026-04-29)
+
+- `<h4>` alterado de `"Relatório de Acesso ao Hotspot Municipal"` → `"Relatório Oficial do Hotspot Institucional"`
+- Adicionado `<p>` com subtítulo descritivo abaixo do H4
+
+---
+
+### Build e deploy
+
+```bash
+cd backend && npm run build   # sem erros TypeScript
+pm2 restart bcc-backend       # online — porta 6778
+```
+
+Endpoints verificados: retornam `401` sem JWT válido (comportamento correto).
+
+## Remoção do campo Nome da Mãe no Hotspot - 2026-04-29
+
+- removido o campo `Nome da mãe` do cadastro público do portal `/hotspot/portal`
+- removido o campo `Nome da mãe` do CRUD administrativo de visitantes em `Hotspot -> Visitantes`
+- backend do Hotspot deixou de exigir, inserir, listar ou atualizar `mother_name`
+- a tabela `hotspot_visitors` foi alterada no PostgreSQL para remover fisicamente a coluna `mother_name`
+- `ensureSchema()` do Hotspot passou a executar `ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS mother_name`, garantindo que bases legadas sejam saneadas em novas subidas
+- mensagens de validação do cadastro público e administrativo foram atualizadas para exigir apenas:
+  - nome completo
+  - CPF
+  - data de nascimento
+  - senha
+
+### Validação
+
+- `ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS mother_name` executado com sucesso no banco `controlebeckercorp_v8`
+- conferência em `information_schema.columns` confirmou ausência da coluna `mother_name`
+- `cd backend && npm run build` — compilação TypeScript concluída sem erros
+- `cd frontend && npm run build` — `✓ built in 2.75s`
+- `pm2 restart bcc-backend bcc-frontend --update-env` — ambos `online`
+- `POST /api/hotspot/public/register` com senha inválida retornou mensagem nova sem referência a nome da mãe
+- `GET https://127.0.0.1:6777/hotspot/portal` retornou `200`
+
+---
+
+## Sessão 2026-04-30 — Exportação de Queries DNS por IP no Módulo Hotspot
+
+### Objetivo
+
+Ativar a integração entre o `DnsRadarService` (que já ingeria consultas DNS do Unbound em `dns_policy_events`) e o módulo Hotspot, populando automaticamente o campo `top_domain` e exibindo os sites mais visitados por usuários da VLAN 70.
+
+### Contexto técnico
+
+- `backend-proxy` e `backend` compartilham o mesmo banco `controlebeckercorp_v8`
+- `dns_policy_events` já é populada pelo `DnsRadarService` via `journalctl -fu unbound`
+- IPs da VLAN 70 (hotspot) seguem o padrão `192.168.70.x`
+- `hotspot_access_log.top_domain` existia mas nunca era populado
+
+---
+
+### Backend — `backend/src/modules/hotspot/hotspot-routes.ts`
+
+#### 1. `GET /metrics` — novo campo `top_domains`
+
+Adicionada query ao `Promise.all` existente:
+
+```sql
+SELECT query_name AS domain,
+       COUNT(*)::int AS total,
+       COUNT(DISTINCT host(client_ip))::int AS unique_ips
+FROM dns_policy_events
+WHERE occurred_at >= NOW() - INTERVAL '30 days'
+  AND client_ip::text LIKE '192.168.70.%'
+  AND action != 'blocked'
+  AND query_name IS NOT NULL
+  AND query_name != '-'
+GROUP BY query_name
+ORDER BY total DESC
+LIMIT 10
+```
+
+Usando `.catch(() => ({ rows: [] }))` para não quebrar quando `dns_policy_events` estiver vazia.
+
+Resposta do endpoint passa a incluir `top_domains: [{ domain, total, unique_ips }]`.
+
+#### 2. `POST /access-log/sync` — população de `top_domain`
+
+Após o INSERT das sessões, executa UPDATE correlacionado para preencher `top_domain`:
+
+```sql
+UPDATE hotspot_access_log hal
+SET top_domain = (
+    SELECT dpe.query_name
+    FROM dns_policy_events dpe
+    WHERE dpe.client_ip = hal.client_ip
+      AND dpe.occurred_at >= hal.session_started_at
+      AND dpe.occurred_at <= COALESCE(hal.session_ended_at, hal.session_started_at + INTERVAL '12 hours')
+      AND dpe.action != 'blocked'
+      AND dpe.query_name IS NOT NULL
+      AND dpe.query_name != '-'
+    GROUP BY dpe.query_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+)
+WHERE hal.top_domain IS NULL
+  AND hal.client_ip IS NOT NULL
+  AND hal.session_started_at IS NOT NULL
+```
+
+Usa `.catch(() => null)` para tolerar `top_domain` já preenchido ou ausência de dados DNS.
+
+#### 3. `GET /report` — `top_domain` ao vivo via subquery correlacionada
+
+Substituído `al.top_domain` por:
+
+```sql
+COALESCE(al.top_domain, (
+    SELECT dpe.query_name
+    FROM dns_policy_events dpe
+    WHERE dpe.client_ip = s.client_ip
+      AND dpe.occurred_at >= s.started_at
+      AND dpe.action != 'blocked'
+      AND dpe.query_name IS NOT NULL
+      AND dpe.query_name != '-'
+    GROUP BY dpe.query_name
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+)) AS top_domain
+```
+
+Garante que sessões ainda não sincronizadas já mostrem o site mais visitado em tempo real.
+
+---
+
+### Frontend — `frontend/src/pages/Hotspot.jsx`
+
+#### `MetricsTab` — painel "Sites mais visitados"
+
+Substituído o aviso estático de "requer integração DNS" por painel real:
+
+- Título: **Sites mais visitados (VLAN 70 — últimos 30 dias)**
+- Lista de até 10 domínios com barra de progresso proporcional ao primeiro da lista (`bg-info/70`)
+- Cada linha exibe: domínio, total de consultas, número de IPs únicos
+- Estado vazio: mensagem orientando verificar se `DnsRadarService` está ativo
+
+`top_domains` desestruturado do objeto `metrics` recebido do backend.
+
+---
+
+### Correção prévia nesta sessão — índice IMMUTABLE
+
+Erro PostgreSQL `functions in index expression must be marked IMMUTABLE` causado por:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_hotspot_access_log_date
+    ON hotspot_access_log (DATE(session_started_at));
+```
+
+`DATE(TIMESTAMPTZ)` é `STABLE` (depende do timezone de sessão), não `IMMUTABLE`.
+
+**Fix:** índice alterado para `(session_started_at)` diretamente — cobre os mesmos filtros por intervalo de data.
+
+---
+
+### Build e deploy
+
+```bash
+cd backend && npm run build    # sem erros TypeScript
+cd frontend && npm run build   # ✓ 1919 módulos, built in 2.60s
+pm2 restart bcc-backend bcc-frontend
+```
+
+Ambos online. Endpoints verificados: `GET /api/hotspot/metrics` retorna `top_domains`, `POST /api/hotspot/access-log/sync` popula `top_domain` no banco.
+
+---
+
+## Sessão 2026-04-29 — Política de Domínios Ignorados, Identidade Windows no Radar DNS e Correções
+
+### Contexto
+
+Após ativar a exportação de queries DNS por IP no módulo Hotspot, identificou-se que os relatórios e métricas de radar DNS estavam sendo contaminados por domínios de hardware (câmeras, APs, switches) que consultam repetidamente domínios internos e de telemetria sem qualquer relevância para governança de usuários.
+
+---
+
+### Fase 1 — Filtro hardcoded removido → Política DB-backed `dns_ignored_domains`
+
+#### Problema
+
+Domínios reportados como ruído:
+- `brwc894021a6f3c.vlan70.local`, `wpad.vlan70.local` — hostnames de hardware consultando WPAD
+- `api-cronos.intelbras.com.br` — telemetria de câmeras Intelbras
+- `neverssl.com` — teste de conectividade de APs
+- `tp-link.com` — telemetria de APs TP-Link
+- Qualquer domínio contendo `vlan` no nome (`*vlan*`)
+
+#### Solução implementada
+
+Nova tabela `dns_ignored_domains` gerenciada via UI, com seed inicial automático.
+
+**Schema adicionado em `blocking-release-schema-service.ts`:**
+
+```sql
+CREATE TABLE IF NOT EXISTS dns_ignored_domains (
+    id          SERIAL PRIMARY KEY,
+    pattern     TEXT        NOT NULL,
+    match_type  TEXT        NOT NULL DEFAULT 'contains'
+                            CHECK (match_type IN ('exact','contains','suffix','prefix')),
+    description TEXT,
+    active      BOOLEAN     NOT NULL DEFAULT TRUE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_dns_ignored_pattern UNIQUE (pattern)
+);
+```
+
+Também adicionadas colunas de identidade Windows:
+
+```sql
+ALTER TABLE dns_policy_events ADD COLUMN IF NOT EXISTS identity_user     TEXT;
+ALTER TABLE dns_policy_events ADD COLUMN IF NOT EXISTS identity_computer TEXT;
+```
+
+---
+
+### Novo serviço — `backend-proxy/src/services/dns-ignored-service.ts`
+
+Serviço com cache TTL de 30 segundos para não bater no banco a cada evento DNS.
+
+**Seeds iniciais (5 regras):**
+
+| pattern | match_type | descrição |
+|---------|-----------|-----------|
+| `vlan` | `contains` | Hostnames de hardware com VLAN no nome |
+| `.local` | `suffix` | Domínios mDNS/NetBIOS internos |
+| `api-cronos.intelbras.com.br` | `exact` | Telemetria câmeras Intelbras |
+| `neverssl.com` | `exact` | Teste de conectividade de APs |
+| `tp-link.com` | `exact` | Telemetria APs TP-Link |
+
+**Interface pública:**
+
+```typescript
+loadActive(): Promise<PatternRow[]>          // com cache 30s
+buildSqlFilter(patterns, col): string        // gera cláusulas AND NOT LIKE / NOT IN
+invalidateCache(): void                      // chamado em add/remove/toggle
+seed(): Promise<void>                        // idempotente, chamado no boot
+list(): Promise<PatternRow[]>
+add(pattern, match_type, description): Promise<PatternRow>
+remove(id): Promise<void>
+toggle(id, active): Promise<PatternRow>
+```
+
+`buildSqlFilter` gera SQL com escape adequado de `%` e `_` para cláusulas LIKE:
+
+```typescript
+const esc = pattern.replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_');
+```
+
+---
+
+### Melhoria do radar DNS — identidade Windows em `dns-radar-service.ts`
+
+O agente de identidade Windows (`sgcg-identity-checkin`) já estava rodando como serviço em todas as máquinas de todas as VLANs, enviando checkins para `POST /api/identity/checkin`. Os dados ficavam em `data/identity/latest.json` indexados por IP.
+
+**Wiring adicionado em `DnsRadarService.ingestLine()`:**
+
+```typescript
+const identityByIp = identityEnrichmentService.loadLatestByIp();
+const identity = identityByIp.get(parsed.clientIp) || null;
+```
+
+Campos novos no INSERT de `dns_policy_events`:
+- `identity_user` — `identity.display_user` (ex: `PREFEITURA\joao.silva`)
+- `identity_computer` — `identity.computer` (ex: `PC-FINANCAS-01`)
+- `raw_payload.identity` — objeto completo com `user`, `display_user`, `computer`, `agent_id`, `checked_at`
+
+**Filtros novos em `getEvents()`:**
+
+```typescript
+if (filters.identity_user) {
+    where.push(`LOWER(COALESCE(identity_user, '')) LIKE $${params.length}`);
+}
+if (filters.identity_computer) {
+    where.push(`LOWER(COALESCE(identity_computer, '')) LIKE $${params.length}`);
+}
+```
+
+**Filtro dinâmico de ruído em `getOverview()` e `getEvents()`:**
+
+Substituído o antigo SQL hardcoded por chamada dinâmica ao serviço:
+
+```typescript
+const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
+```
+
+---
+
+### Novas rotas CRUD — `backend-proxy/src/routes/dns-routes.ts`
+
+Montadas em `/api/dns` (proxy na porta 6779):
+
+```
+GET    /api/dns/ignored              → lista todas as políticas
+POST   /api/dns/ignored              → adiciona nova política
+PATCH  /api/dns/ignored/:id/toggle   → ativa/desativa política
+DELETE /api/dns/ignored/:id          → remove política
+```
+
+Boot do serviço adicionado em `backend-proxy/src/server.ts`:
+
+```typescript
+dnsIgnoredService.seed().catch((error) => {
+    console.error('[PROXY API] Falha no seed de domínios ignorados:', error);
+});
+```
+
+---
+
+### Integração no módulo Hotspot — `backend/src/modules/hotspot/hotspot-routes.ts`
+
+Função auxiliar adicionada para consultar a tabela de políticas diretamente do backend principal (compartilha o mesmo banco):
+
+```typescript
+async function loadDnsIgnoreFilter(col: string): Promise<string> {
+    const { rows } = await pool.query(
+        `SELECT pattern, match_type FROM dns_ignored_domains WHERE active = TRUE`,
+    );
+    // gera cláusulas AND NOT IN / AND NOT LIKE dinamicamente
+}
+```
+
+Aplicada em todos os três endpoints Hotspot:
+- `GET /metrics` → `noiseFilter = await loadDnsIgnoreFilter('query_name')`
+- `POST /access-log/sync` → `noiseFilterDpe = await loadDnsIgnoreFilter('dpe.query_name')`
+- `GET /report` → `noiseFilterDpe` na subquery correlacionada de `top_domain`
+
+---
+
+### Frontend — `DnsIgnoredTab` em `BlockingReleases.jsx`
+
+Nova aba **"Domínios Ignorados"** adicionada à seção **"Políticas Institucionais"** com ícone `EyeOff` (lucide-react).
+
+**Funcionalidades:**
+- Tabela com todas as políticas (pattern, tipo, descrição, status ativo/inativo)
+- Badges coloridos por `match_type`: exact (azul), contains (amarelo), suffix (roxo), prefix (verde)
+- Toggle ativo/inativo por linha
+- Botão de exclusão por linha
+- Formulário inline para adicionar nova política (pattern, tipo, descrição opcional)
+- Estado vazio com mensagem orientativa
+
+**Rotas utilizadas:**
+
+```javascript
+GET    /api/dns/ignored
+POST   /api/dns/ignored
+PATCH  /api/dns/ignored/${id}/toggle
+DELETE /api/dns/ignored/${id}
+```
+
+---
+
+### Correção crítica — JSON.parse: unexpected character
+
+#### Sintoma
+
+Aba "Domínios Ignorados" retornava erro `JSON.parse: unexpected character at line 1 column 1` ao carregar.
+
+#### Causa raiz — arquitetura Nginx
+
+O Nginx roteia requisições para dois backends distintos:
+
+| Padrão | Backend | Porta |
+|--------|---------|-------|
+| `/api/(proxy\|rules\|cert\|dns)/` | backend-proxy | 6779 |
+| `/api/` (demais) | bcc-backend | 6778 |
+
+O `dns-routes.ts` é montado em `/api/dns` no **backend-proxy** (porta 6779).
+
+O componente `DnsIgnoredTab` estava chamando `/api/proxy/dns/ignored` → esse caminho não existe no backend-proxy → Nginx roteava para o bcc-backend → que não conhece a rota → retornava o `index.html` do SPA → JSON.parse falhava ao tentar parsear HTML.
+
+#### Fix
+
+Todos os 4 `authFetch` do componente corrigidos de `/api/proxy/dns/ignored` → `/api/dns/ignored`.
+
+**Módulos afetados:** somente a nova aba "Domínios Ignorados" em `BlockingReleases.jsx`. Nenhum módulo pré-existente foi impactado.
+
+---
+
+### Lição aprendida — rebuild frontend obrigatório
+
+O serviço `bcc-frontend` (PM2) roda em modo `preview`, que serve o **build estático**. Qualquer alteração em arquivos `.jsx` exige rebuild antes de ficar visível:
+
+```bash
+cd /opt/controlebeckercorp-v8/frontend && npm run build
+pm2 restart bcc-frontend
+```
+
+---
+
+### Build e deploy desta sessão
+
+```bash
+cd backend && npm run build          # sem erros TypeScript
+cd backend-proxy && npm run build    # sem erros TypeScript
+cd frontend && npm run build         # módulos compilados com DnsIgnoredTab
+pm2 restart bcc-backend backend-proxy bcc-frontend
+```
+
+Serviços verificados: `dns_ignored_domains` populada com 5 seeds, aba visível no frontend, rotas CRUD respondendo em `/api/dns/ignored`.
+
+---
+
+## Melhoria do Termo de Uso do Portal Cativo Hotspot — 2026-04-30
+
+- o portal público `/hotspot/portal` da VLAN 70 recebeu tela dedicada de `Termo de Uso da Rede Pública de Visitantes`
+- o card resumido de termo passou a abrir o texto institucional completo dentro do próprio portal, com botão destacado `Voltar e se conectar`
+- o texto foi redigido em linguagem governamental formal, mas direta para o cidadão, cobrindo:
+  - finalidade do Hotspot Institucional
+  - identificação pessoal e responsabilidade do usuário
+  - proteção de dados pessoais conforme a Lei Federal nº 13.709/2018, Lei Geral de Proteção de Dados Pessoais (LGPD)
+  - observância da Lei Federal nº 12.965/2014, Marco Civil da Internet
+  - gravação dos dados necessários à segurança, auditoria e rastreabilidade institucional
+  - uso permitido, restrições e aceite formal
+- logo abaixo da mensagem `Identifique-se para uso da rede pública de visitantes. No primeiro acesso, realize o cadastro institucional.`, foi adicionado aviso com ícone de escudo verde:
+  - `Ao se conectar você aceita os termos e concorda com a Lei Geral de Proteção de Dados 13.709/2018 - LGPD.`
+- a alteração ficou restrita ao frontend do portal cativo:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- validação e publicação executadas:
+  - `cd frontend && npm run build` — `✓ built in 2.71s`
+  - `pm2 restart bcc-frontend` — processo voltou `online`
+
+## Próximo passo recomendado
+
+- validar visualmente o fluxo em um celular conectado à VLAN 70:
+  - abertura do portal cativo
+  - leitura do termo completo
+  - retorno pelo botão `Voltar e se conectar`
+  - cadastro ou login após o aceite informativo
+
+## Redirecionamento pós-login do Portal Cativo Hotspot — 2026-04-30
+
+- após autenticação bem-sucedida no portal público `/hotspot/portal`, o usuário passa a ser encaminhado para o site oficial da Prefeitura Municipal de Jacarezinho:
+  - `https://www.jacarezinho.pr.gov.br/`
+- o backend do hotspot agora devolve `redirect_url` nas respostas autenticadas de:
+  - `GET /api/hotspot/public/context` quando o dispositivo já é reconhecido por MAC
+  - `POST /api/hotspot/public/register` após cadastro inicial
+  - `POST /api/hotspot/public/login` após login por CPF e senha
+- o frontend do portal usa o `redirect_url` retornado pelo backend e mantém fallback local para o mesmo endereço oficial
+- o redirecionamento ocorre com pequeno atraso operacional para permitir que a sessão seja registrada e que o status de sucesso seja renderizado antes da navegação externa
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+- validação executada:
+  - `cd backend && npm run build` — compilação TypeScript concluída sem erros
+  - `cd frontend && npm run build` — `✓ built in 2.90s`
+  - `pm2 restart bcc-backend` — processo voltou `online`
+  - `pm2 restart bcc-frontend` — processo voltou `online`
+
+## Próximo passo recomendado
+
+- validar em um dispositivo real da VLAN 70:
+  - cadastro novo no hotspot
+  - login de usuário já cadastrado
+  - reconhecimento automático por MAC
+  - confirmação de abertura de `https://www.jacarezinho.pr.gov.br/` após autenticação
+
+## Endurecimento do portal cativo Hotspot VLAN 70 — 2026-04-30
+
+- corrigido o fluxo em que dispositivo conhecido por MAC era autorizado automaticamente ao acessar `GET /api/hotspot/public/context`
+- o contexto público do Hotspot deixou de criar sessão `mac_auto` e deixou de inserir o IP no `ipset` automaticamente
+- dispositivo já cadastrado agora recebe resposta de reconhecimento sem navegação liberada:
+  - `authenticated=false`
+  - `recognized=true`
+  - `requires_confirm=true`
+  - mensagem `Bem-vindo de volta`
+- criada a rota pública `POST /api/hotspot/public/continue`
+  - exige que o MAC esteja novamente identificado pelo gateway
+  - revoga sessões ativas correlatas do mesmo dispositivo/IP antes de criar nova sessão
+  - cria sessão com método `mac_confirm`
+  - só então adiciona o IP ao `ipset` `sgcg_hotspot_v70_auth`
+  - mantém redirecionamento posterior para `https://www.jacarezinho.pr.gov.br/`
+- o portal `/hotspot/portal` passou a exibir card de retorno para dispositivo reconhecido:
+  - `Bem-vindo de volta`
+  - nome do visitante
+  - botão `Clique aqui para navegar`
+- a navegação por MAC deixou de ser silenciosa: mesmo dispositivo conhecido precisa passar pelo portal e confirmar o acesso
+- o enforcement complementar foi endurecido:
+  - `GET /api/hotspot/public/context` remove o IP atual do `ipset` enquanto o usuário ainda não confirmou
+  - o bootstrap do enforcement revoga sessões legadas `mac_auto` ainda ativas
+  - IPs presentes no `ipset` sem sessão ativa válida são podados automaticamente
+  - sessões `mac_auto` deixaram de ser consideradas autorização válida para permanência no runtime
+- estado operacional validado após publicação:
+  - `sgcg_hotspot_v70_auth` ficou com `0` IPs autorizados
+  - não havia sessões ativas remanescentes em `hotspot_sessions`
+  - `GET /api/hotspot/public/context` local retornou `authenticated=false`
+  - `POST /api/hotspot/public/continue` local sem MAC retornou erro esperado de dispositivo não identificado
+- validação e publicação executadas:
+  - `cd backend && npm run build`
+  - `cd frontend && npm run build`
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+
+## Próximo passo recomendado
+
+- testar diretamente em um celular/notebook na rede `MEI-VISITANTES`:
+  - revogar sessão no SGCG
+  - desconectar e reconectar na rede
+  - confirmar que a navegação externa fica bloqueada
+  - abrir qualquer página HTTP ou o portal cativo
+  - verificar a tela `Bem-vindo de volta`
+  - clicar em `Clique aqui para navegar`
+  - confirmar que a navegação só libera após esse clique
+
+## Validação e endurecimento final de revogação do Hotspot — 2026-04-30
+
+- revisado novamente o fluxo do botão administrativo `Revogar` em `Hotspot`
+- corrigido ponto crítico de normalização de IP:
+  - campos PostgreSQL `inet` podem retornar `client_ip::text` como `192.168.70.x/32`
+  - o backend agora normaliza IPs removendo sufixo CIDR antes de qualquer ação de `ipset`, VLAN ou `conntrack`
+  - consultas de revogação passaram a retornar `host(client_ip)` quando precisam agir no runtime
+- o corte imediato foi endurecido:
+  - revogação remove o IP do `ipset` `sgcg_hotspot_v70_auth`
+  - revogação também executa limpeza complementar de conexões com `conntrack -D -s <ip>` e `conntrack -D -d <ip>`
+  - isso impede que conexões já estabelecidas continuem navegando após a remoção do `ipset`
+- adicionada allowlist controlada em `backend/src/utils/sys.ts` para:
+  - `conntrack -D -s 192.168.70.x`
+  - `conntrack -D -d 192.168.70.x`
+- sessões expiradas por tempo agora são encerradas automaticamente:
+  - rotina `expireExpiredSessions()` marca sessões `active` vencidas como `expired`
+  - preenche `revoked_at`
+  - remove IPs do `ipset`
+  - limpa conexões via `conntrack`
+  - poda IPs autorizados sem sessão ativa válida
+- o backend passou a executar varredura automática de expiração do Hotspot a cada `60` segundos
+- a resposta do endpoint de revogação deixou de informar `mac_auto_preserved=true`
+  - agora retorna `mac_auto_preserved=false`
+  - retorna também `confirmation_required=true`, alinhado ao novo fluxo em que MAC conhecido precisa confirmar no portal
+- validação operacional executada:
+  - criada sessão expirada artificial para `192.168.70.250`
+  - IP foi inserido temporariamente no `sgcg_hotspot_v70_auth`
+  - restart/reconciliação do backend marcou a sessão como `expired`
+  - IP `192.168.70.250` foi removido do `ipset`
+  - criada sessão ativa artificial para `192.168.70.250`
+  - chamada real ao endpoint `POST /api/hotspot/sessions/9/revoke` retornou `success=true` e `runtime_revoked=true`
+  - banco confirmou sessão `9` como `revoked`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou ausência do IP de teste
+- estado runtime observado após validação:
+  - permaneceu apenas `192.168.70.46` no `ipset`
+  - esse IP possui sessão real `mac_confirm` ativa e ainda não expirada, portanto foi preservado corretamente
+- validação e publicação:
+  - `cd backend && npm run build`
+  - `pm2 restart bcc-backend`
+  - `GET /api/ping` retornou `Pong HTTP (Core 6778)`
+
+## Próximo passo recomendado
+
+- repetir no dispositivo real conectado à rede `MEI-VISITANTES`:
+  - clicar `Revogar` no SGCG
+  - confirmar que o IP desaparece imediatamente de `sgcg_hotspot_v70_auth`
+  - confirmar que navegação externa cai na hora
+  - abrir o portal e verificar que a liberação só volta após `Clique aqui para navegar`
+
+## Atualizacao documental e preparacao de versionamento Git — 2026-04-30
+
+- realizada nova leitura consolidada do projeto antes de publicar no Git:
+  - estrutura raiz
+  - frontend React/Vite
+  - backend core TypeScript
+  - backend-proxy TypeScript
+  - scripts operacionais
+  - agente de identidade Windows
+  - documentacao complementar em `docs/`
+- `README.md` foi atualizado para refletir o estado atual do SGCG:
+  - arquitetura principal
+  - eixos `Governanca` e `Controle`
+  - modulos atuais
+  - estado operacional recente
+  - regras criticas de UFW, Hotspot, DNS, frontend estatico e dados sensiveis
+  - comandos de build e publicacao operacional
+- `.gitignore` foi reforcado para impedir publicacao acidental de:
+  - `.codex-checkpoints/`
+  - `data/identity/`, que contem check-ins reais de endpoints e nao deve ir para o repositorio remoto
+- endurecimento pre-versionamento aplicado no agente de identidade:
+  - removidos tokens hardcoded do backend `identity-routes`
+  - removido token default do servidor standalone `scripts/sgcg-identity-checkin-server.js`
+  - instaladores online do agente Windows passaram a exigir tokens informados por parametro ou prompt interativo
+  - README do agente substituiu valores reais por placeholders administrativos
+- decisao de versionamento:
+  - codigo, scripts, documentacao e templates do agente de identidade devem ser incluidos no Git
+  - dados coletados de runtime, checkpoints locais, certificados, chaves, backups, dumps e builds gerados permanecem fora do Git
+- validacao executada antes do versionamento:
+  - `cd backend && npm run build` — compilacao TypeScript concluida sem erros
+  - `cd backend-proxy && npm run build` — compilacao TypeScript concluida sem erros
+  - `cd frontend && npm run build` — `✓ built in 2.76s`
+  - `cd backend && npm run build` — revalidado sem erros apos remover token hardcoded do modulo de identidade
+
+## Proximo passo recomendado
+
+- concluir commit e push para o remoto `origin/main`
+- apos o push, revisar no GitHub se o README renderiza corretamente e se nenhum dado operacional sensivel foi publicado

@@ -39,6 +39,22 @@ router.post('/program-settings', async (req: AuthenticatedRequest, res) => {
     }
 });
 
+router.get('/processing-activities/export.pdf', async (_req, res) => {
+    try {
+        const [activities, program] = await Promise.all([
+            lgpdService.listProcessingActivities(),
+            lgpdService.getProgramSettings(),
+        ]);
+        const pdf = await lgpdService.exportInventoryPdf(activities, program);
+        const filename = `inventario-lgpd-${new Date().toISOString().slice(0, 10)}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.send(pdf);
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao gerar PDF do inventário LGPD.' });
+    }
+});
+
 router.get('/processing-activities', async (_req, res) => {
     try {
         res.json(await lgpdService.listProcessingActivities());

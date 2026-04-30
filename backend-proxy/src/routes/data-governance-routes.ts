@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { pool } from '../config/db';
 import { blockingAuditService } from '../services/blocking-audit-service';
 import { blockingReleaseService } from '../services/blocking-release-service';
+import { identityEnrichmentService } from '../services/identity-enrichment-service';
+import { dnsIgnoredService } from '../services/dns-ignored-service';
 import { MANAGED_VLAN_SQL_LIST } from '../services/blocking-release-scope';
 
 const router = Router();
@@ -15,7 +17,7 @@ const PERIOD_INTERVALS: Record<string, string> = {
 
 const resolveSinceExpr = (period: string) => `NOW() - INTERVAL '${PERIOD_INTERVALS[period] || PERIOD_INTERVALS['24h']}'`;
 
-const governanceEventsCte = (sinceExpr: string) => `
+const governanceEventsCte = (sinceExpr: string, dnsNoiseFilter = '') => `
     WITH events AS (
         SELECT
             occurred_at,
@@ -27,6 +29,7 @@ const governanceEventsCte = (sinceExpr: string) => `
         FROM dns_policy_events
         WHERE occurred_at >= ${sinceExpr}
           AND (vlan_id IS NULL OR vlan_id IN (${MANAGED_VLAN_SQL_LIST}))
+          ${dnsNoiseFilter}
         UNION ALL
         SELECT
             occurred_at,
@@ -52,8 +55,10 @@ const summarizeTopVlan = (rows: any[] = []) => {
 };
 
 const buildGovernanceMetrics = async (period: string) => {
+    const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+    const dnsNoiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'query_name');
     const sinceExpr = resolveSinceExpr(period);
-    const cte = governanceEventsCte(sinceExpr);
+    const cte = governanceEventsCte(sinceExpr, dnsNoiseFilter);
 
     const [
         topSites,
@@ -149,11 +154,11 @@ const buildGovernanceMetrics = async (period: string) => {
         summary: totals.rows[0] || {},
         topSites: topSites.rows,
         topBlocked: topBlocked.rows,
-        topIps: topIps.rows,
+        topIps: identityEnrichmentService.enrichRows(topIps.rows),
         topVlans: topVlans.rows,
         hourly: hourly.rows,
         daily: daily.rows,
-        recentAttempts: recent.rows,
+        recentAttempts: identityEnrichmentService.enrichRows(recent.rows),
         releasedDomains: allowedDomains.rows,
         exceptionUsage: exceptionUsage.rows,
         serviceTrend: serviceTrend.rows,

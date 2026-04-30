@@ -1,10 +1,14 @@
 import { Router } from 'express';
+import fs from 'fs';
 import { execCmd } from '../../utils/sys';
 import { ensureSmtpSchema, getStoredSmtpConfig, saveSmtpConfig, testConnection } from '../../utils/mailer';
 import { AuthenticatedRequest, requireJwt } from './auth';
 import { env } from '../../config/env';
 
 const router = Router();
+const UFW_BIN = '/usr/sbin/ufw';
+
+const commandAvailable = (path: string) => fs.existsSync(path);
 
 const sanitizeSmtpConfig = (conf: any) => ({
     host: conf.host,
@@ -21,9 +25,55 @@ const sanitizeSmtpConfig = (conf: any) => ({
     is_active: !!conf.is_active,
 });
 
+const parseUfwRules = (ufwRaw: string) => {
+    const rules: any[] = [];
+    ufwRaw.split('\n').forEach((line) => {
+        const match = line.match(/^\[\s*(\d+)\]\s+(.*?)\s+(ALLOW|DENY|REJECT)\s+(IN|OUT|FWD)\s+(.*)$/i);
+        if (match) {
+            rules.push({ id: match[1], to: match[2].trim(), action: match[3].toUpperCase(), dir: match[4].toUpperCase(), from: match[5].trim(), source: 'ufw' });
+        } else {
+            const simpleMatch = line.match(/^\[\s*(\d+)\]\s+(.*?)\s+(ALLOW|DENY|REJECT)\s+(.*)$/i);
+            if (simpleMatch && !line.includes('(v6)')) {
+                rules.push({ id: simpleMatch[1], to: simpleMatch[2].trim(), action: simpleMatch[3].toUpperCase(), dir: 'IN', from: simpleMatch[4].trim(), source: 'ufw' });
+            }
+        }
+    });
+    return rules;
+};
+
+const parseIptablesRules = (raw: string) => raw
+    .split('\n')
+    .filter((line) => line.startsWith('-A '))
+    .slice(0, 80)
+    .map((line, index) => {
+        const chain = line.match(/^-A\s+(\S+)/)?.[1] || 'filter';
+        const runtimeAction = line.match(/\s-j\s+(\S+)/)?.[1] || 'RULE';
+        const action = runtimeAction === 'ACCEPT' ? 'ALLOW' : runtimeAction === 'DROP' ? 'DENY' : runtimeAction;
+        const source = line.match(/\s-s\s+(\S+)/)?.[1] || 'any';
+        const destination = line.match(/\s-d\s+(\S+)/)?.[1] || 'any';
+        const port = line.match(/--dport\s+(\S+)/)?.[1];
+        const ifaceIn = line.match(/\s-i\s+(\S+)/)?.[1];
+        const ifaceOut = line.match(/\s-o\s+(\S+)/)?.[1];
+        const target = [chain, port ? `porta ${port}` : null, ifaceIn ? `in ${ifaceIn}` : null, ifaceOut ? `out ${ifaceOut}` : null]
+            .filter(Boolean)
+            .join(' / ');
+
+        return {
+            id: `rt-${index + 1}`,
+            to: target,
+            action: action.toUpperCase(),
+            dir: chain,
+            from: source === 'any' && destination !== 'any' ? destination : source,
+            source: 'iptables',
+            raw: line,
+        };
+    });
+
 router.get('/dashboard', async (req, res) => {
     try {
-        const ufwRaw = await execCmd('sudo ufw status numbered').catch(() => '');
+        const ufwInstalled = commandAvailable(UFW_BIN);
+        const ufwRaw = ufwInstalled ? await execCmd('sudo ufw status numbered').catch(() => '') : '';
+        const iptablesRaw = !ufwRaw ? await execCmd('iptables-save -t filter').catch(() => '') : '';
         const ufwActive = ufwRaw.includes('Status: active');
 
         const f2bRaw = await execCmd('sudo fail2ban-client status sshd').catch(() => '');
@@ -40,19 +90,7 @@ router.get('/dashboard', async (req, res) => {
             if (matchIps && matchIps[1]) bannedIps = matchIps[1].split(' ').filter((ip) => ip.trim() !== '');
         }
 
-        const lines = ufwRaw.split('\n');
-        const rules: any[] = [];
-        lines.forEach((line) => {
-            const match = line.match(/^\[\s*(\d+)\]\s+(.*?)\s+(ALLOW|DENY|REJECT)\s+(IN|OUT)\s+(.*)$/i);
-            if (match) {
-                rules.push({ id: match[1], to: match[2].trim(), action: match[3].toUpperCase(), dir: match[4].toUpperCase(), from: match[5].trim() });
-            } else {
-                const simpleMatch = line.match(/^\[\s*(\d+)\]\s+(.*?)\s+(ALLOW|DENY|REJECT)\s+(.*)$/i);
-                if (simpleMatch && !line.includes('(v6)')) {
-                    rules.push({ id: simpleMatch[1], to: simpleMatch[2].trim(), action: simpleMatch[3].toUpperCase(), dir: 'IN', from: simpleMatch[4].trim() });
-                }
-            }
-        });
+        const rules = ufwRaw ? parseUfwRules(ufwRaw) : parseIptablesRules(iptablesRaw);
 
         const publicIps = env.publicIps;
         const ipA = await execCmd('ip a').catch(() => '');
@@ -77,7 +115,13 @@ router.get('/dashboard', async (req, res) => {
         });
 
         res.json({
-            ufw: { active: ufwActive, rules },
+            ufw: {
+                active: ufwActive || !!iptablesRaw,
+                installed: ufwInstalled,
+                runtime_source: ufwRaw ? 'ufw' : 'iptables',
+                message: ufwInstalled ? '' : 'UFW não está instalado; leitura feita pelo runtime iptables.',
+                rules,
+            },
             fail2ban: { active: !!f2bRaw, currently_banned: f2bBanned, total_banned: f2bTotal, banned_ips: bannedIps },
             public_ips: ipStatuses,
             sentinel_metrics: { top_ports: topPorts, top_ips: topIps },
@@ -143,34 +187,53 @@ router.post('/smtp/test', requireJwt, async (req: AuthenticatedRequest, res) => 
     }
 });
 
-router.post('/f2b/unban', async (req, res) => {
+const IP_RE = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+const RULE_ID_RE = /^\d{1,4}$/;
+
+function validateIp(ip: unknown): string | null {
+    if (typeof ip !== 'string') return null;
+    const trimmed = ip.trim();
+    return IP_RE.test(trimmed) ? trimmed : null;
+}
+
+router.post('/f2b/unban', requireJwt, async (req: AuthenticatedRequest, res) => {
+    const ip = validateIp(req.body.ip);
+    if (!ip) return res.status(400).json({ error: 'IP inválido.' });
     try {
-        await execCmd(`sudo fail2ban-client set sshd unbanip ${req.body.ip}`);
+        await execCmd(`sudo fail2ban-client set sshd unbanip ${ip}`);
         res.json({ success: true });
     } catch {
         res.status(500).json({ error: 'Erro' });
     }
 });
 
-router.post('/f2b/ban', async (req, res) => {
+router.post('/f2b/ban', requireJwt, async (req: AuthenticatedRequest, res) => {
+    const ip = validateIp(req.body.ip);
+    if (!ip) return res.status(400).json({ error: 'IP inválido.' });
     try {
-        await execCmd(`sudo fail2ban-client set sshd banip ${req.body.ip}`);
+        await execCmd(`sudo fail2ban-client set sshd banip ${ip}`);
         res.json({ success: true });
     } catch {
         res.status(500).json({ error: 'Erro' });
     }
 });
 
-router.post('/ufw/delete', async (req, res) => {
+router.post('/ufw/delete', requireJwt, async (req: AuthenticatedRequest, res) => {
+    if (!commandAvailable(UFW_BIN)) return res.status(503).json({ error: 'UFW não está instalado neste host.' });
+    const id = req.body.id;
+    if (typeof id !== 'string' && typeof id !== 'number') return res.status(400).json({ error: 'ID inválido.' });
+    const idStr = String(id).trim();
+    if (!RULE_ID_RE.test(idStr)) return res.status(400).json({ error: 'ID de regra inválido.' });
     try {
-        await execCmd(`echo "y" | sudo ufw delete ${req.body.id}`);
+        await execCmd(`echo "y" | sudo ufw delete ${idStr}`);
         res.json({ success: true });
     } catch {
         res.status(500).json({ error: 'Erro' });
     }
 });
 
-router.post('/setup-cockpit', async (req, res) => {
+router.post('/setup-cockpit', requireJwt, async (req: AuthenticatedRequest, res) => {
+    if (!commandAvailable(UFW_BIN)) return res.status(503).json({ error: 'UFW não está instalado neste host.' });
     try {
         await execCmd(`sudo ufw allow ${env.sshExternalPort}/tcp`);
         await execCmd(`sudo ufw allow in on ${env.lanInterface} to any port ${env.sshLanAllowPort}`);

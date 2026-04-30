@@ -119,9 +119,9 @@ const urlLiteralToRegex = (value: string) => {
     const host = slashIndex >= 0 ? normalized.slice(0, slashIndex) : normalized;
     const suffix = slashIndex >= 0 ? normalized.slice(slashIndex) : '';
     if (!host) return null;
-    if (!suffix) return `^https?://${escapeRegex(host)}(?::[0-9]+)?(?:[/?].*)?$`;
-    if (suffix.includes('?')) return `^https?://${escapeRegex(host)}(?::[0-9]+)?${escapeRegex(suffix)}$`;
-    return `^https?://${escapeRegex(host)}(?::[0-9]+)?${escapeRegex(suffix)}(?:\\?.*)?$`;
+    if (!suffix) return `^https?://${escapeRegex(host)}(:[0-9]+)?([/?].*)?$`;
+    if (suffix.includes('?')) return `^https?://${escapeRegex(host)}(:[0-9]+)?${escapeRegex(suffix)}$`;
+    return `^https?://${escapeRegex(host)}(:[0-9]+)?${escapeRegex(suffix)}(\\?.*)?$`;
 };
 
 type CompiledArtifacts = {
@@ -305,9 +305,8 @@ export class PolicyCompilerService {
             .map((vlan) => String(vlan.subnet_cidr || '').trim())
             .filter(Boolean)));
 
-        // Exempt VLANs deixam de significar bypass DNS total. Elas continuam sem
-        // escopo categórico explícito por VLAN, mas herdam políticas globais
-        // mandatórias como pornografia bloqueada.
+        // VLANs em bypass emergencial recebem passthru DNS total via client-ip na zona VIP do Unbound/RPZ.
+        // Saem do escopo categórico por VLAN e não herdam bloqueios de domínio enquanto o bypass estiver ativo.
         const dnsBypassEntries = sortedUnique([
             ...ipBypassEntries,
             ...vlanBypassEntries,

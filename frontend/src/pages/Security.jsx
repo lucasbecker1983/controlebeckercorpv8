@@ -232,7 +232,7 @@ function SmtpModal({ open, onClose }) {
 
 export default function Security() {
     const [data, setData] = useState({
-        ufw: { active: false, rules: [] },
+        ufw: { active: false, installed: true, runtime_source: 'ufw', message: '', rules: [] },
         fail2ban: { active: false, currently_banned: 0, total_banned: 0, banned_ips: [] },
         public_ips: [],
         sentinel_metrics: { top_ports: [], top_ips: [] }
@@ -246,7 +246,13 @@ export default function Security() {
     const load = async () => {
         try {
             const res = await api.get('/api/security/dashboard');
-            setData(res.data);
+            setData((current) => ({
+                ...current,
+                ...res.data,
+                ufw: { ...current.ufw, ...(res.data.ufw || {}) },
+                fail2ban: { ...current.fail2ban, ...(res.data.fail2ban || {}) },
+                sentinel_metrics: { ...current.sentinel_metrics, ...(res.data.sentinel_metrics || {}) },
+            }));
         } catch {}
     };
 
@@ -275,8 +281,8 @@ export default function Security() {
             await api.post('/api/security/setup-cockpit');
             alert('Blindagem V8 aplicada com sucesso.');
             load();
-        } catch {
-            alert('Erro ao aplicar blindagem.');
+        } catch (error) {
+            alert(error?.response?.data?.error || 'Erro ao aplicar blindagem.');
         }
         setLoading(false);
     };
@@ -308,10 +314,13 @@ export default function Security() {
 
     const deleteRule = async (id) => {
         if (!confirm(`Excluir regra UFW [${id}]?`)) return;
+        if (data.ufw.runtime_source !== 'ufw') return;
         try {
             await api.post('/api/security/ufw/delete', { id });
             load();
-        } catch {}
+        } catch (error) {
+            alert(error?.response?.data?.error || 'Erro ao excluir regra.');
+        }
     };
 
     return (
@@ -381,14 +390,26 @@ export default function Security() {
                             </div>
                         </Surface>
 
-                        <Surface className="flex items-center justify-between p-6">
+                        <Surface className="p-6">
+                            <div className="flex items-center justify-between gap-4">
                             <div>
                                 <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Firewall UFW</p>
-                                <h3 className={`text-xl font-black ${data.ufw.active ? 'text-info' : 'text-danger'}`}>{data.ufw.active ? 'Ativo e blindado' : 'Requer atenção'}</h3>
+                                <h3 className={`text-xl font-black ${data.ufw.active ? 'text-info' : 'text-danger'}`}>
+                                    {data.ufw.active ? (data.ufw.installed ? 'Ativo e blindado' : 'Runtime ativo') : 'Requer atenção'}
+                                </h3>
+                                <p className="mt-1 text-[10px] uppercase tracking-wide text-on-surface/50">
+                                    Fonte: {data.ufw.runtime_source === 'iptables' ? 'iptables' : 'ufw'}
+                                </p>
                             </div>
                             <div className={`rounded-2xl p-4 ${data.ufw.active ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}>
                                 {data.ufw.active ? <Shield size={28} /> : <ShieldAlert size={28} />}
                             </div>
+                            </div>
+                            {data.ufw.message ? (
+                                <div className="mt-4 rounded-2xl border border-warning/20 bg-warning/10 px-4 py-3 text-xs text-warning">
+                                    {data.ufw.message}
+                                </div>
+                            ) : null}
                         </Surface>
 
                         <Surface className="flex items-center justify-between p-6">
@@ -524,9 +545,15 @@ export default function Security() {
                                                 <div className="mt-1 text-[10px] font-mono text-on-surface opacity-50">Origem: {r.from}</div>
                                             </div>
                                         </div>
-                                        <button onClick={() => deleteRule(r.id)} className="rounded-lg p-2 text-on-surface opacity-30 transition-all hover:bg-danger/10 hover:text-danger hover:opacity-100">
-                                            <Trash2 size={16} />
-                                        </button>
+                                        {r.source === 'ufw' ? (
+                                            <button onClick={() => deleteRule(r.id)} className="rounded-lg p-2 text-on-surface opacity-30 transition-all hover:bg-danger/10 hover:text-danger hover:opacity-100">
+                                                <Trash2 size={16} />
+                                            </button>
+                                        ) : (
+                                            <span className="rounded-lg border border-outline/10 px-2.5 py-1 text-[9px] font-black uppercase text-on-surface/40">
+                                                runtime
+                                            </span>
+                                        )}
                                     </div>
                                 ))
                             )}

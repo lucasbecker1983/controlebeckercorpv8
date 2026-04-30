@@ -70,8 +70,14 @@ class DnsContingencyService {
     readonly healthDomain = 'cloudflare.com';
     readonly providerLabels = Object.fromEntries(Object.entries(RESOLVER_CATALOG).map(([key, value]) => [key, value.label]));
     readonly retryIntervalMs = 60_000;
+    readonly firewallRetryDelayMs = 1_500;
+    readonly firewallRetryAttempts = 3;
     readonly blockFile = env.ufwBeforeRulesFile;
     interval: NodeJS.Timeout | null = null;
+
+    async sleep(ms: number) {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+    }
 
     async ensureSchema() {
         await pool.query(`
@@ -116,11 +122,11 @@ class DnsContingencyService {
     async bootstrap() {
         await this.ensureSchema();
         await this.reconcileExpired();
-        await this.ensureFirewallState();
+        await this.ensureFirewallStateWithRetry('bootstrap');
         if (!this.interval) {
             this.interval = setInterval(() => {
                 this.reconcileExpired()
-                    .then(() => this.ensureFirewallState())
+                    .then(() => this.ensureFirewallStateWithRetry('reconciler'))
                     .catch((error) => console.error('[DNS CONTINGENCY] Falha no reconciler:', error));
             }, this.retryIntervalMs);
         }
@@ -278,6 +284,24 @@ class DnsContingencyService {
         return unique((await this.listVipBypassRows()).map((row) => row.ip));
     }
 
+    async listEmergencyVlanRows(): Promise<VlanRow[]> {
+        const { rows: activeBypass } = await pool.query(
+            `SELECT vlan_id FROM emergency_vlan_bypass
+             WHERE active = TRUE AND (expires_at IS NULL OR expires_at >= NOW())`,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
+        if (!activeBypass.length) return [];
+        const ids = activeBypass.map((r) => Number(r.vlan_id));
+        const { rows } = await pool.query(
+            `SELECT vlan_id, label, interface_name, subnet_cidr, blocking_enabled, monitoring_enabled
+             FROM vlan_policies
+             WHERE vlan_id = ANY($1::int[])
+               AND interface_name IS NOT NULL AND TRIM(interface_name) <> ''
+               AND subnet_cidr IS NOT NULL AND TRIM(subnet_cidr) <> ''`,
+            [ids],
+        ).catch(() => ({ rows: [] as VlanRow[] }));
+        return rows as VlanRow[];
+    }
+
     getResolverAddresses(providers: ResolverProvider[]) {
         return unique(providers.flatMap((provider) => RESOLVER_CATALOG[provider].addresses));
     }
@@ -321,7 +345,83 @@ class DnsContingencyService {
         });
     }
 
-    buildEarlyFirewallBlock(vipBypassRows: VipBypassRow[]) {
+    async commandExists(command: string) {
+        const result = await runCommand('sh', ['-lc', `command -v ${command}`], { allowFailure: true });
+        return result.code === 0;
+    }
+
+    async ensureIptablesRule(table: string, chain: string, args: string[]) {
+        const baseArgs = table === 'filter' ? [] : ['-t', table];
+        const check = await runCommand('iptables', [...baseArgs, '-C', chain, ...args], { elevated: true, allowFailure: true });
+        if (check.code === 0) return false;
+        await runCommand('iptables', [...baseArgs, '-I', chain, '1', ...args], { elevated: true });
+        return true;
+    }
+
+    async applyRuntimeVipBypassRules(vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
+        const vipIps = unique(vipBypassRows.map((vip) => vip.ip));
+        const activeVipSet = new Set(vipIps.map((ip) => `${ip}/32`));
+        const activeEmergencySubnets = new Set(emergencyVlans.map((v) => v.subnet_cidr));
+        const applied: string[] = [];
+        const removed: string[] = [];
+        const currentRules = await runCommand('iptables-save', ['-t', 'filter'], { elevated: true, allowFailure: true });
+
+        for (const line of String(currentRules.stdout || '').split('\n')) {
+            if (line.includes('sgcg-vip-bypass')) {
+                const match = line.match(/^-A\s+(\S+)\s+(.+)$/);
+                if (!match) continue;
+                const ipMatch = line.match(/\s-[sd]\s+(\d+\.\d+\.\d+\.\d+(?:\/32)?)\b/);
+                const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
+                if (normalizedIp && activeVipSet.has(normalizedIp)) continue;
+                const args = match[2].trim().split(/\s+/);
+                const result = await runCommand('iptables', ['-t', 'filter', '-D', match[1], ...args], { elevated: true, allowFailure: true });
+                if (result.code === 0) removed.push(`${match[1]} ${args.join(' ')}`);
+            }
+
+            if (line.includes('sgcg-emergency-bypass')) {
+                const match = line.match(/^-A\s+(\S+)\s+(.+)$/);
+                if (!match) continue;
+                const subnetMatch = line.match(/\s-[sd]\s+(\d+\.\d+\.\d+\.\d+\/\d+)\b/);
+                const subnet = subnetMatch?.[1];
+                if (subnet && activeEmergencySubnets.has(subnet)) continue;
+                const args = match[2].trim().split(/\s+/);
+                const result = await runCommand('iptables', ['-t', 'filter', '-D', match[1], ...args], { elevated: true, allowFailure: true });
+                if (result.code === 0) removed.push(`${match[1]} ${args.join(' ')}`);
+            }
+        }
+
+        for (const ip of vipIps) {
+            const rules = [
+                ['filter', 'INPUT', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
+                ['filter', 'INPUT', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
+                ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
+                ['filter', 'FORWARD', ['-d', ip, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
+            ] as Array<[string, string, string[]]>;
+
+            for (const [table, chain, args] of rules) {
+                if (await this.ensureIptablesRule(table, chain, args)) {
+                    applied.push(`${table}/${chain} ${args.join(' ')}`);
+                }
+            }
+        }
+
+        for (const vlan of emergencyVlans) {
+            const rules = [
+                ['filter', 'FORWARD', ['-s', vlan.subnet_cidr, '-o', env.wanInterface, '-m', 'comment', '--comment', 'sgcg-emergency-bypass', '-j', 'ACCEPT']],
+                ['filter', 'FORWARD', ['-d', vlan.subnet_cidr, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-emergency-bypass', '-j', 'ACCEPT']],
+                ['filter', 'FORWARD', ['-i', vlan.interface_name, '-p', 'tcp', '--dport', '853', '-m', 'comment', '--comment', 'sgcg-emergency-bypass', '-j', 'ACCEPT']],
+            ] as Array<[string, string, string[]]>;
+            for (const [table, chain, args] of rules) {
+                if (await this.ensureIptablesRule(table, chain, args)) {
+                    applied.push(`${table}/${chain} ${args.join(' ')}`);
+                }
+            }
+        }
+
+        return { mode: 'iptables-runtime', applied, removed, active_vips: vipIps };
+    }
+
+    buildEarlyFirewallBlock(vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
         const vipIps = unique(vipBypassRows.map((vip) => vip.ip));
         const lines = [
             EARLY_BEGIN_MARKER,
@@ -335,18 +435,35 @@ class DnsContingencyService {
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.8.0/21 -j DROP`,
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.16.0/21 -j DROP`,
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.56.0/22 -j DROP`,
+            '',
+            '# DoT bloqueado: impede bypass do Unbound/RPZ via DNS-over-TLS em todas as VLANs internas.',
+            '# VLANs em bypass emergencial recebem ACCEPT antes do DROP global.',
+            ...emergencyVlans.map((v) => `-A ufw-before-forward -i ${v.interface_name} -p tcp --dport 853 -j ACCEPT`),
+            `-A ufw-before-forward -i enp6s0+ -p tcp --dport 853 -j DROP`,
             EARLY_END_MARKER,
         ];
         return lines.join('\n');
     }
 
-    async applyFirewallBlock(block: string, vipBypassRows: VipBypassRow[]) {
+    async applyFirewallBlock(block: string, vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
         const original = await this.readFirewallConfig();
-        const withEarlyBlock = this.injectEarlyManagedBlock(original, this.buildEarlyFirewallBlock(vipBypassRows));
+        const withEarlyBlock = this.injectEarlyManagedBlock(original, this.buildEarlyFirewallBlock(vipBypassRows, emergencyVlans));
         const candidate = this.injectManagedBlock(withEarlyBlock, block);
         await this.validateFirewallConfig(candidate);
         fs.writeFileSync(this.blockFile, candidate);
-        await runCommand('ufw', ['reload'], { elevated: true });
+        try {
+            if (await this.commandExists('ufw')) {
+                await runCommand('ufw', ['reload'], { elevated: true });
+            } else {
+                await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
+            }
+        } catch (error) {
+            fs.writeFileSync(this.blockFile, original);
+            if (await this.commandExists('ufw')) {
+                await runCommand('ufw', ['reload'], { elevated: true, allowFailure: true });
+            }
+            throw error;
+        }
         return { original, candidate };
     }
 
@@ -422,8 +539,28 @@ class DnsContingencyService {
 
     async ensureFirewallState() {
         const block = await this.buildFirewallBlock();
-        const vipBypassRows = await this.listVipBypassRows();
-        return this.applyFirewallBlock(block, vipBypassRows);
+        const [vipBypassRows, emergencyVlans] = await Promise.all([
+            this.listVipBypassRows(),
+            this.listEmergencyVlanRows(),
+        ]);
+        return this.applyFirewallBlock(block, vipBypassRows, emergencyVlans);
+    }
+
+    async ensureFirewallStateWithRetry(context = 'runtime') {
+        let lastError: unknown = null;
+
+        for (let attempt = 1; attempt <= this.firewallRetryAttempts; attempt += 1) {
+            try {
+                return await this.ensureFirewallState();
+            } catch (error) {
+                lastError = error;
+                if (attempt >= this.firewallRetryAttempts) break;
+                console.warn(`[DNS CONTINGENCY] Falha ao reconciliar firewall (${context}), tentativa ${attempt}/${this.firewallRetryAttempts}. Nova tentativa em ${this.firewallRetryDelayMs}ms.`);
+                await this.sleep(this.firewallRetryDelayMs);
+            }
+        }
+
+        throw lastError;
     }
 
     async verifyRuntime() {

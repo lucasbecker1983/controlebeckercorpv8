@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { globalJwtGuard } from './middleware/auth';
 import { authSecurityService } from './modules/auth/auth-security-service';
@@ -15,6 +16,7 @@ import controlRoutes from './modules/control/control-routes';
 import usersRoutes from './modules/users/users-routes';
 import networkRoutes from './modules/network/network-routes';
 import qosRoutes from './modules/qos/qos-routes';
+import { qosRuntimeService, qosSchemaService } from './modules/qos/qos-routes';
 import accessRoutes from './modules/access/access-routes';
 import connectivityRoutes from './modules/connectivity/connectivity-routes';
 import downtimeRoutes from './modules/connectivity/downtime-routes';
@@ -22,6 +24,9 @@ import unboundRoutes from './modules/unbound/routes';
 import proxyRoutes from './modules/proxy/proxy-routes';
 import securityRoutes from './modules/security/security-routes';
 import lgpdRoutes from './modules/lgpd/lgpd-routes';
+import reportsRoutes from './modules/reports/reports-routes';
+import identityRoutes from './modules/identity/identity-routes';
+import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
 import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
@@ -66,6 +71,25 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Rate limiting global — anti-brute-force e anti-DoS na API
+const globalLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Muitas requisições. Tente novamente em instantes.' },
+    skip: (req) => req.path === '/api/ping',
+});
+const authLimiter = rateLimit({
+    windowMs: 2 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Muitas tentativas de autenticação. Aguarde 2 minutos.' },
+});
+app.use('/api', globalLimiter);
+app.use('/api/auth/login', authLimiter);
+
 app.use((req, res, next) => {
     if (!req.url.includes('/ping')) console.log(`[API] ${req.method} ${req.url}`);
     next();
@@ -90,6 +114,9 @@ app.use('/api/dns', unboundRoutes);
 app.use('/api/proxy', proxyRoutes);
 app.use('/api/security', securityRoutes);
 app.use('/api/lgpd', lgpdRoutes);
+app.use('/api/reports', reportsRoutes);
+app.use('/api/identity', identityRoutes);
+app.use('/api/hotspot', hotspotRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -104,6 +131,30 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     institutionalAuditService.ensureSchema().catch((error) => {
         console.error('[AUDIT] Falha ao garantir schema institucional:', error);
+    });
+    hotspotSchemaService.ensureSchema().catch((error) => {
+        console.error('[HOTSPOT] Falha ao garantir schema do hotspot:', error);
+    });
+    hotspotSchemaService.ensureHotspotEnforcement().catch((error) => {
+        console.error('[HOTSPOT] Falha ao reconciliar enforcement complementar:', error);
+    });
+    const hotspotSessionSweeper = setInterval(() => {
+        hotspotSchemaService.expireExpiredSessions().catch((error) => {
+            console.error('[HOTSPOT] Falha ao expirar sessoes vencidas:', error);
+        });
+    }, 60 * 1000);
+    hotspotSessionSweeper.unref?.();
+    qosSchemaService.ensureSchema().catch((error) => {
+        console.error('[QOS] Falha ao garantir schema de QoS:', error);
+    });
+    qosRuntimeService.reconcileAllPolicies().catch((error) => {
+        console.error('[QOS] Falha ao reconciliar runtime do QoS no boot:', error);
+    });
+    // Ativa proteção de imutabilidade nos logs de auditoria
+    import('./modules/reports/reports-service').then(({ reportsService }) => {
+        reportsService.ensureSchema().catch((e) =>
+            console.error('[REPORTS] Falha ao garantir schema de relatórios:', e),
+        );
     });
     // Iniciando Sentinelas
     try { startMonitor(); } catch(e) {}
