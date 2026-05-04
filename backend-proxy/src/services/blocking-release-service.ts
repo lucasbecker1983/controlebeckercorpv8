@@ -192,6 +192,27 @@ const BASELINE_ALLOW_CATALOG = {
         'www8.receita.fazenda.gov.br',
         'cadin.pr.gov.br',
     ],
+    'Plataformas de Reunião': [
+        'meet.google.com',
+        'googlevideo.com',
+        'gvt1.com',
+        'zoom.us',
+        'zoom.com',
+        'zoomcdn.com',
+        'zoomgov.com',
+        'teams.microsoft.com',
+        'teams.live.com',
+        'teams.cdn.office.net',
+        'statics.teams.cdn.office.net',
+        'skype.com',
+        'skypeassets.com',
+        'lync.com',
+        'microsoft.com',
+        'microsoftonline.com',
+        'office.com',
+        'office365.com',
+        'msecnd.net',
+    ],
 };
 
 const DEFAULT_MANAGED_VLAN_ROWS = [
@@ -785,6 +806,16 @@ class BlockingReleaseService {
                         VALUES ($1, $2, 'WhatsApp', 'WhatsApp liberado globalmente', TRUE, TRUE, 'global', 'global', $3, $4)
                     `,
                     [domain, 'Liberação global mandatória de WhatsApp.', requestedBy, 'Baseline restaurada 2026-04-15.'],
+                );
+        }
+
+        for (const domain of BASELINE_ALLOW_CATALOG['Plataformas de Reunião']) {
+            await pool.query(
+                    `
+                        INSERT INTO release_policies (domain, description, category, reason, protected, active, scope_type, scope_value, created_by, notes)
+                        VALUES ($1, $2, 'Plataformas de Reunião', 'Plataformas de reunião liberadas globalmente', TRUE, TRUE, 'global', 'global', $3, $4)
+                    `,
+                    [domain, 'Liberação global protegida para Google Meet, Zoom e Microsoft Teams.', requestedBy, 'Baseline ampliada em 2026-05-04.'],
                 );
         }
 

@@ -3909,3 +3909,63 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `fast.com` deve continuar acessível
   - Netflix deve continuar sem bloqueio por esta política
   - Spotify/YouTube/Prime Video/Disney+/Twitch devem cair no bloqueio DNS/Proxy conforme a VLAN
+
+## 2026-05-04 — Política Institucional Plataformas de Reunião
+
+- criada a política nomeada `Plataformas de Reunião` em `Políticas Institucionais`
+- tipo: `allow`
+- escopo: `global`
+- status: ativa
+- objetivo:
+  - garantir liberação integral de Google Meet, Zoom e Microsoft Teams em todas as VLANs gerenciadas
+  - dar precedência operacional a reuniões institucionais sobre bloqueios categóricos de streaming
+- domínios cadastrados na política:
+  - `meet.google.com`
+  - `googlevideo.com`
+  - `gvt1.com`
+  - `zoom.us`
+  - `zoom.com`
+  - `zoomcdn.com`
+  - `zoomgov.com`
+  - `teams.microsoft.com`
+  - `teams.live.com`
+  - `teams.cdn.office.net`
+  - `statics.teams.cdn.office.net`
+  - `skype.com`
+  - `skypeassets.com`
+  - `lync.com`
+  - `microsoft.com`
+  - `microsoftonline.com`
+  - `office.com`
+  - `office365.com`
+  - `msecnd.net`
+- decisão operacional importante:
+  - `googlevideo.com` foi removido da lista consolidada de bloqueio porque é dependência de mídia/WebRTC do Google Meet
+  - a liberação de `googlevideo.com` pode permitir parte da infraestrutura de vídeo do Google/YouTube, mas é necessária para cumprir a regra de Meet 100% funcional
+- persistência aplicada:
+  - `domain_policies` recebeu `Plataformas de Reunião` com `policy_type = allow`, `scope_type = global`, `enabled = true`
+  - `domain_policy_entries` recebeu 19 entradas
+  - `release_policies` recebeu 19 linhas ativas vinculadas ao `domain_policy_id`
+  - as 19 linhas em `release_policies` foram marcadas como `protected = TRUE`
+- catálogo-base ampliado:
+  - `backend-proxy/src/services/blocking-release-service.ts` ganhou a categoria `Plataformas de Reunião` em `BASELINE_ALLOW_CATALOG`
+  - a restauração de baseline passa a recriar a liberação global protegida de Google Meet, Zoom e Microsoft Teams
+- aplicação executada:
+  - `blockingReleaseService.apply('codex', { restart_squid: true })` retornou `success=true`
+  - `cd backend-proxy && npm run build` concluído sem erros
+  - `pm2 restart backend-proxy --update-env` executado e processo voltou `online`
+- validação:
+  - PostgreSQL confirmou política ativa com 19 entradas
+  - PostgreSQL confirmou 19 liberações legadas ativas e protegidas
+  - `proxy_whitelist.acl`, `proxy_protected_ssl.acl`, `allowlist-global.acl` e `/etc/unbound/becker/allowed.rpz` contêm domínios como `meet.google.com`, `googlevideo.com`, `zoom.us`, `teams.microsoft.com`, `teams.cdn.office.net`, `microsoftonline.com` e `office365.com`
+  - os mesmos domínios não aparecem nos artefatos finais de bloqueio gerados
+  - `dig @127.0.0.1 meet.google.com`, `zoom.us`, `teams.microsoft.com` e `googlevideo.com` retornaram resolução real
+  - `unbound-checkconf` concluiu sem erros
+  - rota protegida `/api/bloqueios-liberacoes/health` respondeu `Token ausente`, confirmando backend-proxy ativo atrás da autenticação
+
+## Próximo passo recomendado
+
+- testar chamadas reais em uma estação comum da rede:
+  - Google Meet com áudio, vídeo e compartilhamento de tela
+  - Zoom com áudio, vídeo e compartilhamento de tela
+  - Microsoft Teams com áudio, vídeo e compartilhamento de tela
