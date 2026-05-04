@@ -131,6 +131,15 @@ const BASELINE_BLOCK_CATALOG = {
         't.co', 'threads.net', 'tiktokcdn.com', 'tiktok.com', 'tiktokv.com',
         'tumblr.co', 'tumblr.com', 'twimg.com', 'twitter.com', 'x.com',
     ],
+    'Streaming': [
+        'amazonvideo.com', 'crunchyroll.com', 'deezer.com', 'disneyplus.com', 'dzcdn.net',
+        'globoplay.com', 'googlevideo.com', 'hbomax.com', 'hbo.com', 'hulu.com',
+        'max.com', 'music.amazon.com', 'music.apple.com', 'pandora.com', 'paramountplus.com',
+        'peacocktv.com', 'playplus.com', 'pluto.tv', 'primevideo.com', 'qobuz.com',
+        'scdn.co', 'sndcdn.com', 'soundcloud.com', 'spotify.com', 'spotifycdn.com',
+        'starplus.com', 'tidal.com', 'tunein.com', 'twitch.tv', 'ttvnw.net',
+        'youtube.com', 'youtube-nocookie.com', 'youtubei.googleapis.com', 'youtu.be', 'ytimg.com',
+    ],
 };
 
 const SOCIAL_SESSION_DOMAINS = [
@@ -744,6 +753,16 @@ class BlockingReleaseService {
                         VALUES ($1, $2, 'Pornografia', TRUE, 'global', 'global', 'baseline_restore_2026_04_15', $3, $4)
                     `,
                     [domain, 'Bloqueio global mandatório de pornografia.', requestedBy, 'Baseline restaurada 2026-04-15.'],
+                );
+        }
+
+        for (const domain of BASELINE_BLOCK_CATALOG['Streaming']) {
+            await pool.query(
+                    `
+                        INSERT INTO blocking_policies (domain, description, category, active, scope_type, scope_value, origin_rule, created_by, notes)
+                        VALUES ($1, $2, 'Streaming', TRUE, 'global', 'global', 'baseline_restore_2026_05_04', $3, $4)
+                    `,
+                    [domain, 'Bloqueio global de streaming de filmes, vídeos e músicas; Netflix preservado por causa do fast.com.', requestedBy, 'Baseline ampliada em 2026-05-04 sem netflix.com nem fast.com.'],
                 );
         }
 

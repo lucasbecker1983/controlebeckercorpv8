@@ -3833,3 +3833,79 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - acesso HTTP deve cair no portal
   - tentativa de WhatsApp/redes sociais antes do login deve ser barrada
   - após autenticação, o IP deve entrar no ipset correto e navegar conforme a política da VLAN
+
+## 2026-05-04 — Política Institucional de Bloqueio Streaming
+
+- criada a política nomeada `Streaming` em `Políticas Institucionais`
+- tipo: `block`
+- escopo: `global`
+- status: ativa
+- objetivo:
+  - bloquear serviços de streaming de filmes, vídeos e músicas em redes institucionais
+  - preservar Netflix/Fast.com conforme regra operacional solicitada
+- domínios cadastrados na política:
+  - `amazonvideo.com`
+  - `crunchyroll.com`
+  - `deezer.com`
+  - `disneyplus.com`
+  - `dzcdn.net`
+  - `globoplay.com`
+  - `googlevideo.com`
+  - `hbomax.com`
+  - `hbo.com`
+  - `hulu.com`
+  - `max.com`
+  - `music.amazon.com`
+  - `music.apple.com`
+  - `pandora.com`
+  - `paramountplus.com`
+  - `peacocktv.com`
+  - `playplus.com`
+  - `pluto.tv`
+  - `primevideo.com`
+  - `qobuz.com`
+  - `scdn.co`
+  - `sndcdn.com`
+  - `soundcloud.com`
+  - `spotify.com`
+  - `spotifycdn.com`
+  - `starplus.com`
+  - `tidal.com`
+  - `tunein.com`
+  - `twitch.tv`
+  - `ttvnw.net`
+  - `youtube.com`
+  - `youtube-nocookie.com`
+  - `youtubei.googleapis.com`
+  - `youtu.be`
+  - `ytimg.com`
+- domínios propositalmente não cadastrados:
+  - `fast.com`
+  - `netflix.com`
+  - `nflxvideo.net`
+  - `nflximg.net`
+- persistência aplicada:
+  - `domain_policies` recebeu `Streaming` com `policy_type = block`, `scope_type = global`, `enabled = true`
+  - `domain_policy_entries` recebeu 35 entradas
+  - `blocking_policies` recebeu 35 linhas ativas vinculadas ao `domain_policy_id`
+- catálogo-base ampliado:
+  - `backend-proxy/src/services/blocking-release-service.ts` ganhou a categoria `Streaming` em `BASELINE_BLOCK_CATALOG`
+  - a restauração de baseline passa a recriar o bloqueio global de `Streaming` sem incluir Netflix/Fast.com
+- aplicação executada:
+  - `blockingReleaseService.apply('codex', { restart_squid: true })` retornou `success=true`
+  - `cd backend-proxy && npm run build` concluído sem erros
+  - `pm2 restart backend-proxy --update-env` executado e processo voltou `online`
+- validação:
+  - PostgreSQL confirmou política `Streaming` ativa com 35 entradas
+  - PostgreSQL confirmou 35 bloqueios legados ativos vinculados à política
+  - validação confirmou ausência de `fast.com`, `netflix.com`, `nflxvideo.net` e `nflximg.net` nas entradas da política
+  - `proxy_blocklist.acl`, `proxy_bump_ssl.acl`, `blocklist-global.acl` e `/etc/unbound/becker/blocked.rpz` contêm domínios de streaming como `spotify.com`, `youtube.com`, `googlevideo.com`, `primevideo.com` e `disneyplus.com`
+  - `unbound-checkconf` concluiu sem erros
+  - rota protegida `/api/bloqueios-liberacoes/health` respondeu `Token ausente`, confirmando backend-proxy ativo atrás da autenticação
+
+## Próximo passo recomendado
+
+- testar em estação sujeita às políticas institucionais:
+  - `fast.com` deve continuar acessível
+  - Netflix deve continuar sem bloqueio por esta política
+  - Spotify/YouTube/Prime Video/Disney+/Twitch devem cair no bloqueio DNS/Proxy conforme a VLAN
