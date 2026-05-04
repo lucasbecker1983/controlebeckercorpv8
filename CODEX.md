@@ -37,6 +37,27 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - impacto esperado
   - forma de validacao
 
+## Regra inegociavel do console interno
+
+- `console.interno.jacarezinho` deve ser espelho operacional de `console.jacarezinho.cloud`
+- em contingencia de link externo, o acesso administrativo deve continuar pela LAN usando `console.interno.jacarezinho`
+- toda rota, pagina, API, endpoint e contrato HTTP(S) da superficie SGCG deve bater no mesmo upstream em ambos os consoles
+- qualquer novo endpoint publicado no console publico deve ser publicado simultaneamente no console interno
+- qualquer novo endpoint publicado no console interno deve ser publicado simultaneamente no console publico
+- a unica diferenca aceitavel entre os consoles e infraestrutura de acesso:
+  - nome DNS
+  - certificado TLS
+  - download da CA interna (`/sgcg-root-ca.crt` e `/sgcg-root-ca.cer`)
+  - excecao operacional HTTP da identidade interna, quando necessaria para agentes na LAN
+- o roteamento HTTPS da aplicacao deve ser compartilhado por configuracao comum do Nginx, para evitar divergencia manual entre os vhosts
+- se houver alteracao em Nginx, frontend, API ou proxy que afete o console, a validacao deve comparar explicitamente:
+  - `console.jacarezinho.cloud`
+  - `console.interno.jacarezinho`
+  - rotas de frontend
+  - rotas `/api/`
+  - rotas do `backend-proxy`
+  - rotas publicas e administrativas adicionadas na rodada
+
 ## Condicional obrigatoria de build
 
 Se qualquer modulo, pagina, componente, rota, ativo ou configuracao passar por validacao com `build`, o `CODEX.md` deve ser atualizado imediatamente depois.
@@ -3697,3 +3718,50 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - acesso a redes sociais antes bloqueadas
   - DNS externo/DoH/DoT quando necessário
   - confirmar que o bypass não se aplica durante `Bloqueio Total por VLAN`, caso esse modo seja ativado em janela controlada
+
+## 2026-05-04 — Espelhamento Obrigatório dos Consoles Público e Interno
+
+- instituída regra inegociável: `console.interno.jacarezinho` deve ser espelho operacional de `console.jacarezinho.cloud`
+- objetivo:
+  - garantir acesso administrativo pela LAN quando o link externo estiver indisponível
+  - impedir divergência entre rotas, APIs, endpoints e contratos HTTP(S) dos dois consoles
+- diagnóstico confirmado:
+  - ambos os vhosts estavam ativos no Nginx
+  - ambos entregavam o frontend em `https://127.0.0.1:6777`
+  - ambos encaminhavam `/api/` padrão ao backend core `127.0.0.1:6778`
+  - o console interno já encaminhava `/api/bloqueios-liberacoes` e `/api/data-governance` ao `backend-proxy`
+  - o console público ainda não incluía esses dois prefixos no bloco do `backend-proxy`, criando risco de divergência operacional
+- Nginx ajustado:
+  - criado snippet comum `/etc/nginx/snippets/sgcg-console-app-mirror.conf`
+  - `console.jacarezinho.cloud` passou a incluir esse snippet no servidor HTTPS
+  - `console.interno.jacarezinho` passou a incluir o mesmo snippet no servidor HTTPS
+  - o roteamento compartilhado agora define:
+    - `/` -> frontend `https://127.0.0.1:6777`
+    - `/api/proxy/stats` -> backend core `http://127.0.0.1:6778`
+    - `/api/proxy/logs` -> backend core `http://127.0.0.1:6778`
+    - `/api/(proxy|rules|cert|dns|bloqueios-liberacoes|data-governance)` -> backend-proxy `https://127.0.0.1:6779`
+    - `/api/` restante -> backend core `http://127.0.0.1:6778`
+- diferenças preservadas por necessidade de infraestrutura:
+  - certificado público Let's Encrypt para `console.jacarezinho.cloud`
+  - certificado interno emitido pela CA SGCG para `console.interno.jacarezinho`
+  - download da CA interna em `/sgcg-root-ca.crt` e `/sgcg-root-ca.cer`
+  - rota HTTP interna de `/api/identity/` para agentes LAN antes do redirect HTTPS
+- backups dos vhosts anteriores:
+  - `/etc/nginx/sites-available/console.jacarezinho.cloud.bak-sgcg-mirror-20260504-131238`
+  - `/etc/nginx/sites-available/console.interno.jacarezinho.bak-sgcg-mirror-20260504-131238`
+- validação executada:
+  - `nginx -t` concluiu com sucesso
+  - `systemctl reload nginx` executado
+  - `GET /` retornou `200 text/html` em ambos os hosts via resolução local
+  - `GET /api/ping` retornou `Pong HTTP (Core 6778)` em ambos os hosts
+  - `GET /api/dns/stats` retornou `Token ausente` em ambos os hosts, comprovando contrato protegido igual
+  - `GET /api/bloqueios-liberacoes/health` retornou `Token ausente` em ambos os hosts
+  - `GET /api/data-governance/metrics?range=24h` retornou `Token ausente` em ambos os hosts
+  - `GET /api/proxy/stats` e `GET /api/proxy/logs` retornaram `Token ausente` em ambos os hosts
+
+## Próximo passo recomendado
+
+- toda nova rota do SGCG deve ser validada simultaneamente nos dois nomes:
+  - `https://console.jacarezinho.cloud`
+  - `https://console.interno.jacarezinho`
+- evitar editar diretamente apenas um dos vhosts; alterar o snippet comum quando a mudança pertencer à superfície da aplicação
