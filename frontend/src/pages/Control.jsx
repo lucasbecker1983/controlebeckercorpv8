@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan, Eraser } from 'lucide-react';
+import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan, Eraser, WifiOff, LockKeyhole, Wrench } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
@@ -22,6 +22,7 @@ export default function ControlPage() {
     const [services, setServices] = useState([]);
     const [clamav, setClamav] = useState(null);
     const [emergencyBypasses, setEmergencyBypasses] = useState([]);
+    const [totalVlanBlocks, setTotalVlanBlocks] = useState([]);
     const [selectedService, setSelectedService] = useState(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [tacticalLoading, setTacticalLoading] = useState('');
@@ -29,8 +30,11 @@ export default function ControlPage() {
     const [servicesError, setServicesError] = useState('');
     const [clamavError, setClamavError] = useState('');
     const [emergencyError, setEmergencyError] = useState('');
+    const [totalBlockError, setTotalBlockError] = useState('');
     const [emergencyDialog, setEmergencyDialog] = useState({ open: false, mode: 'activate', vlan: null });
     const [emergencyForm, setEmergencyForm] = useState({ duration_minutes: '30', reason: '' });
+    const [totalBlockDialog, setTotalBlockDialog] = useState({ open: false, mode: 'activate', vlan: null });
+    const [totalBlockForm, setTotalBlockForm] = useState({ reason: '' });
     
     const loadData = async () => {
         const [servicesRes, clamavRes] = await Promise.allSettled([
@@ -38,6 +42,7 @@ export default function ControlPage() {
             api.get('/api/control/clamav'),
         ]);
         const emergencyRes = await api.get('/api/bloqueios-liberacoes/emergency-vlan-bypass').catch((error) => error);
+        const totalBlockRes = await api.get('/api/bloqueios-liberacoes/total-vlan-blocks').catch((error) => error);
 
         if (servicesRes.status === 'fulfilled') {
             setServices(Array.isArray(servicesRes.value.data) ? servicesRes.value.data : []);
@@ -62,10 +67,23 @@ export default function ControlPage() {
             setEmergencyBypasses([]);
             setEmergencyError('Falha ao carregar os bypasses emergenciais por VLAN.');
         }
+
+        if (totalBlockRes?.data && Array.isArray(totalBlockRes.data)) {
+            setTotalVlanBlocks(totalBlockRes.data);
+            setTotalBlockError('');
+        } else {
+            setTotalVlanBlocks([]);
+            setTotalBlockError('Falha ao carregar os Bloqueios Totais por VLAN.');
+        }
     };
     useEffect(() => { loadData(); const i = setInterval(loadData, 5000); return () => clearInterval(i); }, []);
 
     const activeBypassByVlan = emergencyBypasses.reduce((acc, item) => {
+        acc[String(item.vlan_id)] = item;
+        return acc;
+    }, {});
+
+    const activeTotalBlockByVlan = totalVlanBlocks.reduce((acc, item) => {
         acc[String(item.vlan_id)] = item;
         return acc;
     }, {});
@@ -97,6 +115,37 @@ export default function ControlPage() {
             loadData();
         } catch (error) {
             alert(error?.response?.data?.error || 'Falha ao processar bypass emergencial por VLAN.');
+        } finally {
+            setTacticalLoading('');
+        }
+    };
+
+    const submitTotalVlanBlock = async () => {
+        const vlanId = Number(totalBlockDialog.vlan?.vlan_id || 0);
+        if (!vlanId) return;
+
+        if (totalBlockDialog.mode === 'activate' && !String(totalBlockForm.reason || '').trim()) {
+            alert('Informe o motivo institucional do Bloqueio Total.');
+            return;
+        }
+
+        setTacticalLoading(`total-vlan-${vlanId}-${totalBlockDialog.mode}`);
+        try {
+            if (totalBlockDialog.mode === 'activate') {
+                await api.post('/api/bloqueios-liberacoes/total-vlan-blocks/activate', {
+                    vlan_id: vlanId,
+                    reason: totalBlockForm.reason.trim(),
+                });
+            } else {
+                await api.post(`/api/bloqueios-liberacoes/total-vlan-blocks/${vlanId}/deactivate`, {
+                    reason: totalBlockForm.reason.trim() || 'Retorno manual da VLAN ao enforcement institucional',
+                });
+            }
+            setTotalBlockDialog({ open: false, mode: 'activate', vlan: null });
+            setTotalBlockForm({ reason: '' });
+            loadData();
+        } catch (error) {
+            alert(error?.response?.data?.error || 'Falha ao processar Bloqueio Total por VLAN.');
         } finally {
             setTacticalLoading('');
         }
@@ -312,6 +361,76 @@ export default function ControlPage() {
                                             : activeBypass
                                                 ? 'Encerrar bypass'
                                                 : 'Ativar bypass'}
+                                    </ActionButton>
+                                </div>
+                            </Surface>
+                        );
+                    })}
+                </div>
+            </Surface>
+
+            <Surface className="p-6 space-y-5 border-danger/22 bg-danger/8">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <div className="text-[11px] font-semibold tracking-tight text-danger">Contenção máxima</div>
+                        <h3 className="mt-2 flex items-center gap-2 text-xl font-black tracking-tight text-on-surface">
+                            <WifiOff size={22} className="text-danger" />
+                            Bloqueio Total por VLAN
+                        </h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/66">
+                            Interrompe a navegação da VLAN inteira e apresenta uma página institucional de manutenção para conexões HTTP. Use somente para indisponibilidade, contenção de incidente ou janela técnica autorizada.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <StatusChip label={`${totalVlanBlocks.length} VLAN(s) bloqueada(s)`} tone={totalVlanBlocks.length ? 'danger' : 'success'} />
+                        <StatusChip label="VLANs 10, 30, 50 e 70" tone="primary" />
+                    </div>
+                </div>
+
+                {totalBlockError ? (
+                    <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                        {totalBlockError}
+                    </div>
+                ) : null}
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {EMERGENCY_VLANS.map((vlan) => {
+                        const activeBlock = activeTotalBlockByVlan[String(vlan.vlan_id)];
+                        const actionKey = `total-vlan-${vlan.vlan_id}-${activeBlock ? 'deactivate' : 'activate'}`;
+                        return (
+                            <Surface key={vlan.vlan_id} stripe={false} className={`p-4 ${activeBlock ? 'border-danger/30 bg-danger/10' : ''}`}>
+                                <div className="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div className="text-sm font-bold text-on-surface">VLAN {vlan.vlan_id}</div>
+                                        <div className="mt-1 text-xs text-on-surface/62">{vlan.label}</div>
+                                    </div>
+                                    <StatusChip label={activeBlock ? 'Bloqueio Total' : 'Disponível'} tone={activeBlock ? 'danger' : 'success'} />
+                                </div>
+                                <div className="mt-4 text-xs leading-6 text-on-surface/66">
+                                    {activeBlock ? (
+                                        <>
+                                            Motivo: {activeBlock.reason}<br />
+                                            Desde: {formatDateTime(activeBlock.activated_at)}
+                                        </>
+                                    ) : (
+                                        'Ao ativar, a VLAN entra em modo manutenção e deixa de navegar até a restauração manual.'
+                                    )}
+                                </div>
+                                <div className="mt-4">
+                                    <ActionButton
+                                        tone={activeBlock ? 'primary' : 'danger'}
+                                        icon={activeBlock ? ShieldCheck : LockKeyhole}
+                                        disabled={tacticalLoading === actionKey}
+                                        onClick={() => {
+                                            setTotalBlockDialog({ open: true, mode: activeBlock ? 'deactivate' : 'activate', vlan });
+                                            setTotalBlockForm({ reason: '' });
+                                        }}
+                                    >
+                                        {tacticalLoading === actionKey
+                                            ? 'Processando...'
+                                            : activeBlock
+                                                ? 'Restaurar VLAN'
+                                                : 'Bloquear VLAN'}
                                     </ActionButton>
                                 </div>
                             </Surface>
@@ -593,6 +712,55 @@ export default function ControlPage() {
                                         : emergencyDialog.mode === 'activate'
                                             ? 'Confirmar bypass'
                                             : 'Restaurar enforcement'}
+                                </ActionButton>
+                            </div>
+                        </div>
+                    </DialogShell>
+                )}
+
+                {totalBlockDialog.open && totalBlockDialog.vlan && (
+                    <DialogShell
+                        open={Boolean(totalBlockDialog.open)}
+                        title={`${totalBlockDialog.mode === 'activate' ? 'Ativar' : 'Encerrar'} Bloqueio Total`}
+                        subtitle={`VLAN ${totalBlockDialog.vlan.vlan_id} • ${totalBlockDialog.vlan.label}`}
+                        onClose={() => !tacticalLoading && setTotalBlockDialog({ open: false, mode: 'activate', vlan: null })}
+                        size="max-w-lg"
+                    >
+                        <div className="space-y-4">
+                            <div className="rounded-2xl border border-danger/18 bg-danger/10 px-4 py-3 text-sm leading-6 text-on-surface/70">
+                                {totalBlockDialog.mode === 'activate'
+                                    ? 'Esta ação bloqueia a navegação da VLAN inteira e prioriza uma página institucional de manutenção para conexões HTTP. Registre o motivo com clareza para manter rastreabilidade.'
+                                    : 'Esta ação remove o modo manutenção e devolve a VLAN ao enforcement institucional vigente.'}
+                            </div>
+
+                            <label className="block">
+                                <span className="mb-2 block text-sm font-bold text-on-surface">Motivo</span>
+                                <textarea
+                                    value={totalBlockForm.reason}
+                                    onChange={(event) => setTotalBlockForm((current) => ({ ...current, reason: event.target.value }))}
+                                    rows={4}
+                                    placeholder={totalBlockDialog.mode === 'activate'
+                                        ? 'Ex.: manutenção elétrica no setor, contenção de incidente, janela técnica autorizada.'
+                                        : 'Registre o motivo do retorno da VLAN.'}
+                                    className="w-full rounded-2xl border border-outline/16 bg-surface px-4 py-3 text-sm text-on-surface"
+                                />
+                            </label>
+
+                            <div className="flex justify-end gap-3">
+                                <ActionButton tone="ghost" onClick={() => setTotalBlockDialog({ open: false, mode: 'activate', vlan: null })}>
+                                    Cancelar
+                                </ActionButton>
+                                <ActionButton
+                                    tone={totalBlockDialog.mode === 'activate' ? 'danger' : 'primary'}
+                                    icon={totalBlockDialog.mode === 'activate' ? Wrench : ShieldCheck}
+                                    disabled={Boolean(tacticalLoading)}
+                                    onClick={submitTotalVlanBlock}
+                                >
+                                    {tacticalLoading
+                                        ? 'Processando...'
+                                        : totalBlockDialog.mode === 'activate'
+                                            ? 'Confirmar manutenção'
+                                            : 'Restaurar navegação'}
                                 </ActionButton>
                             </div>
                         </div>

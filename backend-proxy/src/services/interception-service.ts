@@ -82,6 +82,16 @@ export class InterceptionService {
             `,
         ).catch(() => ({ rows: [] as Array<{ vlan_id: number; interface_name: string; subnet_cidr: string; exempt: boolean; blocking_enabled: boolean; monitoring_enabled: boolean }> }));
         const selectiveVlans = filterOperationalVlans(rows);
+        const { rows: allVlanRows } = await pool.query(
+            `
+                SELECT vlan_id, interface_name, subnet_cidr, exempt, blocking_enabled, monitoring_enabled
+                FROM vlan_policies
+                WHERE exempt = FALSE
+                  AND blocking_enabled = TRUE
+                  AND monitoring_enabled = TRUE
+                ORDER BY vlan_id ASC
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number; interface_name: string; subnet_cidr: string; exempt: boolean; blocking_enabled: boolean; monitoring_enabled: boolean }> }));
         const { rows: vipRows } = await pool.query(
             `
                 SELECT host(ip) AS ip, vlan_id
@@ -101,13 +111,29 @@ export class InterceptionService {
                 ORDER BY vlan_id ASC
             `,
         ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
+        const { rows: totalBlockRows } = await pool.query(
+            `
+                SELECT vlan_id
+                FROM total_vlan_blocks
+                WHERE active = TRUE
+                ORDER BY vlan_id ASC
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
         const vipBypassRows = uniqueVipRows(vipRows);
         const emergencyVlans = uniqueVlanIds(emergencyRows);
+        const totalBlockVlans = uniqueVlanIds(totalBlockRows);
+        const totalBlockRules = filterOperationalVlans(allVlanRows).filter((row) => totalBlockVlans.has(Number(row.vlan_id)));
 
-        if (!bypassGlobal && ports.length > 0 && selectiveVlans.length > 0) {
+        if (((!bypassGlobal && ports.length > 0 && selectiveVlans.length > 0) || totalBlockRules.length > 0)) {
             rules.push('*nat');
             rules.push(':V8_PROXY_ENGINE - [0:0]');
+            for (const row of totalBlockRules) {
+                rules.push(`-A PREROUTING -i ${row.interface_name} -s ${row.subnet_cidr} -p udp --dport 53 -j RETURN`);
+                rules.push(`-A PREROUTING -i ${row.interface_name} -s ${row.subnet_cidr} -p tcp --dport 53 -j RETURN`);
+                rules.push(`-A PREROUTING -i ${row.interface_name} -s ${row.subnet_cidr} -p tcp --dport 80 -j REDIRECT --to-ports ${env.proxyInterceptHttpPort}`);
+            }
             for (const row of selectiveVlans) {
+                if (totalBlockVlans.has(Number(row.vlan_id))) continue;
                 if (emergencyVlans.has(Number(row.vlan_id))) continue;
                 const gatewayIp = getGatewayFromSubnet(row.subnet_cidr);
                 const vlanVips = vipBypassRows.filter((vip) => !vip.vlan_id || vip.vlan_id === row.vlan_id);
@@ -129,6 +155,14 @@ export class InterceptionService {
             }
             rules.push('COMMIT');
             rules.push(...buildFilterRules(mode));
+            if (totalBlockRules.length > 0) {
+                rules.push('*filter');
+                rules.push(':V8_PROXY_TOTAL_BLOCK - [0:0]');
+                for (const row of totalBlockRules) {
+                    rules.push(`-A ufw-before-forward -i ${row.interface_name} -s ${row.subnet_cidr} -j REJECT --reject-with icmp-port-unreachable`);
+                }
+                rules.push('COMMIT');
+            }
         } else {
             rules.push('# Modo OFF, bypass global ativo ou sem VLAN explicitamente marcada para intercept-selective.');
         }

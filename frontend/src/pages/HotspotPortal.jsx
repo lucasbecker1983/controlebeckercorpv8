@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Building2, CheckCircle2, FileCheck2, Loader2, LockKeyhole, ShieldCheck, UserPlus, Wifi } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, FileCheck2, Loader2, LockKeyhole, ShieldCheck, UserPlus, Wifi } from 'lucide-react';
 import { api } from '../services/api';
 
 const emptyRegister = {
@@ -55,6 +55,21 @@ function Notice({ tone = 'info', children }) {
     danger: 'border-red-200 bg-red-50 text-red-900',
   };
   return <div className={`rounded-lg border px-3 py-2 text-sm leading-5 ${tones[tone]}`}>{children}</div>;
+}
+
+function DeveloperCredit() {
+  return (
+    <a
+      href="https://jmbtecnologia.com.br"
+      target="_blank"
+      rel="noreferrer"
+      className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-500 shadow-sm"
+      title="JMB Tecnologia"
+    >
+      <span>Desenvolvido por</span>
+      <img src="/jmb-logo-clean.png" alt="JMB Tecnologia" className="h-7 w-auto object-contain" />
+    </a>
+  );
 }
 
 function TermsView({ onBack }) {
@@ -162,9 +177,9 @@ export default function HotspotPortal() {
         setStatus({ type: 'success', message: 'Acesso institucional reconhecido automaticamente para este dispositivo.' });
         redirectAfterAuthentication(res.data);
       } else if (res.data?.recognized && res.data?.requires_confirm) {
-        setStatus({ type: 'success', message: res.data?.message || `Bem-vindo de volta, ${res.data?.visitor?.full_name || 'visitante'}. Clique para navegar.` });
+        setStatus({ type: 'success', message: res.data?.message || `Bem-vindo, ${res.data?.visitor?.full_name || 'visitante'}. Clique em Entrar na Internet para navegar.` });
       } else {
-        setStatus({ type: 'info', message: 'Identifique-se para uso da rede pública de visitantes. No primeiro acesso, realize o cadastro institucional.' });
+        setStatus({ type: 'info', message: 'Identifique-se para uso da rede pública de visitantes. Sem cadastro, login ou confirmação explícita do dispositivo reconhecido, a navegação externa permanece bloqueada.' });
       }
     } catch (error) {
       setStatus({ type: 'danger', message: error?.response?.data?.error || 'Não foi possível verificar o dispositivo.' });
@@ -232,19 +247,21 @@ export default function HotspotPortal() {
   return (
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <section className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-5 sm:px-6 sm:py-8">
-        <header className="rounded-lg bg-sky-950 px-4 py-5 text-white shadow-lg sm:px-6">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white/10">
-              <Building2 size={25} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wide text-sky-100">Prefeitura Municipal de Jacarezinho</p>
-              <h1 className="mt-1 text-xl font-black leading-tight sm:text-2xl">Hotspot Institucional</h1>
-              <p className="mt-2 text-sm font-semibold leading-5 text-sky-50">Secretaria do Comércio, Indústria, Serviços e Inovação</p>
+        <header className="overflow-hidden rounded-lg border border-sky-950/10 bg-white shadow-lg">
+          <div className="bg-sky-950 px-4 py-4 text-white sm:px-6">
+            <div className="flex items-center gap-3">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white p-1.5">
+                <img src="/LOGO-JACAREZINHO.png" alt="Brasão de Jacarezinho" className="h-full w-full object-contain" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-bold uppercase tracking-wide text-sky-100">Prefeitura Municipal de Jacarezinho</p>
+                <h1 className="mt-1 text-xl font-black leading-tight sm:text-2xl">Hotspot Institucional</h1>
+              </div>
             </div>
           </div>
-          <div className="mt-4 border-t border-white/15 pt-3 text-xs leading-5 text-sky-50">
-            Rede pública de visitantes com identificação pessoal, registro de acesso e políticas institucionais de segurança.
+          <div className="border-t border-sky-900/10 bg-slate-50 px-4 py-3 sm:px-6">
+            <p className="text-xs font-black uppercase tracking-wide text-sky-950">Secretaria Municipal de Comércio, Indústria, Serviços e Inovação</p>
+            <p className="mt-1 text-sm font-semibold text-slate-600">Rede pública de visitantes com identificação obrigatória</p>
           </div>
         </header>
 
@@ -306,9 +323,9 @@ export default function HotspotPortal() {
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-1 shrink-0 text-emerald-700" size={28} />
                 <div className="min-w-0">
-                  <h2 className="text-xl font-black text-emerald-950">Bem-vindo de volta</h2>
+                  <h2 className="text-xl font-black text-emerald-950">Bem-vindo, {context?.visitor?.full_name || 'visitante'}</h2>
                   <p className="mt-2 text-sm leading-5 text-slate-700">
-                    {context?.visitor?.full_name}, seu dispositivo foi reconhecido. Confirme para iniciar uma nova sessão de navegação.
+                    Seu dispositivo foi reconhecido. Confirme para iniciar uma nova sessão de navegação.
                   </p>
                   <div className="mt-4 grid gap-2 text-sm text-slate-700">
                     <div className="break-words rounded-lg bg-slate-50 px-3 py-2">{deviceText}</div>
@@ -321,7 +338,7 @@ export default function HotspotPortal() {
                     className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-base font-black text-white transition hover:bg-emerald-800 disabled:opacity-60"
                   >
                     {submitting ? <Loader2 className="animate-spin" size={18} /> : <Wifi size={18} />}
-                    Clique aqui para navegar
+                    Entrar na Internet
                   </button>
                 </div>
               </div>
@@ -356,7 +373,7 @@ export default function HotspotPortal() {
                 <button
                   type="button"
                   onClick={() => setMode('login')}
-                  className={`h-11 rounded-md text-sm font-black ${mode === 'login' ? 'bg-white text-sky-950 shadow-sm' : 'text-slate-600'}`}
+                  className={`h-11 rounded-md text-sm font-black transition ${mode === 'login' ? 'bg-sky-900 text-white shadow-sm' : 'bg-sky-700 text-white shadow-sm hover:bg-sky-800'}`}
                 >
                   Já tenho cadastro
                 </button>
@@ -389,6 +406,9 @@ export default function HotspotPortal() {
           )}
           </>
           )}
+        </div>
+        <div className="mt-4">
+          <DeveloperCredit />
         </div>
       </section>
     </main>

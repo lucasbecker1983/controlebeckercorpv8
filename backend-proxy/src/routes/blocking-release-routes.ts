@@ -5,6 +5,8 @@ import { dnsContingencyService } from '../services/dns-contingency-service';
 import { dnsRadarService } from '../services/dns-radar-service';
 import { domainPolicyManagerService } from '../services/domain-policy-manager-service';
 import { proxyRadarService } from '../services/proxy-radar-service';
+import { runCommand } from '../utils/process';
+import { env } from '../config/env';
 
 const router = Router();
 const clientIp = (req: any) => {
@@ -334,6 +336,34 @@ router.post('/emergency-vlan-bypass/:vlanId/deactivate', async (req, res) => {
     }
 });
 
+router.get('/total-vlan-blocks', async (_req, res) => {
+    try {
+        res.json(await blockingReleaseService.listTotalVlanBlocks());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/total-vlan-blocks/activate', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.activateTotalVlanBlock(req.body, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/total-vlan-blocks/:vlanId/deactivate', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.deactivateTotalVlanBlock(
+            Number(req.params.vlanId),
+            requestedBy(req),
+            String(req.body?.reason || 'Retorno manual da VLAN ao enforcement institucional'),
+        ));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
 router.get('/contingency/status', async (_req, res) => {
     try {
         res.json(await dnsContingencyService.getStatus());
@@ -647,6 +677,104 @@ router.get('/reports/:reportKey', async (req, res) => {
         res.json(await blockingReleaseService.parseSargReport(String(req.params.reportKey)));
     } catch (error: any) {
         res.status(404).json({ error: error.message });
+    }
+});
+
+// ── WhatsApp Allowlist (ipset sgcg_whatsapp_allowed) ──────────────────────────
+// WhatsApp compartilha ranges de IP com Facebook/Instagram (AS32934).
+// O ipset separado com ACCEPT na posição 1 do FORWARD garante que o WhatsApp
+// nunca seja bloqueado pelas regras de redes sociais.
+
+const WHATSAPP_IPSET = 'sgcg_whatsapp_allowed';
+const WHATSAPP_UPDATE_SCRIPT = `${env.projectRoot}/scripts/update_whatsapp_allowlist.py`;
+
+const parseIpsetMembers = (output: string): Array<{ ip: string; comment: string }> => {
+    const lines = output.split('\n');
+    const inMembers = lines.findIndex((l) => l.trim() === 'Members:');
+    if (inMembers === -1) return [];
+    return lines
+        .slice(inMembers + 1)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l) => {
+            const [ip, , comment] = l.split(' ');
+            return { ip, comment: comment?.replace(/"/g, '') || '' };
+        });
+};
+
+router.get('/whatsapp-allowlist', async (_req, res) => {
+    try {
+        const result = await runCommand('ipset', ['list', WHATSAPP_IPSET], { allowFailure: true });
+        if (result.code !== 0) {
+            return res.json({ active: false, ips: [], error: 'ipset não encontrado ou não inicializado' });
+        }
+        const ips = parseIpsetMembers(result.stdout);
+        const logResult = await runCommand('tail', ['-5', '/var/log/sgcg_whatsapp_allowlist.log'], { allowFailure: true });
+        const lastLog = logResult.stdout.trim() || null;
+        const lastUpdate = lastLog?.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)?.[0] || null;
+        res.json({ active: true, ips, total: ips.length, last_update: lastUpdate, last_log: lastLog });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/whatsapp-allowlist/refresh', async (req: any, res) => {
+    const actor = String(req.auth?.username || req.headers['x-user'] || 'api');
+    try {
+        const result = await runCommand('python3', [WHATSAPP_UPDATE_SCRIPT], {
+            elevated: false,
+            allowFailure: true,
+        });
+        const success = result.code === 0;
+        const ipsetResult = await runCommand('ipset', ['list', WHATSAPP_IPSET], { allowFailure: true });
+        const ips = parseIpsetMembers(ipsetResult.stdout);
+        res.json({
+            success,
+            actor,
+            ips,
+            total: ips.length,
+            stdout: result.stdout.trim(),
+            stderr: result.stderr.trim() || null,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/whatsapp-allowlist/schedule', async (_req, res) => {
+    try {
+        const result = await runCommand(
+            'bash',
+            ['-c', 'crontab -l 2>/dev/null | grep "update_whatsapp_allowlist.py"'],
+            { allowFailure: true },
+        );
+        const cronLine = result.stdout.trim();
+        const enabled = cronLine.length > 0;
+        const hoursMatch = cronLine.match(/\*\/(\d+)/);
+        const interval_hours = hoursMatch ? parseInt(hoursMatch[1], 10) : 6;
+        res.json({ enabled, interval_hours, cron_line: cronLine || null });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/whatsapp-allowlist/schedule', async (req: any, res) => {
+    const actor = String(req.auth?.username || req.headers['x-user'] || 'api');
+    const enabled = req.body?.enabled !== false;
+    const interval_hours = Math.max(1, Math.min(24, parseInt(req.body?.interval_hours ?? 6, 10)));
+    try {
+        const cronEntry = `0 */${interval_hours} * * * python3 ${WHATSAPP_UPDATE_SCRIPT} >> /var/log/sgcg_whatsapp_allowlist.log 2>&1`;
+        let shellCmd: string;
+        if (enabled) {
+            shellCmd = `(crontab -l 2>/dev/null | grep -v "update_whatsapp_allowlist.py"; echo "${cronEntry}") | crontab -`;
+        } else {
+            shellCmd = `crontab -l 2>/dev/null | grep -v "update_whatsapp_allowlist.py" | crontab -`;
+        }
+        const result = await runCommand('bash', ['-c', shellCmd], { allowFailure: true });
+        const success = result.code === 0;
+        res.json({ success, actor, enabled, interval_hours, cron_line: enabled ? cronEntry : null });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
     }
 });
 

@@ -1,3 +1,5 @@
+import { storageGet, storageRemove, storageSet } from './browserStorage';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (typeof window !== 'undefined' ? window.location.origin : '');
 
 let refreshPromise = null;
@@ -10,7 +12,7 @@ const resolveUrl = (path) => {
 };
 
 export const readStoredAccessToken = () => (
-    typeof window === 'undefined' ? '' : String(localStorage.getItem('becker_token') || '')
+    typeof window === 'undefined' ? '' : String(storageGet('becker_token', '') || '')
 );
 
 export const isSessionInvalidated = () => authInvalidated;
@@ -23,8 +25,8 @@ export const invalidateSession = () => {
     if (typeof window === 'undefined') return;
     if (authInvalidated) return;
     authInvalidated = true;
-    localStorage.removeItem('becker_token');
-    localStorage.removeItem('becker_user');
+    storageRemove('becker_token');
+    storageRemove('becker_user');
     window.dispatchEvent(new CustomEvent('sgcg:auth-invalid'));
     if (window.location.pathname !== '/') {
         window.location.href = '/';
@@ -47,9 +49,9 @@ export async function refreshAccessToken() {
                 return null;
             }
 
-            localStorage.setItem('becker_token', payload.accessToken);
+            storageSet('becker_token', payload.accessToken);
             if (payload.user) {
-                localStorage.setItem('becker_user', JSON.stringify(payload.user));
+                storageSet('becker_user', JSON.stringify(payload.user));
             }
             return payload.accessToken;
         })

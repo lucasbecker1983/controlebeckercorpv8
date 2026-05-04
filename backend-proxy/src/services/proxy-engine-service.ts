@@ -43,6 +43,13 @@ const normalizeAllowedClientCidrs = (entries: string[]) => {
     return [...others.sort((left, right) => left.localeCompare(right)), ...kept.map((item) => item.raw)];
 };
 
+const hasActiveTotalVlanBlock = async () => {
+    const { rows } = await pool.query(
+        `SELECT 1 FROM total_vlan_blocks WHERE active = TRUE LIMIT 1`,
+    ).catch(() => ({ rows: [] as any[] }));
+    return rows.length > 0;
+};
+
 const readAclEntries = (filePath: string) => {
     if (!fs.existsSync(filePath)) return [];
     return fs.readFileSync(filePath, 'utf8')
@@ -50,6 +57,65 @@ const readAclEntries = (filePath: string) => {
         .map((line) => line.trim())
         .filter((line) => line && !line.startsWith('#'));
 };
+
+const SQUID_ERROR_DIR = '/etc/squid/errors/sgcg';
+const SQUID_MAINTENANCE_ERROR = 'ERR_SGCG_MAINTENANCE';
+
+const maintenanceErrorHtml = `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SGCG - Manutencao institucional</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, Arial, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 18% 18%, rgba(37, 99, 235, .16), transparent 28rem), linear-gradient(135deg, #f7fafc 0%, #eef6f1 48%, #f6f8fb 100%); color: #122033; display: flex; align-items: stretch; justify-content: center; }
+    main { width: min(1120px, 100%); min-height: 100vh; padding: 28px; display: grid; grid-template-rows: auto 1fr auto; gap: 24px; }
+    header { border-bottom: 1px solid rgba(18, 32, 51, .12); padding-bottom: 18px; }
+    .city { font-size: clamp(18px, 3vw, 30px); font-weight: 900; letter-spacing: .02em; text-transform: uppercase; }
+    .secretary { margin-top: 6px; font-size: clamp(13px, 2vw, 17px); color: #436072; font-weight: 700; }
+    section { align-self: center; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(280px, .95fr); gap: 28px; align-items: center; }
+    .signal { border: 1px solid rgba(18, 32, 51, .12); background: rgba(255, 255, 255, .72); box-shadow: 0 24px 70px rgba(15, 23, 42, .12); border-radius: 28px; padding: clamp(24px, 5vw, 44px); }
+    .eyebrow { color: #0f766e; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .18em; }
+    h1 { margin: 16px 0 0; font-size: clamp(38px, 7vw, 76px); line-height: .92; letter-spacing: 0; }
+    p { margin: 18px 0 0; font-size: clamp(16px, 2.1vw, 21px); line-height: 1.65; color: #3a5063; }
+    .panel { border-radius: 28px; background: #102033; color: #fff; padding: 24px; min-height: 420px; display: grid; align-content: space-between; overflow: hidden; position: relative; }
+    .panel:before { content: ""; position: absolute; inset: -40% -30% auto auto; width: 320px; height: 320px; border-radius: 999px; background: rgba(20, 184, 166, .28); }
+    .status { position: relative; display: inline-flex; width: fit-content; padding: 8px 12px; border: 1px solid rgba(255,255,255,.2); border-radius: 999px; font-size: 12px; font-weight: 800; color: #a7f3d0; }
+    .grid { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 34px; }
+    .tile { min-height: 76px; border: 1px solid rgba(255,255,255,.14); border-radius: 18px; background: rgba(255,255,255,.07); }
+    .tile:nth-child(2), .tile:nth-child(5), .tile:nth-child(8) { background: rgba(20,184,166,.24); }
+    .note { position: relative; color: rgba(255,255,255,.76); line-height: 1.55; font-size: 14px; }
+    footer { display: flex; justify-content: space-between; gap: 16px; color: #5b7080; font-size: 12px; border-top: 1px solid rgba(18, 32, 51, .12); padding-top: 16px; }
+    @media (max-width: 820px) { main { padding: 18px; } section { grid-template-columns: 1fr; } .panel { min-height: 320px; } footer { flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="city">Prefeitura Municipal de Jacarezinho</div>
+      <div class="secretary">Secretaria de Comercio, Industria, Servicos e Inovacao</div>
+    </header>
+    <section>
+      <div class="signal">
+        <div class="eyebrow">SGCG - continuidade operacional</div>
+        <h1>Rede em manutencao.</h1>
+        <p>Esta VLAN foi colocada em Bloqueio Total por uma intervencao tecnica autorizada. A navegacao sera restabelecida assim que a equipe concluir a verificacao do ambiente.</p>
+      </div>
+      <div class="panel" aria-hidden="true">
+        <div>
+          <span class="status">MODO MANUTENCAO ATIVO</span>
+          <div class="grid"><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div><div class="tile"></div></div>
+        </div>
+        <div class="note">Protecao temporaria aplicada pelo Sistema de Governanca e Controle Governamental. Nao e necessario alterar configuracoes do dispositivo.</div>
+      </div>
+    </section>
+    <footer><span>SGCG - Sistema de Governanca e Controle Governamental</span><span>JMB Tecnologia</span></footer>
+  </main>
+</body>
+</html>
+`;
 
 const modePorts = (mode: EngineMode) => {
     if (mode === 'test-http-only') return [env.proxyForwardPort, env.proxyInterceptHttpPort];
@@ -154,8 +220,22 @@ export class ProxyEngineService {
         }).catch(() => undefined);
     }
 
+    ensureMaintenanceErrorPage() {
+        fs.mkdirSync(SQUID_ERROR_DIR, { recursive: true });
+        const defaultErrorDir = [
+            '/usr/share/squid/errors/templates',
+            '/usr/share/squid/errors/English',
+            '/usr/share/squid/errors/en',
+        ].find((candidate) => fs.existsSync(candidate));
+        if (defaultErrorDir) {
+            fs.cpSync(defaultErrorDir, SQUID_ERROR_DIR, { recursive: true });
+        }
+        fs.writeFileSync(path.join(SQUID_ERROR_DIR, SQUID_MAINTENANCE_ERROR), maintenanceErrorHtml);
+    }
+
     async renderSquidConfig(mode: EngineMode, activeCertificate: any) {
         const emergencyBypassActive = await isEmergencyBypassEnabled();
+        this.ensureMaintenanceErrorPage();
         const protectedFile = path.join(env.squidAclDir, 'proxy_protected_ssl.acl');
         const whitelistFile = path.join(env.squidAclDir, 'proxy_whitelist.acl');
         const blocklistFile = path.join(env.squidAclDir, 'proxy_blocklist.acl');
@@ -166,6 +246,15 @@ export class ProxyEngineService {
         const { rows: vlanRows } = await pool.query(
             `SELECT vlan_id, subnet_cidr, exempt, blocking_enabled FROM vlan_policies ORDER BY vlan_id ASC`,
         ).catch(() => ({ rows: [] as any[] }));
+        const { rows: totalBlockRows } = await pool.query(
+            `
+                SELECT vlan_id
+                FROM total_vlan_blocks
+                WHERE active = TRUE
+                ORDER BY vlan_id ASC
+            `,
+        ).catch(() => ({ rows: [] as Array<{ vlan_id: number }> }));
+        const totalBlockVlanIds = new Set(totalBlockRows.map((row: any) => Number(row.vlan_id)));
         const allowedClientCidrs = normalizeAllowedClientCidrs([
             '127.0.0.1/32',
             '::1',
@@ -191,6 +280,7 @@ export class ProxyEngineService {
                 blockUrlEntries: readAclEntries(blockUrlPath),
             };
         }).filter((vlan: any) => vlan.subnet_cidr);
+        const totalBlockAcls = vlanAcls.filter((vlan: any) => totalBlockVlanIds.has(Number(vlan.vlan_id)));
         const ipBypassEntries = readAclEntries(ipBypassFile);
 
         const lines = [
@@ -208,6 +298,7 @@ export class ProxyEngineService {
             'shutdown_lifetime 3 seconds',
             'via on',
             'forwarded_for delete',
+            `error_directory ${SQUID_ERROR_DIR}`,
             '',
             '# Acesso administrativo local e clientes explicitamente autorizados.',
             `acl allowed_clients src ${allowedClientCidrs.join(' ')}`,
@@ -228,7 +319,7 @@ export class ProxyEngineService {
             lines.splice(lines.length - 3, 0, `acl ip_bypass src "${ipBypassFile}"`);
         }
 
-        if (mode !== 'off') {
+        if (mode !== 'off' || totalBlockAcls.length > 0) {
             lines.push(`http_port ${env.proxyInterceptHttpPort} intercept`);
         }
 
@@ -245,6 +336,9 @@ export class ProxyEngineService {
             }
             if (vlan.blockUrlEntries.length > 0) {
                 lines.push(`acl vlan_${vlan.vlan_id}_block_url url_regex -i "${vlan.blockUrlPath}"`);
+            }
+            if (totalBlockVlanIds.has(Number(vlan.vlan_id))) {
+                lines.push(`acl vlan_${vlan.vlan_id}_total_block src ${vlan.subnet_cidr}`);
             }
         }
 
@@ -267,6 +361,11 @@ export class ProxyEngineService {
             '# Ordem de precedência no proxy complementar.',
             'http_access deny !allowed_clients',
         );
+
+        for (const vlan of totalBlockAcls) {
+            lines.push(`deny_info ${SQUID_MAINTENANCE_ERROR} vlan_${vlan.vlan_id}_total_block`);
+            lines.push(`http_access deny vlan_${vlan.vlan_id}_total_block`);
+        }
 
         if (emergencyBypassActive) {
             lines.push(
@@ -405,7 +504,8 @@ export class ProxyEngineService {
         const observedScopes = getObservedClientScopes();
         try {
             const squidResult = await this.buildAndApplySquid(mode);
-            const bypassGlobal = mode === 'off';
+            const totalBlockActive = await hasActiveTotalVlanBlock();
+            const bypassGlobal = mode === 'off' && !totalBlockActive;
             const interception = await this.interceptionService.applyMode(mode, bypassGlobal);
             const conntrackReset = await this.interceptionService.resetTestTargetConntrack(mode);
             const logger = await this.dnsLoggerService.ensureRunning();
@@ -414,7 +514,7 @@ export class ProxyEngineService {
             await this.updateState({
                 mode,
                 squid_active: squidActive,
-                interception_active: !bypassGlobal && interception.ports.length > 0,
+                interception_active: !bypassGlobal && (interception.ports.length > 0 || totalBlockActive),
                 dns_logger_active: logger.active,
                 bypass_global: bypassGlobal,
                 active_ports: modePorts(mode),

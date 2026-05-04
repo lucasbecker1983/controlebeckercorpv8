@@ -12,6 +12,7 @@ import {
     getInternalDnsForVlan,
     getGatewayFromSubnet,
     INTERNAL_DNS_BY_VLAN,
+    MANAGED_BLOCKING_VLAN_SET,
     isManagedBlockingIp,
     isManagedBlockingVlan,
     MANAGED_VLAN_SQL_LIST,
@@ -43,6 +44,20 @@ type EmergencyVlanBypassRow = {
     requested_by: string;
     activated_at: string;
     expires_at: string | null;
+    deactivated_at: string | null;
+    deactivated_by: string | null;
+    active: boolean;
+    notes: string | null;
+    created_at: string;
+    updated_at: string;
+};
+
+type TotalVlanBlockRow = {
+    id: number;
+    vlan_id: number;
+    reason: string;
+    requested_by: string;
+    activated_at: string;
     deactivated_at: string | null;
     deactivated_by: string | null;
     active: boolean;
@@ -1686,6 +1701,177 @@ class BlockingReleaseService {
         return rows as EmergencyVlanBypassRow[];
     }
 
+    async listTotalVlanBlocks(options: { includeInactive?: boolean } = {}) {
+        await this.ensureReady();
+        const { rows } = await pool.query(
+            `
+                SELECT *
+                FROM total_vlan_blocks
+                WHERE ${options.includeInactive ? '1 = 1' : 'active = TRUE'}
+                ORDER BY active DESC, vlan_id ASC, activated_at DESC
+            `,
+        ).catch(() => ({ rows: [] as TotalVlanBlockRow[] }));
+        return rows as TotalVlanBlockRow[];
+    }
+
+    async activateTotalVlanBlock(payload: any, requestedBy = 'system') {
+        await this.ensureReady();
+        const vlanId = assertManagedPolicyVlan(payload?.vlan_id ?? payload?.vlanId);
+        if (!MANAGED_BLOCKING_VLAN_SET.has(vlanId as any)) {
+            throw new Error('Bloqueio Total disponível apenas para VLANs 10, 30, 50 e 70.');
+        }
+        const reason = String(payload?.reason || '').trim();
+        if (!reason) throw new Error('Motivo obrigatório para Bloqueio Total por VLAN.');
+
+        const existing = await pool.query(
+            `
+                SELECT *
+                FROM total_vlan_blocks
+                WHERE vlan_id = $1
+                  AND active = TRUE
+                ORDER BY activated_at DESC
+                LIMIT 1
+            `,
+            [vlanId],
+        ).catch(() => ({ rows: [] as TotalVlanBlockRow[] }));
+        if (existing.rows.length) {
+            throw new Error(`A VLAN ${vlanId} já está em Bloqueio Total.`);
+        }
+
+        await this.deactivateEmergencyVlanBypass(
+            vlanId,
+            requestedBy,
+            `Bloqueio Total por VLAN ${vlanId} ativado; bypass emergencial incompatível foi encerrado.`,
+        ).catch(() => null);
+
+        const { rows } = await pool.query(
+            `
+                INSERT INTO total_vlan_blocks (
+                    vlan_id,
+                    reason,
+                    requested_by,
+                    activated_at,
+                    active,
+                    notes
+                )
+                VALUES ($1, $2, $3, NOW(), TRUE, $4)
+                RETURNING *
+            `,
+            [vlanId, reason, requestedBy, payload?.notes || null],
+        );
+
+        await this.writeGeneratedArtifacts();
+        const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
+        const validation = await this.validateCompiledState(mode);
+        const runtime = await this.applyTotalVlanRuntimeRules(vlanId);
+        await dnsContingencyService.ensureFirewallState();
+        await this.dropVlanSessions(vlanId);
+        await this.recordAudit({
+            action: 'total-vlan-block:activate',
+            requestedBy,
+            payload: { vlan_id: vlanId, reason },
+            result: { ...rows[0], validation, runtime },
+            success: true,
+            message: `Bloqueio Total ativado para VLAN ${vlanId}`,
+            vlanId,
+        });
+        return rows[0];
+    }
+
+    async deactivateTotalVlanBlock(vlanRef: number, requestedBy = 'system', reason = 'Retorno manual da VLAN ao enforcement institucional') {
+        await this.ensureReady();
+        const vlanId = assertManagedPolicyVlan(vlanRef);
+        if (!MANAGED_BLOCKING_VLAN_SET.has(vlanId as any)) {
+            throw new Error('Bloqueio Total disponível apenas para VLANs 10, 30, 50 e 70.');
+        }
+        const { rows } = await pool.query(
+            `
+                UPDATE total_vlan_blocks
+                SET active = FALSE,
+                    deactivated_at = NOW(),
+                    deactivated_by = $2,
+                    updated_at = NOW(),
+                    notes = CONCAT(COALESCE(notes, ''), CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE E'\n' END, $3::text)
+                WHERE vlan_id = $1
+                  AND active = TRUE
+                RETURNING *
+            `,
+            [vlanId, requestedBy, `Desativado: ${reason}`],
+        );
+        if (!rows.length) throw new Error(`Nenhum Bloqueio Total ativo encontrado para a VLAN ${vlanId}.`);
+
+        await this.writeGeneratedArtifacts();
+        const mode = ((await this.getEngineState()).enforcement_mode || 'acl-plus-dns') as EnforcementMode;
+        const validation = await this.validateCompiledState(mode);
+        const runtimeRemoved = await this.removeTotalVlanRuntimeRules(vlanId);
+        await dnsContingencyService.ensureFirewallState();
+        await this.recordAudit({
+            action: 'total-vlan-block:deactivate',
+            requestedBy,
+            payload: { vlan_id: vlanId, reason },
+            result: { ...rows[0], validation, runtime_removed: runtimeRemoved },
+            success: true,
+            message: `Bloqueio Total desativado para VLAN ${vlanId}`,
+            vlanId,
+        });
+        return rows[0];
+    }
+
+    private async dropVlanSessions(vlanId: number) {
+        const { rows } = await pool.query(
+            'SELECT subnet_cidr FROM vlan_policies WHERE vlan_id = $1 LIMIT 1',
+            [vlanId],
+        ).catch(() => ({ rows: [] as Array<{ subnet_cidr: string }> }));
+        const subnet = rows[0]?.subnet_cidr;
+        if (!subnet) return null;
+        return runCommand('conntrack', ['-D', '-s', subnet], { elevated: true, allowFailure: true }).catch(() => null);
+    }
+
+    private async getVlanRuntimeScope(vlanId: number) {
+        const { rows } = await pool.query(
+            'SELECT interface_name, subnet_cidr FROM vlan_policies WHERE vlan_id = $1 LIMIT 1',
+            [vlanId],
+        ).catch(() => ({ rows: [] as Array<{ interface_name: string; subnet_cidr: string }> }));
+        return rows[0] || null;
+    }
+
+    private async removeTotalVlanRuntimeRules(vlanId?: number) {
+        const scopes = vlanId ? [await this.getVlanRuntimeScope(vlanId)] : [];
+        const knownSubnets = new Set(scopes.filter(Boolean).map((scope: any) => scope.subnet_cidr));
+        const removed: string[] = [];
+        for (const table of ['nat', 'filter']) {
+            const saved = await runCommand('iptables-save', ['-t', table], { elevated: true, allowFailure: true });
+            for (const line of String(saved.stdout || '').split('\n')) {
+                if (!line.includes('sgcg-total-vlan-block')) continue;
+                if (knownSubnets.size > 0 && !Array.from(knownSubnets).some((subnet) => line.includes(subnet))) continue;
+                const match = line.match(/^-A\s+(\S+)\s+(.+)$/);
+                if (!match) continue;
+                const args = match[2].trim().split(/\s+/);
+                const result = await runCommand('iptables', ['-t', table, '-D', match[1], ...args], { elevated: true, allowFailure: true });
+                if (result.code === 0) removed.push(`${table}/${match[1]} ${args.join(' ')}`);
+            }
+        }
+        return removed;
+    }
+
+    private async applyTotalVlanRuntimeRules(vlanId: number) {
+        const scope = await this.getVlanRuntimeScope(vlanId);
+        if (!scope?.interface_name || !scope?.subnet_cidr) return { applied: [], removed: [] };
+        const removed = await this.removeTotalVlanRuntimeRules(vlanId);
+        const applied: string[] = [];
+        const rules = [
+            ['nat', 'PREROUTING', ['-i', scope.interface_name, '-s', scope.subnet_cidr, '-p', 'tcp', '--dport', '80', '-m', 'comment', '--comment', 'sgcg-total-vlan-block', '-j', 'REDIRECT', '--to-ports', String(env.proxyInterceptHttpPort)]],
+            ['filter', 'INPUT', ['-i', scope.interface_name, '-s', scope.subnet_cidr, '-p', 'tcp', '--dport', String(env.proxyInterceptHttpPort), '-m', 'comment', '--comment', 'sgcg-total-vlan-block', '-j', 'ACCEPT']],
+            ['filter', 'FORWARD', ['-i', scope.interface_name, '-s', scope.subnet_cidr, '-m', 'comment', '--comment', 'sgcg-total-vlan-block', '-j', 'REJECT', '--reject-with', 'icmp-port-unreachable']],
+        ] as Array<[string, string, string[]]>;
+        for (const [table, chain, args] of rules) {
+            const baseArgs = table === 'filter' ? [] : ['-t', table];
+            await runCommand('iptables', [...baseArgs, '-I', chain, '1', ...args], { elevated: true });
+            applied.push(`${table}/${chain} ${args.join(' ')}`);
+        }
+        return { applied, removed };
+    }
+
     private async reconcileEmergencyVlanBypasses() {
         const { rows } = await pool.query(
             `
@@ -2480,13 +2666,14 @@ class BlockingReleaseService {
 
     async writeGeneratedArtifacts() {
         await this.ensureReady();
-        const [engineState, blocks, allows, vlans, exceptions, emergencyVlanBypasses] = await Promise.all([
+        const [engineState, blocks, allows, vlans, exceptions, emergencyVlanBypasses, totalVlanBlocks] = await Promise.all([
             this.getEngineState(),
             this.listPolicies('block', { status: 'active' }),
             this.listPolicies('allow', { status: 'active' }),
             this.listVlans(),
             this.listExceptions({ status: 'active' }),
             this.listEmergencyVlanBypasses(),
+            this.listTotalVlanBlocks(),
         ]);
 
         const mode = (engineState.enforcement_mode || 'acl-plus-dns') as EnforcementMode;
@@ -2505,8 +2692,9 @@ class BlockingReleaseService {
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'vlan-policies.json'), JSON.stringify(vlans, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'exceptions.json'), JSON.stringify(exceptions, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'emergency-vlan-bypass.json'), JSON.stringify(emergencyVlanBypasses, null, 2));
+        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'total-vlan-blocks.json'), JSON.stringify(totalVlanBlocks, null, 2));
         fs.writeFileSync(path.join(ENTERPRISE_DIR, 'engine-state.json'), JSON.stringify(engineState, null, 2));
-        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'export.json'), JSON.stringify({ blocks, allows, vlans, exceptions, emergencyVlanBypasses, engineState, manifest }, null, 2));
+        fs.writeFileSync(path.join(ENTERPRISE_DIR, 'export.json'), JSON.stringify({ blocks, allows, vlans, exceptions, emergencyVlanBypasses, totalVlanBlocks, engineState, manifest }, null, 2));
 
         return {
             directory: ENTERPRISE_DIR,

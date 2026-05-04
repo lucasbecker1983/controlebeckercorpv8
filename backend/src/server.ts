@@ -27,6 +27,7 @@ import lgpdRoutes from './modules/lgpd/lgpd-routes';
 import reportsRoutes from './modules/reports/reports-routes';
 import identityRoutes from './modules/identity/identity-routes';
 import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-routes';
+import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/collaborators/collaborators-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
 import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
@@ -117,6 +118,7 @@ app.use('/api/lgpd', lgpdRoutes);
 app.use('/api/reports', reportsRoutes);
 app.use('/api/identity', identityRoutes);
 app.use('/api/hotspot', hotspotRoutes);
+app.use('/api/collaborators', collaboratorsRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -138,12 +140,24 @@ app.listen(PORT, '0.0.0.0', () => {
     hotspotSchemaService.ensureHotspotEnforcement().catch((error) => {
         console.error('[HOTSPOT] Falha ao reconciliar enforcement complementar:', error);
     });
+    collaboratorsSchemaService.ensureSchema().catch((error) => {
+        console.error('[COLLAB] Falha ao garantir schema de colaboradores:', error);
+    });
+    collaboratorsSchemaService.ensureCollabEnforcement().catch((error) => {
+        console.error('[COLLAB] Falha ao reconciliar enforcement da VLAN 30:', error);
+    });
     const hotspotSessionSweeper = setInterval(() => {
         hotspotSchemaService.expireExpiredSessions().catch((error) => {
             console.error('[HOTSPOT] Falha ao expirar sessoes vencidas:', error);
         });
     }, 60 * 1000);
     hotspotSessionSweeper.unref?.();
+    const collabSessionSweeper = setInterval(() => {
+        collaboratorsSchemaService.expireExpiredSessions().catch((error) => {
+            console.error('[COLLAB] Falha ao expirar sessoes vencidas:', error);
+        });
+    }, 60 * 1000);
+    collabSessionSweeper.unref?.();
     qosSchemaService.ensureSchema().catch((error) => {
         console.error('[QOS] Falha ao garantir schema de QoS:', error);
     });

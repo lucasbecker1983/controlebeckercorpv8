@@ -898,6 +898,92 @@ Todos os três geradores de PDF (LGPD inventário, Relatório de Navegação, Re
     - `net_qos_policies.updated_at` criado
     - `net_qos_vips.created_at` criado
 
+## Bloqueio Total por VLAN em Operações Técnicas - 2026-04-30
+
+- implementado o fluxo institucional de `Bloqueio Total por VLAN` no módulo `Operações Técnicas`
+- escopo operacional restrito às VLANs geridas do SGCG:
+  - `10`
+  - `30`
+  - `50`
+  - `70`
+- criada persistência dedicada no `backend-proxy`:
+  - tabela `total_vlan_blocks`
+  - índice `idx_total_vlan_blocks_active`
+  - campos de motivo, solicitante, ativação, desativação, responsável pela desativação, estado ativo e notas
+- adicionados endpoints autenticados no contrato de `Bloqueios & Liberações`:
+  - `GET /api/bloqueios-liberacoes/total-vlan-blocks`
+  - `POST /api/bloqueios-liberacoes/total-vlan-blocks/activate`
+  - `POST /api/bloqueios-liberacoes/total-vlan-blocks/:vlanId/deactivate`
+- ao ativar o Bloqueio Total:
+  - o motivo institucional passa a ser obrigatório
+  - qualquer `Liberação emergencial por VLAN` ativa para a mesma VLAN é encerrada para evitar conflito de modo
+  - os artefatos institucionais de política são regenerados
+  - o runtime de Squid/Unbound/UFW é revalidado pelo fluxo existente
+  - sessões recentes da VLAN são derrubadas via `conntrack` em modo tolerante a falha
+  - a ação é registrada em auditoria como `total-vlan-block:activate`
+- ao desativar o Bloqueio Total:
+  - a VLAN retorna ao enforcement institucional vigente
+  - os artefatos são recompilados
+  - a ação é registrada em auditoria como `total-vlan-block:deactivate`
+- o gerador de configuração do `Squid` passou a reconhecer VLANs em Bloqueio Total:
+  - cria ACL dedicada por VLAN bloqueada
+  - aplica `deny_info ERR_SGCG_MAINTENANCE`
+  - nega a VLAN antes de bypasses, allowlists e blocklists categóricas
+  - instala template institucional de manutenção em `/etc/squid/errors/sgcg/ERR_SGCG_MAINTENANCE`
+  - copia os templates padrão do Squid para preservar páginas auxiliares de erro
+- a interceptação seletiva foi ampliada para o caso de Bloqueio Total:
+  - redireciona `TCP/80` da VLAN bloqueada ao Squid mesmo quando o modo geral do proxy estiver `off`
+  - preserva DNS `TCP/UDP 53` para o resolver local
+  - aplica rejeição no `ufw-before-forward` para impedir navegação direta durante o modo manutenção
+  - o `UFW` permanece como camada oficial de firewall; as regras geradas seguem complementando o bloco gerenciado em `/etc/ufw/before.rules`
+- criada a página pública `/manutencao` no frontend:
+  - header com `Prefeitura Municipal de Jacarezinho`
+  - subheader com `Secretaria de Comércio, Indústria, Serviços e Inovação`
+  - identidade visual institucional do SGCG
+  - leitura criativa de modo manutenção, continuidade operacional e intervenção autorizada
+  - acessível sem sessão autenticada
+- a página institucional também foi embutida como template HTML do Squid para o caso real de bloqueio por HTTP
+- a interface de `Operações Técnicas` ganhou quadro próprio de `Bloqueio Total por VLAN`:
+  - status por VLAN
+  - motivo e horário de ativação
+  - ação para bloquear
+  - ação para restaurar
+  - diálogo com justificativa institucional obrigatória
+- corrigido o helper de execução elevada do `backend-proxy` para chamar o `UFW` pelo caminho absoluto `/usr/sbin/ufw`
+  - motivo: o runtime retornava `sudo: ufw: command not found` porque o PATH do `sudo` não localizava `/usr/sbin`
+  - validação operacional confirmou que o `UFW` continua instalado, habilitado e ativo
+
+### Build e validação
+
+- `cd backend-proxy && npm run build` executado com sucesso
+- `cd frontend && npm run build` executado com sucesso
+- `pm2 restart backend-proxy --update-env` executado; processo voltou `online`
+- `pm2 restart bcc-frontend` executado; processo voltou `online`
+- `ufw status` confirmou `Status: active`
+- `systemctl status ufw --no-pager` confirmou `ufw.service` carregado, habilitado e `active (exited)`
+- `which ufw` confirmou `/usr/sbin/ufw`
+- PostgreSQL confirmou que `public.total_vlan_blocks` foi criada pelo bootstrap do schema
+- `curl -sk https://127.0.0.1:6777/manutencao` confirmou entrega do bundle da página pública
+- `curl -sk https://127.0.0.1:6779/api/bloqueios-liberacoes/total-vlan-blocks` confirmou que a rota existe atrás da autenticação institucional, retornando `Token ausente` sem credencial
+- validação complementar solicitada em seguida confirmou:
+  - `backend-proxy` online no PM2
+  - `bcc-frontend` online no PM2
+  - tabela `total_vlan_blocks` existente e sem bloqueios ativos no momento da validação
+  - `/manutencao` respondendo `200 text/html`
+  - bundle do frontend contendo `Prefeitura Municipal de Jacarezinho`, `Secretaria de Comércio, Indústria, Serviços e Inovação` e `Rede em manutenção`
+  - template `/etc/squid/errors/sgcg/ERR_SGCG_MAINTENANCE` existente
+  - `UFW` validado fora do sandbox como `Status: active`
+  - `iptables v1.8.10 (nf_tables)` disponível
+
+## Próximo passo recomendado
+
+- testar em janela operacional controlada a ativação do Bloqueio Total para uma VLAN de baixo impacto, validando:
+  - página institucional exibida em navegação HTTP
+  - HTTPS bloqueado sem promessa indevida de página injetada
+  - retorno da VLAN ao enforcement normal ao restaurar
+  - ausência de conflito com `Liberação emergencial por VLAN`
+  - persistência da trilha em `action_audit_logs`
+
 ## Implementação de shaping real de upload no QoS - 2026-04-28
 
 - o módulo `QoS` deixou de tratar `upload` como campo apenas histórico
@@ -1731,6 +1817,7 @@ Em contingencia de link, desde que o servidor `192.168.10.1`, Nginx, Unbound e D
 - validacao executada:
   - `cd backend && npm run build` concluido sem erros
   - `cd frontend && npm run build` concluido com sucesso
+
   - `pm2 restart bcc-backend`
   - `pm2 restart bcc-frontend`
   - `GET /api/security/dashboard` autenticado retornou `200`, `runtime_source=iptables`, `installed=false`, regras reais do runtime e Fail2Ban ativo
@@ -2818,7 +2905,795 @@ Serviços verificados: `dns_ignored_domains` populada com 5 seeds, aba visível 
   - `cd frontend && npm run build` — `✓ built in 2.76s`
   - `cd backend && npm run build` — revalidado sem erros apos remover token hardcoded do modulo de identidade
 
+## 2026-04-30 — Sanitização DoH/DoT/QUIC em todas as VLANs gerenciadas
+
+### Diagnóstico
+
+- IP `192.168.50.14` (VLAN 50 — SINE) navegava livremente em Instagram, Facebook e TikTok apesar da política de bloqueio de redes sociais ativa
+- Causa raiz: o Unbound com RPZ retornava `NXDOMAIN` para DNS porta 53 corretamente, mas os apps usavam **DoH (DNS over HTTPS)** via porta 443/tcp para resolvedores externos como `1.1.1.1` e `8.8.8.8`, contornando o RPZ por completo
+- Agravante: o `engine_mode.json` estava em `"off"`, sem intercepção Squid ativa
+- VLANs 30, 50, 70 não tinham bloqueio de QUIC (UDP/443) nem de DoH (TCP/443 por servidor)
+- VLAN 10 tinha bloqueio de DoT e QUIC, mas bloqueava incorretamente o OpenDNS (que deve ser livre)
+
+### Política de resolvedores externos (regra institucional)
+
+Resolvedores DNS externos só são permitidos em três casos:
+1. O IP do usuário está registrado como **VIP** (`policy_exceptions` + `dns_vip`)
+2. O sistema está em **modo de contingência DNS** ativo (`dns_contingency_state.status = 'active'`)
+3. A VLAN está com **bypass total** ativo (`total_vlan_blocks` / `emergency_vlan_bypass`)
+
+### Exceção permanente — OpenDNS (Ponto RH)
+
+Os IPs `208.67.222.222` e `208.67.220.220` (OpenDNS) **devem permanecer livres** em todas as VLANs gerenciadas, em todas as portas (53, 443, 853).
+
+**Motivo técnico:** o app **Ponto RH** (ponto eletrônico institucional) tem esses dois IPs hardcoded como resolvedores internos do app. Bloquear esses endereços impede o funcionamento do registro de ponto dos servidores.
+
+Esta exceção não pode ser removida sem substituição do app de ponto ou reconfiguração do fornecedor.
+
+### Alterações aplicadas em 2026-04-30
+
+- Removidos os bloqueios incorretos de OpenDNS (208.67.x.x) na VLAN 10 (eram equivocados)
+- Adicionadas regras `ALLOW FWD` para todos os IPs VIP (`policy_exceptions` + `dns_vip`) nas portas 443/tcp, 443/udp, 853/tcp antes das regras de bloqueio
+- Adicionadas regras `DENY FWD` para VLANs 30, 50, 70:
+  - DoT: `TCP/853` via `enp8s0`
+  - QUIC: `UDP/443` via `enp8s0`
+  - DoH por servidor: `TCP/443` para Cloudflare (1.1.1.1, 1.0.0.1), Google (8.8.8.8, 8.8.4.4), Quad9 (9.9.9.9, 149.112.112.112), AdGuard (94.140.14.14, 94.140.15.15)
+- Adicionados os mesmos bloqueios de DoH por servidor para VLAN 10 (que já tinha DoT/QUIC)
+- Script de aplicação e reaplicação: `scripts/sanitize_doh_vlans.py`
+- Backup do estado anterior: `backups/firewall/before_sanitize_doh_2026-04-30T13-23-09.rules`
+
+### Camadas de bloqueio ativas pós-aplicação (por VLAN gerenciada)
+
+| Camada | VLAN 10 | VLAN 30 | VLAN 50 | VLAN 70 |
+|--------|---------|---------|---------|---------|
+| DNS porta 53 → Unbound (iptables REDIRECT) | ✅ | ✅ | ✅ | ✅ |
+| RPZ por VLAN (Unbound) | ✅ | ✅ | ✅ | ✅ |
+| DoT bloqueado (TCP/853) | ✅ | ✅ | ✅ | ✅ |
+| QUIC bloqueado (UDP/443) | ✅ | ✅ | ✅ | ✅ |
+| DoH Cloudflare bloqueado | ✅ | ✅ | ✅ | ✅ |
+| DoH Google bloqueado | ✅ | ✅ | ✅ | ✅ |
+| DoH Quad9 bloqueado | ✅ | ✅ | ✅ | ✅ |
+| DoH AdGuard bloqueado | ✅ | ✅ | ✅ | ✅ |
+| OpenDNS (208.67.x.x) livre | ✅ | ✅ | ✅ | ✅ |
+| VIPs com bypass de DoH/DoT/QUIC | ✅ (7 IPs) | — | — | — |
+
+### Nota sobre engine mode
+
+O `engine_mode.json` permanece em `"off"`. O bloqueio das redes sociais agora funciona pelas camadas DNS + IP. Para intercepção de HTTPS (SSL bump via Squid), o engine precisaria estar em `test-http+https`.
+
+## 2026-04-30 — Bloqueio por range de IP (Layer 3) para redes sociais
+
+### Problema adicional descoberto
+
+Mesmo com DNS RPZ, DoH/DoT/QUIC bloqueados, os apps do Instagram, Facebook e TikTok continuavam funcionando. Diagnóstico via `conntrack -L`:
+
+- O celular `192.168.50.14` mantinha **conexões HTTPS persistentes com TTL de ~5 dias** diretamente com:
+  - Facebook/Meta (AS32934): `157.240.x.x`, `57.144.x.x`, `31.13.x.x`
+  - TikTok/ByteDance (AS396986, AS138699): `71.18.x.x`
+- Os apps armazenam IPs em cache e reconectam **sem precisar de DNS**
+- O DNS bloqueado impede novas resoluções, mas não afeta conexões existentes ou IPs hardcoded
+
+### Solução aplicada — ipset + iptables FORWARD DROP
+
+Criado ipset `sgcg_social_blocked` com os ranges conhecidos:
+
+| Range | AS | Serviço |
+|-------|-----|---------|
+| `157.240.0.0/16` | AS32934 | Meta principal |
+| `31.13.64.0/18` | AS32934 | Meta Ireland |
+| `57.144.0.0/14` | AS32934 | Meta CDN |
+| `179.60.192.0/22` | AS32934 | Meta Brasil |
+| `185.89.216.0/22` | AS32934 | Meta infra |
+| `163.70.128.0/17` | AS32934 | Meta |
+| `129.134.0.0/17` | AS32934 | Meta |
+| `71.18.0.0/16` | AS396986/AS138699 | TikTok/ByteDance (range completo, confirmado via conntrack) |
+
+Regras iptables FORWARD DROP adicionadas para VLANs 10, 30, 50, 70 → ipset.
+VIPs recebem ACCEPT **antes** dos DROP (ordem: VIP ACCEPT posições 1-N, DROP a seguir).
+
+### Flush de conntrack
+
+70 sessões ativas derrubadas em todas as VLANs gerenciadas na aplicação inicial.
+Sessões do celular `192.168.50.14` zeradas por flush direto via `conntrack -D -s`.
+
+### Persistência
+
+- ipset salvo em `/etc/ipset.conf`
+- Serviço `sgcg-ipset-restore.service` habilitado via systemd (restaura o ipset no boot, antes do UFW)
+- Script de reaplicação: `scripts/block_social_media_ips.py`
+
+### Exceção obrigatória — WhatsApp
+
+O WhatsApp (Meta) compartilha os mesmos ranges de IP com Facebook e Instagram (AS32934). Não é possível bloquear Facebook/Instagram por range de IP sem impactar o WhatsApp. A solução é um ipset separado `sgcg_whatsapp_allowed` com os IPs específicos dos domínios do WhatsApp, com ACCEPT na posição 1 do FORWARD antes de qualquer DROP.
+
+**Os IPs do WhatsApp mudam** conforme o load balancing da Meta. O script `scripts/update_whatsapp_allowlist.py` roda via cron a cada 6h para manter o allowlist atualizado (resolve os domínios e atualiza o ipset). Log em `/var/log/sgcg_whatsapp_allowlist.log`.
+
+### Camadas de bloqueio completas pós 2026-04-30
+
+```
+App Android tenta acessar Instagram/TikTok/Facebook:
+
+1. DNS (porta 53)     → Unbound RPZ → NXDOMAIN                        ✅ bloqueado
+2. DoH (443/tcp)      → Cloudflare/Google/Quad9/AdGuard → DROP (UFW)  ✅ bloqueado
+3. DoT (853/tcp)      → qualquer servidor → DROP (UFW)                 ✅ bloqueado
+4. QUIC (443/udp)     → qualquer servidor → DROP (UFW)                 ✅ bloqueado
+5. IP cache/hardcoded → ranges Meta/TikTok → DROP (ipset sgcg_social_blocked) ✅ bloqueado
+
+WhatsApp é tratado separadamente:
+  DNS (porta 53)      → Unbound → resposta real (não está no RPZ)      ✅ permitido
+  IP do WhatsApp      → ipset sgcg_whatsapp_allowed → ACCEPT (posição 1) ✅ permitido
+
+OpenDNS (208.67.x)    → LIVRE em todas as VLANs (Ponto RH)            ✅ permitido
+VIPs                  → ACCEPT antes de qualquer DROP                  ✅ bypass ativo
+```
+
+### Ordem das regras no iptables FORWARD (camada de redes sociais)
+
+```
+[1]  ACCEPT  → match-set sgcg_whatsapp_allowed dst   # WhatsApp primeiro, sempre
+[2-N] ACCEPT → VIP SOCIAL ALLOW <ip>                 # VIPs de cada VLAN
+[N+1..N+4] DROP → match-set sgcg_social_blocked dst  # VLAN 70, 50, 30, 10
+```
+
 ## Proximo passo recomendado
 
 - concluir commit e push para o remoto `origin/main`
 - apos o push, revisar no GitHub se o README renderiza corretamente e se nenhum dado operacional sensivel foi publicado
+
+## 2026-04-30 — Correção emergencial WhatsApp / WhatsApp Web / chamadas de voz
+
+### Diagnóstico
+
+- O WhatsApp estava liberado corretamente na camada de DNS/RPZ e nas ACLs globais (`whatsapp.net`, `whatsapp.com`, `web.whatsapp.com`, `wa.me`, `static.whatsapp.net`).
+- A falha estava na camada nova de bloqueio por IP:
+  - `sgcg_social_blocked` bloqueia ranges compartilhados da Meta (`57.144.0.0/14`, `157.240.0.0/16`, `31.13.64.0/18`, etc.).
+  - `sgcg_whatsapp_allowed` existia antes dos DROPs, mas era alimentado por uma lista curta de domínios.
+  - Chamadas de voz e mídia usam domínios adicionais de CDN, nós regionais e portas próprias de sinalização/STUN/TURN que não estavam cobertos.
+- O radar DNS confirmou tráfego real recente para domínios como:
+  - `dit.whatsapp.net`
+  - `chat.cdn.whatsapp.net`
+  - `mmg.whatsapp.net`
+  - `webtp.whatsapp.net`
+  - `media-*.cdn.whatsapp.net`
+  - `*.fna.whatsapp.net`
+  - `*.snr.whatsapp.net`
+- Resultado operacional: texto e web podiam funcionar parcialmente, mas voz/mídia eram derrubadas quando caíam em IPs Meta fora da allowlist.
+
+### Correção aplicada
+
+- `scripts/update_whatsapp_allowlist.py` foi ampliado para:
+  - resolver uma lista institucional mais completa de domínios WhatsApp;
+  - consultar `dns_policy_events` dos últimos 7 dias e incluir domínios reais observados no radar;
+  - adicionar ao `sgcg_whatsapp_allowed` apenas IPs que também pertencem ao `sgcg_social_blocked`;
+  - manter IPs anteriores por padrão para evitar quebra por rotação/CDN;
+  - aceitar limpeza agressiva apenas com `PRUNE_WHATSAPP_ALLOWLIST=1`;
+  - garantir regra `SGCG WHATSAPP ALLOW` sem duplicar;
+  - inserir antes dos DROPs sociais regras específicas para chamadas:
+    - TCP `4244,5222,5223,5228,5242,50318,59234`
+    - UDP `3478,34784,45395,50318,59234`
+- `scripts/block_social_media_ips.py` foi alinhado para preservar as exceções do WhatsApp e as portas de chamada quando o bloqueio social for reaplicado.
+
+### Aplicação operacional
+
+- `python3 /opt/controlebeckercorp-v8/scripts/update_whatsapp_allowlist.py` executado com sucesso.
+- Foram adicionados 16 IPs atuais de WhatsApp/mídia ao `sgcg_whatsapp_allowed`, incluindo IPs em ranges Meta antes bloqueados.
+- Regra duplicada de `SGCG WHATSAPP ALLOW` foi removida do `FORWARD`.
+- Ordem final validada no `iptables FORWARD`:
+  - `SGCG WHATSAPP ALLOW`
+  - `SGCG WHATSAPP CALL UDP ALLOW`
+  - `SGCG WHATSAPP CALL TCP ALLOW`
+  - `VIP SOCIAL ALLOW`
+  - `SGCG SOCIAL BLOCK VLAN70/50/30/10`
+- `/etc/ipset.conf` validado com `sgcg_whatsapp_allowed` persistido.
+- `python3 -m py_compile scripts/update_whatsapp_allowlist.py scripts/block_social_media_ips.py` concluído sem erros.
+
+### Estado atual
+
+- WhatsApp, WhatsApp Web, mídia e chamadas de voz passam a ter exceção explícita antes do bloqueio por range social.
+- O bloqueio de Facebook/Instagram/TikTok por DNS, DoH/DoT/QUIC e ranges sociais permanece ativo.
+- A cron existente a cada 6 horas continua atualizando a allowlist dinâmica do WhatsApp.
+
+### Próximo passo recomendado
+
+- Testar em um cliente real de cada VLAN gerenciada:
+  - abrir WhatsApp Web;
+  - enviar/receber mídia;
+  - realizar ligação de voz;
+  - realizar chamada de vídeo;
+  - confirmar que Instagram/Facebook/TikTok continuam bloqueados fora de VIP ou exceção formal.
+
+## 2026-04-30 — Roadmap futuro: Catálogo de Serviços e Policy Engine
+
+- ideia estratégica documentada em `docs/ROADMAP_CATALOGO_SERVICOS_POLICY_ENGINE_2026-04-30.md`
+- objetivo: evoluir o SGCG para uma camada declarativa de serviços digitais, com diagnóstico e simulação antes de aplicar mudanças em DNS, proxy, firewall, ipset, QoS e auditoria
+- decisão da rodada: não implementar agora, pois não haverá janela de validação nos próximos dias
+- abordagem recomendada de menor impacto:
+  - começar por catálogo somente-leitura
+  - criar diagnóstico de conflito entre política institucional e runtime
+  - simular políticas antes de aplicar
+  - limitar o primeiro escopo a WhatsApp, redes sociais e Ponto RH/OpenDNS
+  - preservar UFW como firewall oficial e manter iptables/ipset como camada complementar documentada
+
+## 2026-05-02 — Acesso Mobile de Colaboradores VLAN 30
+
+- criado o modulo administrativo `Acesso Mobile de Colaboradores` no SGCG, acessivel em `/colaboradores-mobile`
+- objetivo operacional:
+  - exigir usuario e senha para liberar navegacao de dispositivos conectados na VLAN 30
+  - atender mobiles de colaboradores sem implantar Active Directory
+  - manter separacao conceitual do Hotspot de visitantes da VLAN 70
+- backend criado/ativado:
+  - `backend/src/modules/collaborators/collaborators-routes.ts`
+  - tabelas `collab_users` e `collab_sessions`
+  - senhas locais com `Argon2`
+  - rotas publicas:
+    - `GET /api/collaborators/public/context`
+    - `POST /api/collaborators/public/login`
+  - rotas administrativas com JWT:
+    - `GET /api/collaborators/overview`
+    - `GET /api/collaborators/users`
+    - `POST /api/collaborators/users`
+    - `PUT /api/collaborators/users/:id`
+    - `DELETE /api/collaborators/users/:id`
+    - `GET /api/collaborators/sessions`
+    - `POST /api/collaborators/sessions/:id/revoke`
+    - `GET /api/collaborators/enforcement/status`
+    - `POST /api/collaborators/enforcement/setup`
+- portal publico criado:
+  - rota frontend `/collab/portal`
+  - pagina `frontend/src/pages/CollaboratorPortal.jsx`
+  - login simples por usuario/senha institucional local
+  - retorno informativo quando o cliente nao estiver na VLAN 30
+- administracao frontend criada:
+  - pagina `frontend/src/pages/Collaborators.jsx`
+  - cadastro, edicao e desativacao de usuarios
+  - leitura de sessoes ativas
+  - revogacao de sessao com corte runtime do IP
+  - botao `Aplicar Portal` para gerar vhost Nginx e reconciliar enforcement
+  - toggle `Exigir login` para alternar o modo operacional da VLAN 30
+- modos operacionais da VLAN 30:
+  - `Login obrigatório`: clientes nao autenticados sao direcionados ao portal `/collab/portal` e ficam sem saida WAN ate login valido
+  - `Somente DNS/ACL`: o portal deixa de capturar o colaborador, as regras complementares de autenticacao sao removidas e a navegacao segue sujeita apenas as restricoes institucionais de DNS/RPZ/ACL/firewall
+- persistencia do modo:
+  - criada tabela `collab_settings`
+  - chave `access_mode` armazena `auth_required`
+  - rota administrativa `PUT /api/collaborators/settings/access-mode`
+- enforcement complementar:
+  - `ipset` `sgcg_collab_v30_auth` com timeout de 8 horas
+  - `iptables -t nat PREROUTING` redireciona HTTP de nao autenticados da `enp6s0.30` para `192.168.30.1:80`
+  - `iptables FORWARD` rejeita saida WAN de nao autenticados na VLAN 30
+  - login adiciona o IP autenticado ao `ipset`
+  - revogacao/expiracao remove o IP do `ipset` e limpa conexoes via `conntrack`
+  - ao desligar o toggle, o backend remove as regras complementares de DNAT e REJECT da VLAN 30
+- integracao no backend core:
+  - `backend/src/server.ts` passou a registrar `/api/collaborators`
+  - schema e enforcement da VLAN 30 sao reconciliados no boot
+  - sessoes vencidas sao expiradas automaticamente a cada 60 segundos
+  - `backend/src/middleware/auth.ts` liberou apenas `/api/collaborators/public/*` sem JWT
+  - `backend/src/utils/sys.ts` recebeu allowlist restrita para comandos `ipset`, `iptables` e `conntrack` da VLAN 30
+- integracao no frontend:
+  - `frontend/src/App.jsx` registra `/collab/portal` como rota publica e `/colaboradores-mobile` como rota administrativa
+  - `frontend/src/components/Sidebar.jsx` adiciona o item `Acesso Mobile`
+  - `frontend/src/services/api.js` trata `/api/collaborators/public/*` como rota publica, sem refresh/token administrativo
+- regra institucional preservada:
+  - UFW permanece firewall oficial
+  - `ipset`/`iptables` sao usados apenas como camada complementar de runtime para autenticacao da VLAN 30
+  - DNS/RPZ/ACL/DoH/DoT/QUIC e demais politicas institucionais seguem aplicaveis apos o login
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+  - vhost `/etc/nginx/sites-available/sgcg-collab-captive` habilitado em `/etc/nginx/sites-enabled/sgcg-collab-captive`
+  - `nginx -t` validou sintaxe com sucesso e `systemctl reload nginx` foi executado
+  - `GET /api/collaborators/public/context` retornou `auth_required=true` sem exigir JWT
+  - `/colaboradores-mobile` retornou `200` pelo frontend de producao
+
+### Proximo passo recomendado
+
+- reiniciar os processos afetados em producao:
+  - `pm2 restart bcc-backend`
+  - `pm2 restart bcc-frontend`
+- acessar `/colaboradores-mobile`, criar ao menos uma conta de colaborador e clicar em `Aplicar Portal`
+- testar em um celular conectado a VLAN 30:
+  - abrir uma pagina HTTP ou `http://192.168.30.1/collab/portal`
+  - autenticar com usuario e senha criados no SGCG
+  - confirmar navegacao liberada apos login
+  - revogar a sessao no modulo e confirmar corte imediato de navegacao externa
+
+## 2026-05-02 — Ajuste de retorno por MAC no Hotspot VLAN 70
+
+- mantido o reconhecimento automatico de dispositivo conhecido por MAC na VLAN 70
+- o fluxo permanece sem liberacao silenciosa:
+  - `GET /api/hotspot/public/context` identifica MAC conhecido e retorna `recognized=true` e `requires_confirm=true`
+  - o IP ainda e removido do `ipset` enquanto o visitante nao confirma
+  - a navegacao so e liberada apos `POST /api/hotspot/public/continue`
+- ajuste de experiencia no portal `/hotspot/portal`:
+  - titulo para dispositivo reconhecido passou a exibir `Bem-vindo, <nome>`
+  - botao de confirmacao passou de `Clique aqui para navegar` para `Entrar na Internet`
+  - mensagem do backend passou a orientar o clique em `Entrar na Internet`
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+
+## 2026-05-02 — Métricas, Auditoria e Relatório do Acesso Mobile VLAN 30
+
+- o modulo `Acesso Mobile de Colaboradores` foi alinhado ao padrao operacional do Hotspot da VLAN 70
+- backend ampliado em `backend/src/modules/collaborators/collaborators-routes.ts`:
+  - criada tabela imutavel `collab_access_log` para registrar sessoes sincronizadas da VLAN 30
+  - adicionados indices por data, usuario e VLAN
+  - aplicado `REVOKE ALL FROM PUBLIC` na tabela de log
+  - novo endpoint `GET /api/collaborators/metrics`
+  - novo endpoint `POST /api/collaborators/access-log/sync`
+  - novo endpoint `GET /api/collaborators/report`
+- metricas implementadas para a VLAN 30:
+  - sessoes do mes
+  - usuarios unicos
+  - dias com acesso
+  - ranking de colaboradores
+  - distribuicao horaria
+  - distribuicao por VLAN
+  - sites mais visitados usando `dns_policy_events`
+  - filtro dinamico de ruido usando `dns_ignored_domains`, no mesmo padrao do Hotspot
+- relatorio institucional implementado:
+  - filtros por periodo, colaborador e VLAN
+  - sincronizacao manual para o log imutavel
+  - consulta paginada para tela
+  - impressao/salvamento em PDF via frontend com layout governamental A4 paisagem
+  - cabecalho com Prefeitura Municipal de Jacarezinho, Estado do Parana e Secretaria do Comercio, Industria, Servicos e Inovacao
+  - rodape institucional SGCG com identificador `SGCG-CM-*`
+- frontend `frontend/src/pages/Collaborators.jsx` foi refeito para operar em tres abas:
+  - `Visao Geral`
+  - `Metricas`
+  - `Relatorio`
+- a aba `Metricas` replica o padrao visual do Hotspot:
+  - cards executivos
+  - graficos CSS de usuarios por dia e acessos por hora
+  - ranking de colaboradores
+  - metodos de autenticacao
+  - sites mais visitados da VLAN 30
+- a aba `Relatorio` replica e adapta o PDF do Hotspot para `Relatorio Oficial do Acesso Mobile de Colaboradores`
+- regra institucional preservada:
+  - UFW permanece firewall oficial
+  - `ipset`/`iptables` continuam apenas como camada complementar de runtime da autenticacao VLAN 30
+  - DNS/RPZ/ACL/DoH/DoT/QUIC permanecem aplicaveis apos o login
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; ambos voltaram `online`
+  - `GET /api/collaborators/metrics` sem JWT retornou `401`, comportamento esperado
+  - `GET /api/collaborators/report` sem JWT retornou `401`, comportamento esperado
+  - `GET https://127.0.0.1:6777/colaboradores-mobile` retornou `200 text/html`
+
+## Proximo passo recomendado
+
+- acessar `/colaboradores-mobile` com usuario administrativo e validar:
+  - aba `Metricas`
+  - aba `Relatorio`
+  - `Sincronizar Log`
+  - `Imprimir / Salvar PDF`
+- testar em dispositivo real da VLAN 30 com login obrigatorio ativo para confirmar que novas sessoes aparecem no ranking, no relatorio e nos dominios mais acessados
+
+## 2026-05-02 — Validador de Relatórios de Auditoria VLAN 70 e VLAN 30
+
+- criado validador institucional para os relatórios de auditoria do Hotspot e do Acesso Mobile
+- decisão de posicionamento:
+  - o validador fica na aba `Relatorio` de cada modulo
+  - motivo: e o ponto natural do fluxo de auditoria, antes de emitir ou salvar o PDF
+  - sequencia operacional recomendada: `Sincronizar Log` -> `Validar Relatorio` -> `Imprimir / Salvar PDF`
+- backend Hotspot VLAN 70:
+  - novo endpoint `GET /api/hotspot/report/validate`
+  - valida o mesmo escopo de filtros do relatório: periodo, visitante e VLAN
+  - verifica:
+    - sessoes fora do log imutavel `hotspot_access_log`
+    - duplicidade de sessao no log imutavel
+    - sessao sem visitante/CPF integro
+    - sessao sem IP de origem
+    - duracao incoerente
+    - duracao divergente entre sessao e log
+    - DNS disponivel sem `top_domain` consolidado
+- backend Acesso Mobile VLAN 30:
+  - novo endpoint `GET /api/collaborators/report/validate`
+  - valida o mesmo escopo de filtros do relatório: periodo, colaborador e VLAN
+  - verifica:
+    - sessoes fora do log imutavel `collab_access_log`
+    - duplicidade de sessao no log imutavel
+    - sessao sem colaborador/usuario integro
+    - sessao sem IP de origem
+    - duracao incoerente
+    - duracao divergente entre sessao e log
+    - DNS disponivel sem `top_domain` consolidado
+- resposta dos validadores:
+  - `valid`
+  - `status`: `valid`, `warning` ou `invalid`
+  - resumo de sessoes, registros logados, usuarios/visitantes unicos, criticos e avisos
+  - lista de checks com severidade e amostras
+  - recomendacao operacional para emissao auditavel
+- frontend:
+  - botao `Validar Relatório` adicionado na aba `Relatorio` do Hotspot
+  - botao `Validar Relatório` adicionado na aba `Relatorio` do Acesso Mobile
+  - painel de resultado exibe estado `Consistente`, `Com avisos` ou `Inconsistente`
+  - resumo visual mostra total de sessoes, inconsistencias criticas e avisos
+  - cada check aparece como item individual com contagem e severidade
+- regra institucional preservada:
+  - os validadores apenas leem banco e nao alteram enforcement, UFW, iptables, ipset ou sessoes
+  - a sincronizacao do log permanece uma acao explicita separada
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; ambos voltaram `online`
+  - `GET /api/hotspot/report/validate` sem JWT retornou `401`, comportamento esperado
+  - `GET /api/collaborators/report/validate` sem JWT retornou `401`, comportamento esperado
+
+## Proximo passo recomendado
+
+- acessar as abas de relatorio dos dois modulos com usuario administrativo e executar:
+  - `Sincronizar Log`
+  - `Validar Relatorio`
+  - revisar criticos/avisos
+  - emitir PDF apenas apos estado consistente ou apos aceitar formalmente os avisos
+
+## 2026-05-02 — Brasão de Jacarezinho nos Relatórios PDF
+
+- os relatórios PDF gerados pelo frontend passaram a usar o brasão local de Jacarezinho no lugar do logotipo remoto anterior
+- arquivo de origem informado:
+  - `/opt/controlebeckercorp-v8/public/LOGO-JACAREZINHO.png`
+- para o Vite servir o ativo no bundle de produção, o brasão foi disponibilizado também em:
+  - `frontend/public/LOGO-JACAREZINHO.png`
+- relatórios ajustados:
+  - `Relatório Oficial do Hotspot Institucional`
+  - `Relatório Oficial do Acesso Mobile de Colaboradores`
+- redimensionamento aplicado no template de impressão:
+  - área do logotipo: `58x64`
+  - imagem renderizada: `54x60`
+  - `object-fit: contain` para preservar proporção do brasão
+- arquivos alterados:
+  - `frontend/src/pages/Hotspot.jsx`
+  - `frontend/src/pages/Collaborators.jsx`
+  - `frontend/public/LOGO-JACAREZINHO.png`
+- validação executada:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo voltou `online`
+  - `GET https://127.0.0.1:6777/LOGO-JACAREZINHO.png` retornou `200 image/png`
+
+## Observação sobre solicitação de usuário e senha — VLAN 30
+
+- o portal publico `/collab/portal` solicita apenas:
+  - `Usuário`
+  - `Senha`
+- o texto exibido orienta: `Informe seu usuário e senha institucional para liberar a navegação deste dispositivo.`
+- o botão principal exibe: `Entrar e liberar navegação`
+- apos login válido, o backend libera o IP atual no `ipset` da VLAN 30 e redireciona o usuário para `https://www.jacarezinho.pr.gov.br/`
+- se o dispositivo não estiver na VLAN 30, o portal informa que a liberação é permitida apenas pela rede interna VLAN 30 e desabilita a ação
+
+## 2026-05-02 — Refinamento visual do Portal Mobile de Colaboradores
+
+- o portal publico `/collab/portal` foi refinado visualmente em React + Vite + Tailwind
+- aplicado o brasao de Jacarezinho no cabecalho do portal:
+  - imagem: `/LOGO-JACAREZINHO.png`
+  - renderizacao responsiva com `object-contain`
+- identidade institucional atualizada:
+  - `Prefeitura Municipal de Jacarezinho`
+  - `Secretaria Municipal de Comércio, Indústria, Serviços e Inovação`
+  - `Acesso Mobile de Colaboradores`
+  - `Autenticação institucional da VLAN 30`
+- formulario publico mantido simples:
+  - `Usuário institucional`
+  - `Senha`
+  - botao `Entrar e liberar navegação`
+- leitura operacional adicionada ao card:
+  - rede `VLAN 30`
+  - sessao de `8 horas`
+- rodape reforcado para segurança, auditoria e responsabilizacao institucional
+- arquivo alterado:
+  - `frontend/src/pages/CollaboratorPortal.jsx`
+- validacao executada:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo voltou `online`
+  - bundle de producao contem `LOGO-JACAREZINHO.png`, `Prefeitura Municipal de Jacarezinho` e `Secretaria Municipal de Comércio, Indústria, Serviços e Inovação`
+
+## 2026-05-02 — Auto Cadastro e Confirmação Explícita na VLAN 30 e Hotspot
+
+- o portal publico `/collab/portal` foi ampliado para fluxo semelhante ao Hotspot, com auto cadastro e reconhecimento por MAC
+- novo fluxo publico da VLAN 30:
+  - `GET /api/collaborators/public/context`
+  - `POST /api/collaborators/public/register`
+  - `POST /api/collaborators/public/login`
+  - `POST /api/collaborators/public/continue`
+- auto cadastro de colaborador criado com:
+  - nome completo
+  - CPF
+  - setor
+  - usuario
+  - senha
+- backend da VLAN 30 ampliado:
+  - `collab_users` recebeu coluna `cpf`
+  - criada tabela `collab_devices` para vinculo entre usuario e MAC
+  - `collab_sessions` recebeu `device_id` e `auth_method`
+  - login/cadastro associam o MAC ao colaborador quando o gateway consegue identificar o dispositivo
+- retorno por MAC na VLAN 30:
+  - se o MAC existir em `collab_devices`, o portal exibe `Bem-vindo, <nome do colaborador>`
+  - a navegacao nao e liberada automaticamente
+  - o botao `Entrar na Internet` chama `POST /api/collaborators/public/continue`
+  - somente apos essa confirmacao o IP entra no `ipset` `sgcg_collab_v30_auth`
+- bloqueio antes de autenticacao reforcado:
+  - `GET /api/collaborators/public/context` remove o IP atual do `ipset`
+  - antes de cadastro, login ou confirmacao por MAC, a VLAN 30 permanece sem saida WAN para o IP nao autenticado
+  - isso inclui WhatsApp, portais governamentais e qualquer outro destino externo
+- portal `/collab/portal` recebeu aviso LGPD:
+  - aceite de tratamento de dados conforme Lei Geral de Proteção de Dados nº 13.709/2018
+  - termo com dados tratados, finalidade, bloqueio antes da autenticacao e responsabilizacao institucional
+- Hotspot VLAN 70 tambem foi reforcado visualmente:
+  - cabecalho com brasao de Jacarezinho
+  - `Prefeitura Municipal de Jacarezinho`
+  - `Secretaria Municipal de Comércio, Indústria, Serviços e Inovação`
+  - mensagem explicita de que sem cadastro, login ou confirmacao do dispositivo reconhecido a navegacao externa permanece bloqueada
+- regra institucional preservada:
+  - UFW permanece firewall oficial
+  - `ipset`/`iptables` seguem apenas como camada complementar de runtime dos portais cativos
+  - DNS/RPZ/ACL/DoH/DoT/QUIC continuam aplicaveis apos a autenticacao
+- validacao executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; ambos voltaram `online`
+  - `GET /api/collaborators/public/context` retornou `200 application/json`
+  - `GET /api/hotspot/public/context` retornou `200 application/json`
+  - `GET /collab/portal` retornou `200 text/html`
+  - `GET /hotspot/portal` retornou `200 text/html`
+
+## Proximo passo recomendado
+
+- em dispositivo real da VLAN 30:
+  - confirmar que antes do cadastro/login nao abre WhatsApp, gov.br ou qualquer destino externo
+  - realizar auto cadastro
+  - confirmar redirecionamento apos liberacao
+  - desconectar/reconectar e verificar tela `Bem-vindo, <nome>` com botao `Entrar na Internet`
+- em dispositivo real da VLAN 70:
+  - repetir a validacao de que MAC reconhecido nao libera silenciosamente
+  - confirmar que somente `Entrar na Internet`, cadastro ou login devolve navegacao
+
+## 2026-05-02 — Texto Oficial Validado nos PDFs de Auditoria
+
+- relatórios PDF ajustados em:
+  - Hotspot VLAN 70
+  - Mobile Colaboradores VLAN 30
+- rodape dos PDFs alterado de `Documento oficial sujeito à verificação.` para `Relatório oficial validado.`
+- nome institucional corrigido em ambos os relatórios para:
+  - `Secretaria Municipal de Comércio, Indústria, Serviços e Inovação`
+- arquivos alterados:
+  - `frontend/src/pages/Hotspot.jsx`
+  - `frontend/src/pages/Collaborators.jsx`
+- validacao executada:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo voltou `online`
+  - bundle de producao contem `Relatório oficial validado.` e `Secretaria Municipal de Comércio, Indústria, Serviços e Inovação`
+
+## 2026-05-02 — Recuperação do Token do Agente Windows por Hash
+
+- identificado que os agentes Windows continuavam enviando `POST /api/identity/checkin`, mas o backend respondia `503 agent_token_not_configured`
+- o processo PM2 legado `sgcg-identity-checkin` havia recebido check-ins até 2026-05-01 e depois foi parado; o backend principal não tinha `SGCG_AGENT_TOKEN` carregado
+- como o token real não era gravado nos check-ins antigos nem nos logs, o endpoint foi ajustado para recuperação controlada:
+  - se `SGCG_AGENT_TOKEN` ou `SGCG_AGENT_TOKEN_SHA256` existirem, continuam sendo a fonte oficial
+  - se não houver token configurado, o primeiro check-in plausível vindo da LAN grava apenas o hash SHA-256 do token em `data/identity/agent-token.sha256`
+  - o token em texto puro não é exibido nem persistido
+  - os próximos check-ins são validados comparando o SHA-256 do header recebido
+- arquivo alterado:
+  - `backend/src/modules/identity/identity-routes.ts`
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `pm2 restart bcc-backend --update-env` executado; processo voltou `online`
+  - `GET /api/identity/health` retornou `200`
+  - check-in real da estação `192.168.10.10` em 2026-05-02 14:06 criou `data/identity/agent-token.sha256`
+  - `data/identity/checkins.jsonl` voltou a receber `user`, `display_user`, `computer`, `ip`, `mac` e `vlan`
+
+## 2026-05-02 — Correlação de Identidade e Botão Investigar
+
+- investigado o caso em que apenas `192.168.10.10` aparecia com usuário e hostname nos eventos recentes
+- validação operacional:
+  - `data/identity/latest.json` possui identidades históricas de 17 IPs
+  - logs do Nginx mostram que, após a recuperação do token, somente `192.168.10.10` enviou check-ins recentes com HTTP `200`
+  - demais estações permanecem com identidade histórica, mas sem check-in ativo no período observado
+- melhoria aplicada na correlação de identidade:
+  - `loadLatestByIp()` agora escolhe a identidade mais recente por IP quando há múltiplos agentes/entradas para o mesmo endereço
+  - isso evita que uma entrada antiga, duplicada ou `no-user` sobrescreva a identidade mais recente
+- botão `Investigar` no Radar em Tempo Real corrigido:
+  - antes apenas preenchia o campo de busca da trilha de auditoria
+  - agora carrega efetivamente `/api/bloqueios-liberacoes/audit/events` usando IP/domínio do evento selecionado
+  - filtros de ação e origem são abertos para `all`, preservando VLAN quando disponível
+- ajuste TypeScript complementar:
+  - handlers de WhatsApp allowlist em `backend-proxy/src/routes/blocking-release-routes.ts` tipados como `req: any` para permitir build com `req.auth`
+- arquivos alterados:
+  - `backend/src/modules/identity/identity-enrichment.ts`
+  - `backend-proxy/src/services/identity-enrichment-service.ts`
+  - `backend-proxy/src/routes/blocking-release-routes.ts`
+  - `frontend/src/pages/BlockingReleases.jsx`
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd backend-proxy && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend backend-proxy bcc-frontend --update-env` executado; processos voltaram `online`
+  - `pm2 restart backend-proxy-ingester --update-env` executado para carregar a correlação nova no ingester
+
+## 2026-05-02 — Ciência LGPD Obrigatória no Cadastro da VLAN 30
+
+- portal `/collab/portal` ajustado para exigir ciência explícita da Lei Geral de Proteção de Dados - LGPD no auto cadastro de colaboradores
+- todos os campos do cadastro da VLAN 30 agora são obrigatórios no frontend:
+  - nome completo
+  - CPF
+  - setor
+  - usuário
+  - senha
+  - aceite/ciencia LGPD
+- backend reforçado em `POST /api/collaborators/public/register`:
+  - recusa cadastro sem `lgpd_accepted`
+  - retorna erro específico quando a ciência LGPD não é confirmada
+  - registra `lgpd_accepted: true` na auditoria de cadastro bem-sucedido
+- arquivos alterados:
+  - `frontend/src/pages/CollaboratorPortal.jsx`
+  - `backend/src/modules/collaborators/collaborators-routes.ts`
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; processos voltaram `online`
+  - `/collab/portal` retornou `200 text/html`
+  - bundle de produção contém o texto de ciência LGPD e a validação `lgpd_accepted`
+
+## 2026-05-04 — Validação do Bypass Emergencial por VLAN
+
+- retomada a tarefa pendente de correção do bypass emergencial por VLAN indicada em `continuar.md`
+- confirmado que `dns-contingency-service.ts` já contém as proteções necessárias para o modo:
+  - `applyRuntimeVipBypassRules()` adiciona `ACCEPT` em `FORWARD` para sub-rede da VLAN em bypass e retorno `RELATED,ESTABLISHED`
+  - VLANs em bypass emergencial recebem `ACCEPT` para DoT `tcp/853` antes do bloqueio global
+  - `buildEarlyFirewallBlock()` injeta exceção por interface antes do `DROP` global de DoT em `ufw-before-forward`
+- confirmado que `policy-compiler-service.ts` inclui sub-redes de VLANs em bypass na zona VIP/passthru DNS e as remove do escopo categórico durante o bypass
+- validação executada:
+  - `cd backend-proxy && npm run build` concluido sem erros
+
+## 2026-05-04 — Estabilização do Portal do Colaborador VLAN 30
+
+- corrigido o fluxo de contexto público do portal `/collab/portal`
+- causa operacional identificada:
+  - `GET /api/collaborators/public/context` removia o IP do `ipset` antes de verificar se já havia sessão ativa
+  - reaberturas automáticas do captive portal por Windows/Android podiam derrubar a liberação existente e devolver o colaborador ao cadastro/login
+  - WebViews de captive portal também reutilizavam HTML/JS em cache, mantendo bundles antigos durante a verificação de conectividade
+- backend ajustado em `backend/src/modules/collaborators/collaborators-routes.ts`:
+  - criado reconhecimento de sessão ativa por IP antes de qualquer revogação runtime
+  - quando há sessão ativa, o contexto retorna `authenticated=true`, renova a autorização no `ipset` e preserva o redirecionamento institucional
+  - a revogação runtime continua aplicada apenas quando não há sessão ativa
+- vhost Nginx do portal cativo atualizado:
+  - `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0`
+  - `Pragma: no-cache`
+  - `Expires: 0`
+  - remoção de `ETag` e `Last-Modified` repassados pelo frontend
+- frontend ajustado em `frontend/src/pages/CollaboratorPortal.jsx`:
+  - valida que o contexto recebido é JSON antes de interpretar a resposta
+  - mensagem de falha orienta abrir pela rede Wi-Fi da VLAN 30 ou tentar novamente
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `nginx -t` concluido com sucesso
+  - `systemctl reload nginx` executado
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; ambos voltaram `online`
+  - `GET http://192.168.30.1/generate_204` retornou HTML do portal com bundle novo e headers anti-cache
+  - `GET http://192.168.30.1/api/collaborators/public/context` retornou `200 application/json`
+
+## 2026-05-04 — Fallback Visual do Portal do Colaborador
+
+- após nova validação em dispositivo Android, o WebView ainda permanecia exibindo `Verificando conexão...` mesmo com `/api/collaborators/public/context` retornando `200`
+- logs do Nginx confirmaram que o cliente `192.168.30.29` carregava o bundle novo e recebia JSON do contexto, mas a experiência continuava presa no estado visual de carregamento
+- ajuste aplicado no frontend:
+  - o formulário de cadastro/login passou a aparecer imediatamente
+  - a verificação de contexto roda em segundo plano com timeout de 4 segundos
+  - falha ou atraso no contexto não bloqueia mais o colaborador
+  - o texto bloqueante `Verificando conexão...` foi removido
+  - permanece apenas um aviso discreto de `Atualizando identificação do dispositivo...` enquanto o contexto carrega
+- arquivo alterado:
+  - `frontend/src/pages/CollaboratorPortal.jsx`
+- validação executada:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo voltou `online`
+  - `systemctl reload nginx` executado
+  - `GET http://192.168.30.1/generate_204` passou a servir o bundle `index-DXQO4Y1D.js`
+  - `GET http://192.168.30.1/api/collaborators/public/context` retornou `200 application/json` em aproximadamente 50ms
+
+## 2026-05-04 — Correção da Exclusão no Módulo Hotspot
+
+- investigado o botão `Excluir` da lista de visitantes do módulo Hotspot
+- causa identificada:
+  - `DELETE /api/hotspot/visitors/:id` funcionava e desativava o visitante com `active = FALSE`
+  - as sessões ativas eram revogadas corretamente
+  - porém `GET /api/hotspot/visitors` continuava listando visitantes inativos, dando a impressão de que a exclusão não funcionava
+- backend ajustado em `backend/src/modules/hotspot/hotspot-routes.ts`:
+  - listagem de visitantes agora retorna apenas `active = TRUE` por padrão
+  - mantido suporte a `include_inactive=true` ou `includeInactive=true` para diagnósticos administrativos futuros
+- frontend ajustado em `frontend/src/pages/Hotspot.jsx`:
+  - exclusão passou a capturar falhas e exibir alerta objetivo ao usuário
+- validação executada:
+  - banco confirmou visitante `id=2` como `active=false`
+  - banco confirmou sessões do visitante `id=2` revogadas/expiradas
+  - query de visitantes ativos não retorna mais o visitante excluído
+  - `cd backend && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend bcc-frontend --update-env` executado; ambos voltaram `online`
+  - frontend passou a servir o bundle `index-Dm-7O9h0.js`
+
+## 2026-05-04 — Recadastro após Exclusão no Hotspot
+
+- corrigido o fluxo público de cadastro do Hotspot após exclusão lógica
+- causa identificada:
+  - excluir visitante no SGCG desativa o registro com `active = FALSE`
+  - o CPF permanece na tabela por integridade/auditoria e pela restrição única
+  - ao tentar novo cadastro, o portal tratava qualquer CPF existente como duplicado, mesmo inativo
+- backend ajustado em `backend/src/modules/hotspot/hotspot-routes.ts`:
+  - se o CPF existir e estiver ativo, a mensagem de duplicidade permanece
+  - se o CPF existir inativo, o cadastro público reativa o visitante
+  - na reativação são atualizados nome, data de nascimento, senha, estado ativo e vínculo de MAC quando disponível
+  - uma nova sessão é criada com `auth_method = reactivated_register`
+  - auditoria registra `hotspot_register_reactivated`
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `pm2 restart bcc-backend --update-env` executado; processo voltou `online`
+  - cadastro CPF `04048640909` confirmado como `active=false` antes do recadastro, sem alterar senha manualmente
+  - `GET /api/hotspot/public/context` retornou `200 application/json`
+
+## 2026-05-04 — Correção do Bloqueio Total por VLAN
+
+- corrigido o fluxo de `Operações Técnicas > Bloqueio Total por VLAN`
+- causa identificada:
+  - quando o motor do proxy estava em modo `off`, o `bypassGlobal` impedia a aplicação das regras de interceptação mesmo com `total_vlan_blocks.active = TRUE`
+  - regras runtime de portais cativos podiam ficar antes das regras geradas pelo bloco institucional, permitindo que usuários já autenticados continuassem navegando ou fossem enviados ao portal errado
+- backend-proxy ajustado:
+  - bloqueios totais ativos agora forçam a interceptação HTTP mesmo com o modo geral do proxy desligado
+  - o Squid mantém `http_port 3128 intercept` e ACL `deny_info ERR_SGCG_MAINTENANCE` para VLAN em manutenção
+  - na ativação do Bloqueio Total são inseridas regras runtime no topo do iptables com comentário `sgcg-total-vlan-block`
+  - HTTP `TCP/80` da VLAN bloqueada é redirecionado ao Squid antes de portais cativos e sessões autorizadas
+  - tráfego direto da VLAN é rejeitado no `FORWARD` durante a manutenção
+  - na desativação, as regras runtime `sgcg-total-vlan-block` da VLAN são removidas
+- decisão operacional:
+  - o `UFW` permanece como firewall oficial do SGCG
+  - `iptables` é usado aqui como camada complementar runtime para garantir precedência imediata do bloqueio total sobre regras já existentes de portal/captura
+- validação executada:
+  - `cd backend-proxy && npm run build` concluido sem erros
+  - `pm2 restart backend-proxy --update-env` executado; processo voltou `online`
+  - ativação controlada da VLAN 70 criou bloqueio ativo e regras `sgcg-total-vlan-block` no topo de `nat/PREROUTING`, `filter/INPUT` e `filter/FORWARD`
+  - `/etc/squid/squid.conf` confirmou `error_directory /etc/squid/errors/sgcg`, `http_port 3128 intercept`, ACL da VLAN 70 e `deny_info ERR_SGCG_MAINTENANCE`
+  - teste controlado encerrado em seguida; banco ficou sem bloqueios ativos e `iptables-save` não lista mais regras `sgcg-total-vlan-block`
+
+## 2026-05-04 — Correção do Bypass Total de Exceções VIP
+
+- investigado o caso em que um IP inserido em `Exceções VIP` não recebia bypass total efetivo
+- causa confirmada no runtime:
+  - a exceção era persistida em `policy_exceptions`
+  - o IP era sincronizado em `dns_vip`
+  - o arquivo RPZ `/etc/unbound/becker/vip-bypass.conf` continha o `rpz-client-ip`
+  - porém as regras complementares `sgcg-vip-bypass` no `iptables` ficavam depois de regras runtime de portal cativo e bloqueio social
+  - como o `iptables` aplica a primeira regra correspondente, o VIP podia cair antes em `SGCG SOCIAL BLOCK VLAN*` ou em `REJECT` de portal cativo
+- backend-proxy ajustado em `backend-proxy/src/services/dns-contingency-service.ts`:
+  - `applyFirewallBlock()` passou a reconciliar o bypass VIP runtime mesmo quando o `UFW` está instalado e ativo
+  - regras antigas `sgcg-vip-bypass` passam a ser removidas e reinseridas em posição operacional correta
+  - regras de VIP no `FORWARD` entram antes de portal cativo e bloqueios sociais
+  - foi adicionada regra `nat/PREROUTING -s <VIP> -j RETURN` com comentário `sgcg-vip-bypass`, impedindo que VIP seja capturado por DNAT de portal cativo antes do bypass
+  - a ordem preserva o `Bloqueio Total por VLAN`: regras `sgcg-total-vlan-block`, quando ativas, continuam com precedência sobre VIP
+- decisão operacional preservada:
+  - o `UFW` continua sendo o firewall oficial do SGCG
+  - `iptables` é usado apenas como camada complementar runtime para garantir precedência imediata diante de regras de portal, bloqueio social e bypass
+- validação executada:
+  - `cd backend && npm run build` concluido sem erros
+  - `cd backend-proxy && npm run build` concluido sem erros
+  - `cd frontend && npm run build` concluido com sucesso
+  - `dnsContingencyService.ensureFirewallState()` executado com sucesso
+  - `pm2 restart backend-proxy --update-env` executado; processo voltou `online`
+  - VIP recente `192.168.10.119` confirmado em `policy_exceptions`, `dns_vip`, `proxy_ip_bypass.acl` e `/etc/unbound/becker/vip-bypass.conf`
+  - `iptables -S FORWARD` confirmou `192.168.10.119` com `sgcg-vip-bypass` antes de portal cativo e antes de `SGCG SOCIAL BLOCK VLAN10`
+  - `iptables -t nat -S PREROUTING` confirmou `RETURN` para `192.168.10.119` antes dos DNATs de portal cativo
+  - `ufw status` confirmou `Status: active`
+
+## Próximo passo recomendado
+
+- testar no dispositivo real do VIP `192.168.10.119`:
+  - navegação comum
+  - acesso a redes sociais antes bloqueadas
+  - DNS externo/DoH/DoT quando necessário
+  - confirmar que o bypass não se aplica durante `Bloqueio Total por VLAN`, caso esse modo seja ativado em janela controlada

@@ -358,6 +358,28 @@ class DnsContingencyService {
         return true;
     }
 
+    async countRuntimeRulesWithComment(table: string, chain: string, comment: string) {
+        const saved = await runCommand('iptables-save', ['-t', table], { elevated: true, allowFailure: true });
+        return String(saved.stdout || '')
+            .split('\n')
+            .filter((line) => line.startsWith(`-A ${chain} `) && line.includes(comment))
+            .length;
+    }
+
+    async ensureOrderedIptablesRule(table: string, chain: string, args: string[], insertPosition = 1) {
+        const baseArgs = table === 'filter' ? [] : ['-t', table];
+        let removed = false;
+        for (;;) {
+            const check = await runCommand('iptables', [...baseArgs, '-C', chain, ...args], { elevated: true, allowFailure: true });
+            if (check.code !== 0) break;
+            const deletion = await runCommand('iptables', [...baseArgs, '-D', chain, ...args], { elevated: true, allowFailure: true });
+            if (deletion.code !== 0) break;
+            removed = true;
+        }
+        await runCommand('iptables', [...baseArgs, '-I', chain, String(insertPosition), ...args], { elevated: true });
+        return removed ? 'reordered' : 'applied';
+    }
+
     async applyRuntimeVipBypassRules(vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
         const vipIps = unique(vipBypassRows.map((vip) => vip.ip));
         const activeVipSet = new Set(vipIps.map((ip) => `${ip}/32`));
@@ -365,8 +387,9 @@ class DnsContingencyService {
         const applied: string[] = [];
         const removed: string[] = [];
         const currentRules = await runCommand('iptables-save', ['-t', 'filter'], { elevated: true, allowFailure: true });
+        const currentNatRules = await runCommand('iptables-save', ['-t', 'nat'], { elevated: true, allowFailure: true });
 
-        for (const line of String(currentRules.stdout || '').split('\n')) {
+        for (const line of `${currentRules.stdout || ''}\n${currentNatRules.stdout || ''}`.split('\n')) {
             if (line.includes('sgcg-vip-bypass')) {
                 const match = line.match(/^-A\s+(\S+)\s+(.+)$/);
                 if (!match) continue;
@@ -374,8 +397,9 @@ class DnsContingencyService {
                 const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
                 if (normalizedIp && activeVipSet.has(normalizedIp)) continue;
                 const args = match[2].trim().split(/\s+/);
-                const result = await runCommand('iptables', ['-t', 'filter', '-D', match[1], ...args], { elevated: true, allowFailure: true });
-                if (result.code === 0) removed.push(`${match[1]} ${args.join(' ')}`);
+                const table = line.includes('--to-ports') || match[1] === 'PREROUTING' ? 'nat' : 'filter';
+                const result = await runCommand('iptables', ['-t', table, '-D', match[1], ...args], { elevated: true, allowFailure: true });
+                if (result.code === 0) removed.push(`${table}/${match[1]} ${args.join(' ')}`);
             }
 
             if (line.includes('sgcg-emergency-bypass')) {
@@ -391,15 +415,19 @@ class DnsContingencyService {
         }
 
         for (const ip of vipIps) {
+            const natInsertPosition = (await this.countRuntimeRulesWithComment('nat', 'PREROUTING', 'sgcg-total-vlan-block')) + 1;
+            const filterInsertPosition = (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-total-vlan-block')) + 1;
             const rules = [
-                ['filter', 'INPUT', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
-                ['filter', 'INPUT', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
-                ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
-                ['filter', 'FORWARD', ['-d', ip, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT']],
-            ] as Array<[string, string, string[]]>;
+                ['nat', 'PREROUTING', ['-s', ip, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
+                ['filter', 'INPUT', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
+                ['filter', 'INPUT', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
+                ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
+                ['filter', 'FORWARD', ['-d', ip, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
+            ] as Array<[string, string, string[], number]>;
 
-            for (const [table, chain, args] of rules) {
-                if (await this.ensureIptablesRule(table, chain, args)) {
+            for (const [table, chain, args, insertPosition] of rules) {
+                const result = await this.ensureOrderedIptablesRule(table, chain, args, insertPosition);
+                if (result) {
                     applied.push(`${table}/${chain} ${args.join(' ')}`);
                 }
             }
@@ -454,9 +482,8 @@ class DnsContingencyService {
         try {
             if (await this.commandExists('ufw')) {
                 await runCommand('ufw', ['reload'], { elevated: true });
-            } else {
-                await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
             }
+            await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
         } catch (error) {
             fs.writeFileSync(this.blockFile, original);
             if (await this.commandExists('ufw')) {

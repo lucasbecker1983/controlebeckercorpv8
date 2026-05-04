@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { env } from '../../config/env';
@@ -7,11 +8,59 @@ const router = Router();
 const dataDir = path.join(env.projectRoot, 'data', 'identity');
 const checkinsFile = path.join(dataDir, 'checkins.jsonl');
 const latestFile = path.join(dataDir, 'latest.json');
+const tokenHashFile = path.join(dataDir, 'agent-token.sha256');
 
 const expectedToken = process.env.SGCG_AGENT_TOKEN || '';
+const expectedTokenHash = process.env.SGCG_AGENT_TOKEN_SHA256 || '';
 
 const ensureDataDir = () => {
     fs.mkdirSync(dataDir, { recursive: true });
+};
+
+const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+
+const readStoredTokenHash = () => {
+    try {
+        return fs.readFileSync(tokenHashFile, 'utf8').trim();
+    } catch {
+        return '';
+    }
+};
+
+const writeStoredTokenHash = (token: string) => {
+    ensureDataDir();
+    fs.writeFileSync(tokenHashFile, `${sha256(token)}\n`, { encoding: 'utf8', mode: 0o600 });
+};
+
+const normalizeRemoteIp = (value: string) => value.replace(/^::ffff:/, '').replace(/^::1$/, '127.0.0.1');
+
+const isLanRemote = (value: string) => {
+    const ip = normalizeRemoteIp(value);
+    return ip === '127.0.0.1' || ip.startsWith('192.168.') || ip.startsWith('10.') || /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip);
+};
+
+const hasPlausibleIdentityPayload = (payload: any) => {
+    return String(payload?.source || '') === 'sgcg-endpoint-identity-service'
+        && Boolean(String(payload?.agent_id || '').trim())
+        && Boolean(String(payload?.computer || '').trim());
+};
+
+const isValidAgentToken = (token: string) => {
+    if (!token) return false;
+    if (expectedToken) return token === expectedToken;
+
+    const configuredHash = expectedTokenHash || readStoredTokenHash();
+    if (!configuredHash) return false;
+    return sha256(token) === configuredHash;
+};
+
+const tryRecoverAgentToken = (token: string, payload: any, req: Request) => {
+    if (!token || expectedToken || expectedTokenHash || readStoredTokenHash()) return false;
+    const remoteIp = req.ip || req.socket.remoteAddress || '';
+    if (!isLanRemote(remoteIp) || !hasPlausibleIdentityPayload(payload)) return false;
+
+    writeStoredTokenHash(token);
+    return true;
 };
 
 const normalize = (payload: any, req: Request) => ({
@@ -47,11 +96,11 @@ router.get('/health', (_req: Request, res: Response) => {
 });
 
 router.post('/checkin', (req: Request, res: Response) => {
-    const token = req.header('X-Agent-Token');
-    if (!expectedToken) {
-        return res.status(503).json({ ok: false, error: 'agent_token_not_configured' });
-    }
-    if (!expectedToken || token !== expectedToken) {
+    const token = req.header('X-Agent-Token') || '';
+    if (!isValidAgentToken(token) && !tryRecoverAgentToken(token, req.body, req)) {
+        if (!expectedToken && !expectedTokenHash && !readStoredTokenHash()) {
+            return res.status(503).json({ ok: false, error: 'agent_token_not_configured' });
+        }
         return res.status(401).json({ ok: false, error: 'invalid_agent_token' });
     }
 

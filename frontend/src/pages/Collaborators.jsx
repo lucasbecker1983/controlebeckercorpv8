@@ -1,30 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Activity, BarChart2, Clock, Edit3, FileText, Filter, Network, Plus,
-  Printer, RefreshCw, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
+  Activity, BarChart2, CheckCircle2, Clock, FileText, Filter, LockKeyhole,
+  LockOpen, Plus, Printer, RefreshCw, ShieldCheck, Smartphone, Trash2,
+  UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function formatCpf(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 11);
-  return digits
-    .replace(/^(\d{3})(\d)/, '$1.$2')
-    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1-$2');
-}
-
-function dateValue(value) {
-  if (!value) return '';
-  return String(value).slice(0, 10);
-}
-
-function formatMac(value) {
-  const hex = String(value || '').replace(/[^0-9a-f]/gi, '').slice(0, 12).toLowerCase();
-  return hex.match(/.{1,2}/g)?.join(':') || '';
-}
 
 function formatDuration(seconds) {
   if (!seconds || seconds <= 0) return '-';
@@ -43,9 +24,7 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-// ── shared UI ─────────────────────────────────────────────────────────────────
-
-function Field({ label, value, onChange, type = 'text', required = false, ...props }) {
+function Field({ label, value, onChange, type = 'text', required = false, placeholder = '' }) {
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
@@ -54,9 +33,24 @@ function Field({ label, value, onChange, type = 'text', required = false, ...pro
         value={value}
         onChange={(event) => onChange(event.target.value)}
         required={required}
+        placeholder={placeholder}
         className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-        {...props}
       />
+    </label>
+  );
+}
+
+function SelectField({ label, value, onChange, children }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
+      >
+        {children}
+      </select>
     </label>
   );
 }
@@ -76,49 +70,17 @@ function Metric({ label, value, icon: Icon, sub }) {
   );
 }
 
-function TableShell({ title, rows, columns, empty }) {
-  return (
-    <Surface className="p-5">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="text-sm font-black uppercase text-on-surface">{title}</h2>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">{rows.length}</span>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-xs">
-          <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-            <tr>{columns.map((c) => <th key={c.key} className="whitespace-nowrap px-3 py-2 font-black">{c.label}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y divide-outline/10">
-            {rows.length ? rows.map((row) => (
-              <tr key={row.id} className="group text-on-surface/78 transition-colors hover:bg-primary/5">
-                {columns.map((c) => (
-                  <td key={c.key} className="whitespace-nowrap px-3 py-3">
-                    {c.render ? c.render(row) : row[c.key]}
-                  </td>
-                ))}
-              </tr>
-            )) : (
-              <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={columns.length}>{empty}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Surface>
-  );
-}
-
 function TabBar({ tabs, active, onChange }) {
   return (
     <div className="flex gap-1 rounded-2xl border border-outline/14 bg-surface-high/60 p-1">
       {tabs.map((tab) => (
         <button
           key={tab.key}
+          type="button"
           onClick={() => onChange(tab.key)}
           className={[
             'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase transition-all',
-            active === tab.key
-              ? 'bg-primary text-on-primary shadow-sm'
-              : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
+            active === tab.key ? 'bg-primary text-on-primary shadow-sm' : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
           ].join(' ')}
         >
           {tab.icon && <tab.icon size={14} />}
@@ -129,82 +91,64 @@ function TabBar({ tabs, active, onChange }) {
   );
 }
 
-function SelectField({ label, value, onChange, children }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-      >
-        {children}
-      </select>
-    </label>
-  );
-}
-
-// ── VisitorDialog ─────────────────────────────────────────────────────────────
-
-function VisitorDialog({ open, item, saving, onClose, onSubmit }) {
-  const [form, setForm] = useState({ full_name: '', cpf: '', birth_date: '', mac_address: '', password: '', active: true });
+function UserDialog({ open, item, saving, onClose, onSubmit }) {
+  const [form, setForm] = useState({ username: '', password: '', full_name: '', department: '', position: '', active: true });
 
   useEffect(() => {
     if (!open) return;
     setForm(item ? {
-      full_name: item.full_name || '',
-      cpf: formatCpf(item.cpf_raw || item.cpf || ''),
-      birth_date: dateValue(item.birth_date),
-      mac_address: item.mac_address || '',
+      username: item.username || '',
       password: '',
+      full_name: item.full_name || '',
+      department: item.department || '',
+      position: item.position || '',
       active: item.active !== false,
-    } : { full_name: '', cpf: '', birth_date: '', mac_address: '', password: '', active: true });
+    } : { username: '', password: '', full_name: '', department: '', position: '', active: true });
   }, [open, item]);
 
-  const submit = (e) => {
-    e.preventDefault();
-    onSubmit({ ...form, cpf: form.cpf.replace(/\D/g, '') });
+  const submit = (event) => {
+    event.preventDefault();
+    const payload = { ...form, username: form.username.trim().toLowerCase() };
+    if (item && !payload.password) delete payload.password;
+    onSubmit(payload);
   };
 
-  const set = (key) => (v) => setForm((f) => ({ ...f, [key]: v }));
+  const set = (key) => (value) => setForm((current) => ({ ...current, [key]: value }));
 
   return (
     <DialogShell
       open={open}
-      title={item ? 'Editar visitante' : 'Novo visitante'}
-      subtitle="Cadastro institucional usado pelo portal cativo. A senha só é alterada quando preenchida na edição."
+      title={item ? 'Editar colaborador' : 'Novo colaborador'}
+      subtitle="Conta local do SGCG para liberação de navegação na VLAN 30."
       onClose={onClose}
       size="max-w-3xl"
       footer={(
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-          <ActionButton tone="primary" type="submit" form="hotspot-visitor-form" icon={item ? Edit3 : Plus} disabled={saving}>
-            {saving ? 'Salvando...' : item ? 'Salvar visitante' : 'Criar visitante'}
+          <ActionButton tone="primary" type="submit" form="collab-user-form" icon={item ? CheckCircle2 : Plus} disabled={saving}>
+            {saving ? 'Salvando...' : item ? 'Salvar' : 'Criar conta'}
           </ActionButton>
         </div>
       )}
     >
-      <form id="hotspot-visitor-form" className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+      <form id="collab-user-form" className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
+        <Field label="Usuário" value={form.username} onChange={set('username')} required={!item} />
+        <Field label={item ? 'Nova senha' : 'Senha'} type="password" value={form.password} onChange={set('password')} required={!item} placeholder={item ? 'Deixe em branco para manter' : ''} />
         <div className="sm:col-span-2">
           <Field label="Nome completo" value={form.full_name} onChange={set('full_name')} required />
         </div>
-        <Field label="CPF" value={form.cpf} onChange={(v) => setForm((f) => ({ ...f, cpf: formatCpf(v) }))} inputMode="numeric" required />
-        <Field label="Data de nascimento" type="date" value={form.birth_date} onChange={set('birth_date')} required />
-        <Field label="MAC do dispositivo" value={form.mac_address} onChange={(v) => setForm((f) => ({ ...f, mac_address: formatMac(v) }))} placeholder="aa:bb:cc:dd:ee:ff" />
-        <Field
-          label={item ? 'Nova senha' : 'Senha'} type="password" value={form.password}
-          onChange={set('password')} placeholder={item ? 'Deixe em branco para manter' : ''} required={!item}
-        />
-        <label className="flex h-11 items-center gap-3 rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm font-bold text-on-surface/72">
-          <input type="checkbox" checked={form.active} onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-outline/30 text-primary" />
-          Cadastro ativo
-        </label>
+        <Field label="Departamento" value={form.department} onChange={set('department')} />
+        <Field label="Cargo/Função" value={form.position} onChange={set('position')} />
+        {item ? (
+          <label className="flex h-11 items-center gap-3 rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm font-bold text-on-surface/72">
+            <input type="checkbox" checked={form.active} onChange={(event) => set('active')(event.target.checked)} className="h-4 w-4 rounded border-outline/30 text-primary" />
+            Conta ativa
+          </label>
+        ) : null}
       </form>
     </DialogShell>
   );
 }
-
-// ── MetricsTab ────────────────────────────────────────────────────────────────
 
 function MetricsTab({ metrics, loading, onRefresh }) {
   if (loading) {
@@ -222,7 +166,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
     return (
       <Surface className="p-10 text-center">
         <BarChart2 className="mx-auto mb-3 text-on-surface/30" size={36} />
-        <p className="text-sm text-on-surface/55">Clique abaixo para carregar as métricas de uso do hotspot.</p>
+        <p className="text-sm text-on-surface/55">Clique abaixo para carregar as métricas de uso da VLAN 30.</p>
         <div className="mt-5">
           <ActionButton tone="primary" icon={RefreshCw} onClick={onRefresh}>Carregar Métricas</ActionButton>
         </div>
@@ -231,15 +175,11 @@ function MetricsTab({ metrics, loading, onRefresh }) {
   }
 
   const { daily_users, monthly_summary, top_users, auth_methods, vlan_distribution, hourly_distribution, top_domains } = metrics;
-
   const last7 = (daily_users || []).slice(0, 7).reverse();
-  const maxDaily = Math.max(...last7.map((d) => Number(d.unique_visitors) || 0)) || 1;
-
+  const maxDaily = Math.max(...last7.map((d) => Number(d.unique_users) || 0)) || 1;
   const maxHourly = Math.max(...(hourly_distribution || []).map((d) => Number(d.count) || 0)) || 1;
-
   const maxUser = Number(top_users?.[0]?.sessions) || 1;
-
-  const methodLabel = { first_register: 'Novo cadastro', cpf_password: 'CPF + Senha', mac_auto: 'Auto (MAC)', mac_confirm: 'Retorno confirmado' };
+  const methodLabel = { usuario_senha: 'Usuário + senha' };
   const methodColor = ['bg-primary', 'bg-info', 'bg-orange-500'];
 
   return (
@@ -253,7 +193,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
         <Metric label="Usuários únicos mês" value={monthly_summary?.monthly_unique ?? 0} icon={Users} />
         <Metric label="Dias com acesso" value={monthly_summary?.active_days ?? 0} icon={Clock} />
         <Metric
-          label="Top usuário" value={top_users?.[0]?.full_name?.split(' ')[0] || '-'} icon={UserRound}
+          label="Top colaborador" value={top_users?.[0]?.full_name?.split(' ')[0] || '-'} icon={UserRound}
           sub={top_users?.[0] ? `${top_users[0].sessions} sessões nos últimos 30 dias` : ''}
         />
       </div>
@@ -265,19 +205,14 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           {last7.length ? (
             <div className="flex h-28 items-end gap-1.5">
               {last7.map((d, i) => {
-                const val = Number(d.unique_visitors) || 0;
+                const val = Number(d.unique_users) || 0;
                 const pct = Math.max(val > 0 ? 5 : 0, Math.round((val / maxDaily) * 100));
-                const dateShort = String(d.date || '').slice(5);
                 return (
                   <div key={i} className="group flex flex-1 flex-col items-center gap-1">
                     <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                      <div
-                        className="w-full rounded-t-sm bg-primary/65 transition-all group-hover:bg-primary"
-                        style={{ height: `${pct}%` }}
-                        title={`${d.date}: ${val} usuário(s) único(s), ${d.sessions} sessão(ões)`}
-                      />
+                      <div className="w-full rounded-t-sm bg-primary/65 transition-all group-hover:bg-primary" style={{ height: `${pct}%` }} title={`${d.date}: ${val} usuário(s) único(s), ${d.sessions} sessão(ões)`} />
                     </div>
-                    <span className="text-[8px] text-on-surface/40">{dateShort}</span>
+                    <span className="text-[8px] text-on-surface/40">{String(d.date || '').slice(5)}</span>
                   </div>
                 );
               })}
@@ -295,11 +230,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
               return (
                 <div key={i} className="group flex flex-1 flex-col items-center">
                   <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                    <div
-                      className="w-full rounded-t-sm bg-info/60 transition-all group-hover:bg-info"
-                      style={{ height: `${pct}%` }}
-                      title={`${String(d.hour).padStart(2, '0')}h: ${val} sessão(ões)`}
-                    />
+                    <div className="w-full rounded-t-sm bg-info/60 transition-all group-hover:bg-info" style={{ height: `${pct}%` }} title={`${String(d.hour).padStart(2, '0')}h: ${val} sessão(ões)`} />
                   </div>
                   {i % 4 === 0 && <span className="text-[7px] text-on-surface/35">{String(d.hour).padStart(2, '0')}</span>}
                 </div>
@@ -311,7 +242,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Ranking de usuários — 30 dias</h3>
+          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Ranking de colaboradores — 30 dias</h3>
           {top_users?.length ? (
             <div className="space-y-3">
               {top_users.slice(0, 8).map((u, i) => {
@@ -328,7 +259,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
                         <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
                       </div>
                       <div className="mt-0.5 text-[9px] text-on-surface/40">
-                        {u.cpf} · último: {u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '-'}
+                        {u.username} · {u.department || 'sem departamento'} · último: {u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '-'}
                       </div>
                     </div>
                   </div>
@@ -371,7 +302,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           </div>
 
           <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Sites mais visitados (VLAN 70 — últimos 30 dias)</h4>
+            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Sites mais visitados (VLAN 30 — últimos 30 dias)</h4>
             {top_domains?.length ? (
               <div className="space-y-2">
                 {top_domains.map((d, i) => {
@@ -391,7 +322,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
                 })}
               </div>
             ) : (
-              <p className="text-xs text-on-surface/40">Nenhuma consulta DNS registrada para a VLAN 70 no período. Verifique se o DnsRadarService está ativo.</p>
+              <p className="text-xs text-on-surface/40">Nenhuma consulta DNS registrada para a VLAN 30 no período. Verifique se o DnsRadarService está ativo.</p>
             )}
           </div>
         </Surface>
@@ -400,10 +331,8 @@ function MetricsTab({ metrics, loading, onRefresh }) {
   );
 }
 
-// ── ReportTab ─────────────────────────────────────────────────────────────────
-
-function ReportTab({ visitors }) {
-  const [filters, setFilters] = useState({ from: '', to: '', visitor_id: '', vlan_id: '' });
+function ReportTab({ users }) {
+  const [filters, setFilters] = useState({ from: '', to: '', user_id: '', vlan_id: '' });
   const [reportData, setReportData] = useState(null);
   const [validationData, setValidationData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -411,24 +340,24 @@ function ReportTab({ visitors }) {
   const [validating, setValidating] = useState(false);
   const [printing, setPrinting] = useState(false);
 
-  const setFilter = (key) => (v) => setFilters((f) => ({ ...f, [key]: v }));
+  const setFilter = (key) => (value) => setFilters((current) => ({ ...current, [key]: value }));
 
   const buildParams = (extra = {}) => {
-    const p = { ...extra };
-    if (filters.from) p.from = filters.from;
-    if (filters.to) p.to = filters.to;
-    if (filters.visitor_id) p.visitor_id = filters.visitor_id;
-    if (filters.vlan_id) p.vlan_id = filters.vlan_id;
-    return p;
+    const params = { ...extra };
+    if (filters.from) params.from = filters.from;
+    if (filters.to) params.to = filters.to;
+    if (filters.user_id) params.user_id = filters.user_id;
+    if (filters.vlan_id) params.vlan_id = filters.vlan_id;
+    return params;
   };
 
   const loadReport = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/api/hotspot/report', { params: buildParams({ page: 1, limit: 200 }) });
+      const res = await api.get('/api/collaborators/report', { params: buildParams({ page: 1, limit: 200 }) });
       setReportData(res.data);
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao carregar relatório.');
+    } catch (error) {
+      alert(error?.response?.data?.error || 'Falha ao carregar relatório.');
     } finally {
       setLoading(false);
     }
@@ -437,12 +366,12 @@ function ReportTab({ visitors }) {
   const syncLog = async () => {
     setSyncing(true);
     try {
-      const res = await api.post('/api/hotspot/access-log/sync');
+      const res = await api.post('/api/collaborators/access-log/sync');
       alert(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`);
       setValidationData(null);
       if (reportData) loadReport();
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha na sincronização.');
+    } catch (error) {
+      alert(error?.response?.data?.error || 'Falha na sincronização.');
     } finally {
       setSyncing(false);
     }
@@ -451,10 +380,10 @@ function ReportTab({ visitors }) {
   const validateReport = async () => {
     setValidating(true);
     try {
-      const res = await api.get('/api/hotspot/report/validate', { params: buildParams() });
+      const res = await api.get('/api/collaborators/report/validate', { params: buildParams() });
       setValidationData(res.data);
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao validar relatório.');
+    } catch (error) {
+      alert(error?.response?.data?.error || 'Falha ao validar relatório.');
     } finally {
       setValidating(false);
     }
@@ -463,17 +392,13 @@ function ReportTab({ visitors }) {
   const printReport = async () => {
     setPrinting(true);
     try {
-      const res = await api.get('/api/hotspot/report', { params: buildParams({ page: 1, limit: 1000 }) });
+      const res = await api.get('/api/collaborators/report', { params: buildParams({ page: 1, limit: 1000 }) });
       const { rows, summary } = res.data;
 
       const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-      const fromLabel = filters.from
-        ? new Date(filters.from + 'T12:00:00').toLocaleDateString('pt-BR')
-        : 'Início dos registros';
-      const toLabel = filters.to
-        ? new Date(filters.to + 'T12:00:00').toLocaleDateString('pt-BR')
-        : 'Data atual';
-      const docId = `SGCG-HS-${Date.now().toString(36).toUpperCase()}`;
+      const fromLabel = filters.from ? new Date(`${filters.from}T12:00:00`).toLocaleDateString('pt-BR') : 'Início dos registros';
+      const toLabel = filters.to ? new Date(`${filters.to}T12:00:00`).toLocaleDateString('pt-BR') : 'Data atual';
+      const docId = `SGCG-CM-${Date.now().toString(36).toUpperCase()}`;
       const logoUrl = `${window.location.origin}/LOGO-JACAREZINHO.png`;
 
       const fmtDur = (s) => {
@@ -497,7 +422,7 @@ function ReportTab({ visitors }) {
 
       win.document.write(`<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8">
-<title>Relatório Hotspot — ${docId}</title>
+<title>Relatório Acesso Mobile — ${docId}</title>
 <style>
 @page{size:A4 landscape;margin:1.2cm 1.5cm 2.2cm}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -524,30 +449,27 @@ tbody tr:nth-child(even) td{background:#f7f8fa}
 </head><body>
 <div class="header">
   <div class="logo">
-    <img
-      src="${logoUrl}"
-      onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
-    />
+    <img src="${logoUrl}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
     <div class="logo-fb">PMJ<br>PARANÁ</div>
   </div>
   <div class="ht">
     <h1>Prefeitura Municipal de Jacarezinho</h1>
     <h2>Estado do Paraná</h2>
     <h3>Secretaria Municipal de Comércio, Indústria, Serviços e Inovação</h3>
-    <h4>Relatório Oficial do Hotspot Institucional</h4>
-    <p style="font-size:9pt;color:#555;margin:2px 0 0;">Relatório de Acesso ao Hotspot Municipal</p>
+    <h4>Relatório Oficial do Acesso Mobile de Colaboradores</h4>
+    <p style="font-size:9pt;color:#555;margin:2px 0 0;">Relatório de Acesso Autenticado à VLAN 30</p>
   </div>
 </div>
 <div class="meta">
   <div><span class="ml">Período</span><span class="mv">${fromLabel} a ${toLabel}</span></div>
   <div><span class="ml">Total de Sessões</span><span class="mv">${summary?.total_sessions ?? rows.length}</span></div>
-  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_visitors ?? '-'}</span></div>
+  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_users ?? '-'}</span></div>
   <div><span class="ml">Emissão</span><span class="mv">${now}</span></div>
 </div>
 <table>
 <thead><tr>
-  <th>#</th><th>Data</th><th>Hora</th><th>Usuário</th><th>CPF</th>
-  <th>Endereço IP</th><th>MAC</th><th>VLAN</th><th>Autenticação</th>
+  <th>#</th><th>Data</th><th>Hora</th><th>Colaborador</th><th>Usuário</th>
+  <th>Departamento</th><th>Endereço IP</th><th>MAC</th><th>VLAN</th><th>Autenticação</th>
   <th>Duração</th><th>Site Principal</th><th>Banda</th>
 </tr></thead>
 <tbody>
@@ -555,8 +477,9 @@ ${rows.map((r, i) => `<tr>
   <td>${i + 1}</td>
   <td>${r.date_fmt ?? '-'}</td>
   <td>${r.hour_fmt ?? '-'}</td>
-  <td>${r.visitor_name ?? 'N/I'}</td>
-  <td>${r.cpf_masked ?? '-'}</td>
+  <td>${r.full_name ?? 'N/I'}</td>
+  <td>${r.username ?? '-'}</td>
+  <td>${r.department ?? '-'}</td>
   <td>${r.client_ip ?? '-'}</td>
   <td>${r.mac_address ?? '-'}</td>
   <td>${r.vlan_id ?? '-'}</td>
@@ -581,8 +504,8 @@ ${rows.map((r, i) => `<tr>
 <script>setTimeout(function(){window.print();},500);<\/script>
 </body></html>`);
       win.document.close();
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao gerar relatório para impressão.');
+    } catch (error) {
+      alert(error?.response?.data?.error || 'Falha ao gerar relatório para impressão.');
     } finally {
       setPrinting(false);
     }
@@ -597,7 +520,7 @@ ${rows.map((r, i) => `<tr>
             <h2 className="text-sm font-black uppercase text-on-surface">Relatório Institucional de Acesso</h2>
             <p className="mt-1 text-xs text-on-surface/60">
               Prefeitura Municipal de Jacarezinho — Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.<br />
-              Selecione o período, usuário e VLAN para gerar o relatório e exportar em PDF com cabeçalho e rodapé governamental.
+              Selecione período, colaborador e VLAN para gerar relatório e exportar em PDF com identidade governamental.
             </p>
           </div>
         </div>
@@ -605,13 +528,13 @@ ${rows.map((r, i) => `<tr>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="De" type="date" value={filters.from} onChange={setFilter('from')} />
           <Field label="Até" type="date" value={filters.to} onChange={setFilter('to')} />
-          <SelectField label="Usuário" value={filters.visitor_id} onChange={setFilter('visitor_id')}>
-            <option value="">Todos os usuários</option>
-            {visitors.map((v) => <option key={v.id} value={v.id}>{v.full_name} ({v.cpf})</option>)}
+          <SelectField label="Colaborador" value={filters.user_id} onChange={setFilter('user_id')}>
+            <option value="">Todos os colaboradores</option>
+            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>)}
           </SelectField>
           <SelectField label="VLAN" value={filters.vlan_id} onChange={setFilter('vlan_id')}>
             <option value="">Todas as VLANs</option>
-            <option value="70">VLAN 70 — Hotspot visitantes</option>
+            <option value="30">VLAN 30 — Colaboradores</option>
           </SelectField>
         </div>
 
@@ -679,7 +602,7 @@ ${rows.map((r, i) => `<tr>
         <>
           <div className="grid gap-4 sm:grid-cols-3">
             <Metric label="Sessões no período" value={reportData.total} icon={Activity} />
-            <Metric label="Usuários únicos" value={reportData.summary?.unique_visitors || 0} icon={Users} />
+            <Metric label="Usuários únicos" value={reportData.summary?.unique_users || 0} icon={Users} />
             <Metric label="Tempo total acumulado" value={formatDuration(Number(reportData.summary?.total_seconds) || 0)} icon={Clock} />
           </div>
 
@@ -687,7 +610,7 @@ ${rows.map((r, i) => `<tr>
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-sm font-black uppercase text-on-surface">Registros de Acesso</h2>
-                <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do hotspot</p>
+                <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do acesso mobile</p>
               </div>
               <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">
                 {reportData.rows?.length} / {reportData.total}
@@ -697,7 +620,7 @@ ${rows.map((r, i) => `<tr>
               <table className="min-w-full text-left text-xs">
                 <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
                   <tr>
-                    {['Data', 'Hora', 'Usuário', 'CPF', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
+                    {['Data', 'Hora', 'Colaborador', 'Usuário', 'Departamento', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
                       <th key={h} className="whitespace-nowrap px-3 py-2 font-black">{h}</th>
                     ))}
                   </tr>
@@ -707,8 +630,9 @@ ${rows.map((r, i) => `<tr>
                     <tr key={row.id} className="text-on-surface/78 transition-colors hover:bg-primary/5">
                       <td className="whitespace-nowrap px-3 py-2.5">{row.date_fmt}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.hour_fmt}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-bold">{row.visitor_name}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.cpf_masked}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 font-bold">{row.full_name}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.username}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5">{row.department || '-'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.client_ip || '-'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5">{row.vlan_id || '-'}</td>
                       <td className="whitespace-nowrap px-3 py-2.5">{row.auth_method}</td>
@@ -718,7 +642,7 @@ ${rows.map((r, i) => `<tr>
                     </tr>
                   )) : (
                     <tr>
-                      <td className="px-3 py-8 text-center text-on-surface/45" colSpan={10}>
+                      <td className="px-3 py-8 text-center text-on-surface/45" colSpan={11}>
                         Nenhum registro para os filtros selecionados.
                       </td>
                     </tr>
@@ -738,34 +662,29 @@ ${rows.map((r, i) => `<tr>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
-export default function Hotspot() {
+export default function Collaborators() {
   const [tab, setTab] = useState('overview');
-  const [overview, setOverview] = useState({ totals: { visitors: 0, devices: 0, active_sessions: 0 }, enforcement: null, recent_sessions: [] });
-  const [visitors, setVisitors] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [users, setUsers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [visitorDialog, setVisitorDialog] = useState({ open: false, item: null });
-  const [savingVisitor, setSavingVisitor] = useState(false);
+  const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [dialog, setDialog] = useState({ open: false, item: null });
 
   const load = async () => {
     setLoading(true);
     try {
-      const [overviewRes, visitorsRes, sessionsRes] = await Promise.all([
-        api.get('/api/hotspot/overview'),
-        api.get('/api/hotspot/visitors'),
-        api.get('/api/hotspot/sessions'),
+      const [overviewRes, usersRes, sessionsRes] = await Promise.all([
+        api.get('/api/collaborators/overview'),
+        api.get('/api/collaborators/users'),
+        api.get('/api/collaborators/sessions'),
       ]);
       setOverview(overviewRes.data);
-      setVisitors(visitorsRes.data?.visitors || []);
-      setSessions(sessionsRes.data?.sessions || []);
-      setError('');
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Falha ao carregar Hotspot.');
+      setUsers(usersRes.data || []);
+      setSessions(sessionsRes.data || []);
     } finally {
       setLoading(false);
     }
@@ -774,10 +693,10 @@ export default function Hotspot() {
   const loadMetrics = async () => {
     setMetricsLoading(true);
     try {
-      const res = await api.get('/api/hotspot/metrics');
+      const res = await api.get('/api/collaborators/metrics');
       setMetrics(res.data);
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao carregar métricas.');
+    } catch (error) {
+      alert(error?.response?.data?.error || 'Falha ao carregar métricas.');
     } finally {
       setMetricsLoading(false);
     }
@@ -786,47 +705,56 @@ export default function Hotspot() {
   useEffect(() => { load(); }, []);
   useEffect(() => { if (tab === 'metrics' && !metrics) loadMetrics(); }, [tab]);
 
-  const revoke = async (id) => {
-    if (!confirm(`Revogar sessão ${id}?`)) return;
-    await api.post(`/api/hotspot/sessions/${id}/revoke`);
-    load();
-  };
-
-  const reconcile = async () => {
-    await api.post('/api/hotspot/enforcement/reconcile');
-    load();
-  };
-
-  const openVisitorEditor = async (visitor = null) => {
-    if (!visitor) { setVisitorDialog({ open: true, item: null }); return; }
-    const res = await api.get(`/api/hotspot/visitors/${visitor.id}`);
-    setVisitorDialog({ open: true, item: res.data?.visitor || visitor });
-  };
-
-  const saveVisitor = async (payload) => {
-    setSavingVisitor(true);
+  const saveUser = async (payload) => {
+    setSaving(true);
     try {
-      if (visitorDialog.item?.id) await api.put(`/api/hotspot/visitors/${visitorDialog.item.id}`, payload);
-      else await api.post('/api/hotspot/visitors', payload);
-      setVisitorDialog({ open: false, item: null });
+      if (dialog.item?.id) await api.put(`/api/collaborators/users/${dialog.item.id}`, payload);
+      else await api.post('/api/collaborators/users', payload);
+      setDialog({ open: false, item: null });
       await load();
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao salvar visitante.');
     } finally {
-      setSavingVisitor(false);
+      setSaving(false);
     }
   };
 
-  const deleteVisitor = async (visitor) => {
-    if (!confirm(`Excluir visitante ${visitor.full_name}? As sessões ativas serão revogadas.`)) return;
+  const deleteUser = async (user) => {
+    const ok = window.confirm(`Inativar o colaborador ${user.full_name}? Sessões ativas serão revogadas.`);
+    if (!ok) return;
+    await api.delete(`/api/collaborators/users/${user.id}`);
+    await load();
+  };
+
+  const revokeSession = async (id) => {
+    await api.post(`/api/collaborators/sessions/${id}/revoke`);
+    await load();
+  };
+
+  const setupEnforcement = async () => {
+    setStatus('Aplicando portal e enforcement da VLAN 30...');
     try {
-      await api.delete(`/api/hotspot/visitors/${visitor.id}`);
+      const res = await api.post('/api/collaborators/enforcement/setup');
+      setStatus(`Resultado: ${Object.entries(res.data?.results || {}).map(([key, value]) => `${key}=${value}`).join(', ')}`);
       await load();
-    } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao excluir visitante.');
+    } catch (error) {
+      setStatus(error?.response?.data?.error || 'Falha ao aplicar enforcement.');
     }
   };
 
+  const toggleAuthRequired = async () => {
+    const next = !(overview?.settings?.auth_required !== false);
+    setStatus(next ? 'Ativando exigência de login na VLAN 30...' : 'Desativando login obrigatório da VLAN 30...');
+    try {
+      await api.put('/api/collaborators/settings/access-mode', { auth_required: next });
+      setStatus(next
+        ? 'Login obrigatório ativado. Novos acessos HTTP serão direcionados ao portal.'
+        : 'Login obrigatório desativado. A VLAN 30 navega sem portal, mantendo DNS/RPZ/ACL.');
+      await load();
+    } catch (error) {
+      setStatus(error?.response?.data?.error || 'Falha ao alterar modo de acesso.');
+    }
+  };
+
+  const authRequired = overview?.settings?.auth_required !== false;
   const TABS = [
     { key: 'overview', label: 'Visão Geral', icon: Wifi },
     { key: 'metrics', label: 'Métricas', icon: BarChart2 },
@@ -836,126 +764,126 @@ export default function Hotspot() {
   return (
     <div className="space-y-6 pb-12">
       <ModuleHeader
-        eyebrow="Controle"
-        title="Hotspot"
-        description="Cadastro institucional de visitantes, métricas de uso e relatório governamental de acessos à VLAN 70."
-        badges={(
-          <>
-            <StatusChip label="UFW principal preservado" tone="success" />
-            <StatusChip label="ACL/RPZ continuam ativos" tone="primary" />
-            <StatusChip label="VLAN 70 visitantes" tone="warning" />
-          </>
+        eyebrow="Controle de acesso"
+        title="Acesso Mobile de Colaboradores"
+        subtitle="Autenticação local para a VLAN 30, com métricas, auditoria, relatório governamental e liberação runtime por IP."
+        icon={Smartphone}
+        actions={(
+          <div className="flex flex-wrap gap-2">
+            <ActionButton tone="ghost" icon={RefreshCw} onClick={load}>{loading ? 'Carregando...' : 'Atualizar'}</ActionButton>
+            <ActionButton tone={authRequired ? 'secondary' : 'ghost'} icon={authRequired ? LockKeyhole : LockOpen} onClick={toggleAuthRequired}>
+              {authRequired ? 'Login ligado' : 'Login desligado'}
+            </ActionButton>
+            <ActionButton tone="secondary" icon={ShieldCheck} onClick={setupEnforcement}>Reconciliar</ActionButton>
+            <ActionButton tone="primary" icon={Plus} onClick={() => setDialog({ open: true, item: null })}>Novo Usuário</ActionButton>
+          </div>
         )}
-        actions={<ActionButton tone="primary" icon={loading ? Activity : RefreshCw} onClick={load}>{loading ? 'Carregando...' : 'Recarregar'}</ActionButton>}
       />
 
-      {error ? <div className="rounded-2xl border border-danger/25 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div> : null}
+      {status ? <Surface className="p-4 text-sm text-on-surface/72">{status}</Surface> : null}
 
       <TabBar tabs={TABS} active={tab} onChange={setTab} />
 
       {tab === 'overview' && (
         <div className="space-y-6">
           <div className="grid gap-4 md:grid-cols-3">
-            <Metric label="Visitantes cadastrados" value={overview.totals.visitors} icon={UserRound} />
-            <Metric label="Dispositivos associados" value={overview.totals.devices} icon={Smartphone} />
-            <Metric label="Sessões ativas" value={overview.totals.active_sessions} icon={Wifi} />
+            <Metric label="Usuários ativos" value={overview?.users?.active ?? '-'} icon={UserRound} sub={`${overview?.users?.total ?? 0} cadastrados`} />
+            <Metric label="Sessões ativas" value={overview?.sessions?.active ?? '-'} icon={Wifi} sub="VLAN 30" />
+            <Metric label="IPs liberados" value={overview?.enforcement?.authorized_count ?? '-'} icon={LockKeyhole} sub={overview?.enforcement?.auth_set || 'sgcg_collab_v30_auth'} />
           </div>
 
           <Surface className="p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-start gap-3">
-                <Network className="mt-0.5 shrink-0 text-primary" size={22} />
-                <div>
-                  <h2 className="text-sm font-black uppercase text-on-surface">Enforcement cativo VLAN 70</h2>
-                  <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
-                    Runtime complementar com ipset/iptables: não autenticados são mantidos no portal; autenticados seguem para as políticas UFW, DNS, ACL e RPZ existentes.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-on-surface/62">
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">Interface: {overview.enforcement?.interface || 'enp6s0.70'}</span>
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">Gateway: {overview.enforcement?.gateway_ip || '192.168.70.1'}</span>
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">IPs liberados: {overview.enforcement?.authorized_count ?? 0}</span>
-                  </div>
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="max-w-3xl">
+                <div className="flex items-center gap-2">
+                  <StatusChip tone={authRequired ? 'warning' : 'success'}>
+                    {authRequired ? 'Login obrigatório' : 'Somente DNS/ACL'}
+                  </StatusChip>
+                  <span className="text-xs font-bold uppercase text-on-surface/45">VLAN 30</span>
                 </div>
-              </div>
-              <ActionButton tone="secondary" icon={RefreshCw} onClick={reconcile}>Reconciliar</ActionButton>
-            </div>
-          </Surface>
-
-          <Surface className="p-5">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-0.5 shrink-0 text-primary" size={22} />
-              <div>
-                <h2 className="text-sm font-black uppercase text-on-surface">Regime operacional</h2>
-                <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
-                  O Hotspot identifica visitantes e registra sessões. Ele não remove bloqueios institucionais: a VLAN 70 permanece sujeita ao DNS interno, ACLs, RPZ e demais políticas de navegação.
+                <p className="mt-2 text-sm leading-6 text-on-surface/68">
+                  {authRequired
+                    ? 'Dispositivos não autenticados são direcionados ao portal e ficam sem saída WAN até login válido. As sessões alimentam métricas, auditoria e relatório institucional.'
+                    : 'O portal não captura os colaboradores; a navegação segue liberada pela camada IP e continua sujeita às restrições institucionais de DNS, RPZ e ACL.'}
                 </p>
               </div>
+              <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-outline/14 bg-surface-high/72 px-4 py-3">
+                <span className="text-sm font-black text-on-surface">Exigir login</span>
+                <input type="checkbox" checked={authRequired} onChange={toggleAuthRequired} className="h-5 w-5 rounded border-outline/30 text-primary" />
+              </label>
             </div>
           </Surface>
 
-          <TableShell
-            title="Sessões recentes"
-            rows={sessions}
-            empty="Nenhuma sessão registrada."
-            columns={[
-              { key: 'full_name', label: 'Visitante', render: (row) => row.full_name || 'não identificado' },
-              { key: 'cpf', label: 'CPF' },
-              { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || 'não capturado' },
-              { key: 'client_ip', label: 'IP' },
-              { key: 'vlan_id', label: 'VLAN', render: (row) => row.vlan_id || '-' },
-              { key: 'auth_method', label: 'Método' },
-              { key: 'status', label: 'Estado' },
-              { key: 'expires_at', label: 'Expira', render: (row) => row.expires_at ? new Date(row.expires_at).toLocaleString('pt-BR') : '-' },
-              { key: 'action', label: 'Ação', render: (row) => row.status === 'active' ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-black uppercase text-danger">Revogar</button> : '-' },
-            ]}
-          />
+          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+            <Surface className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-black uppercase text-on-surface">Colaboradores</h2>
+                <StatusChip tone={loading ? 'warning' : 'success'}>{loading ? 'Carregando' : `${users.length} registros`}</StatusChip>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
+                    <tr>
+                      <th className="px-3 py-2 font-black">Nome</th>
+                      <th className="px-3 py-2 font-black">Usuário</th>
+                      <th className="px-3 py-2 font-black">Departamento</th>
+                      <th className="px-3 py-2 font-black">Estado</th>
+                      <th className="px-3 py-2 font-black">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-outline/10">
+                    {users.map((user) => (
+                      <tr key={user.id} className="text-on-surface/78">
+                        <td className="whitespace-nowrap px-3 py-3 font-bold">{user.full_name}</td>
+                        <td className="whitespace-nowrap px-3 py-3 font-mono">{user.username}</td>
+                        <td className="whitespace-nowrap px-3 py-3">{user.department || '-'}</td>
+                        <td className="whitespace-nowrap px-3 py-3"><StatusChip tone={user.active ? 'success' : 'neutral'}>{user.active ? 'Ativo' : 'Inativo'}</StatusChip></td>
+                        <td className="whitespace-nowrap px-3 py-3">
+                          <div className="flex items-center gap-3">
+                            <button type="button" className="text-xs font-black text-primary" onClick={() => setDialog({ open: true, item: user })}>Editar</button>
+                            <button type="button" className="text-xs font-black text-danger disabled:cursor-not-allowed disabled:opacity-40" disabled={!user.active} onClick={() => deleteUser(user)}>
+                              Inativar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {!users.length ? <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={5}>Nenhum colaborador cadastrado.</td></tr> : null}
+                  </tbody>
+                </table>
+              </div>
+            </Surface>
 
-          <TableShell
-            title="Visitantes"
-            rows={visitors}
-            empty="Nenhum visitante cadastrado."
-            columns={[
-              { key: 'full_name', label: 'Nome', render: (row) => (
-                <div className="flex min-w-[260px] items-center justify-between gap-3">
-                  <span className="font-bold text-on-surface">{row.full_name}</span>
-                  <div className="flex shrink-0 gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                    <button type="button" onClick={() => openVisitorEditor(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-outline/12 bg-surface-high/80 text-primary transition hover:bg-primary hover:text-on-primary">
-                      <Edit3 size={14} />
-                    </button>
-                    <button type="button" onClick={() => deleteVisitor(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-danger/16 bg-danger/10 text-danger transition hover:bg-danger hover:text-white">
-                      <Trash2 size={14} />
-                    </button>
+            <Surface className="p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-sm font-black uppercase text-on-surface">Sessões ativas</h2>
+                <StatusChip tone="info">{sessions.length}</StatusChip>
+              </div>
+              <div className="space-y-3">
+                {sessions.map((session) => (
+                  <div key={session.id} className="rounded-2xl border border-outline/12 bg-surface-high/55 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-on-surface">{session.full_name || session.username}</p>
+                        <p className="mt-1 font-mono text-xs text-on-surface/55">{session.client_ip} {session.mac_address ? `- ${session.mac_address}` : ''}</p>
+                      </div>
+                      <button type="button" title="Revogar sessão" className="rounded-xl border border-danger/18 bg-danger/10 p-2 text-danger" onClick={() => revokeSession(session.id)}>
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ) },
-              { key: 'cpf', label: 'CPF' },
-              { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || '-' },
-              { key: 'active', label: 'Estado', render: (row) => row.active ? 'ativo' : 'inativo' },
-              { key: 'devices', label: 'Dispositivos' },
-              { key: 'created_at', label: 'Cadastro', render: (row) => row.created_at ? new Date(row.created_at).toLocaleString('pt-BR') : '-' },
-            ]}
-          />
-          <div className="flex justify-end">
-            <ActionButton tone="primary" icon={Plus} onClick={() => openVisitorEditor()}>Novo visitante</ActionButton>
+                ))}
+                {!sessions.length ? <div className="rounded-2xl border border-dashed border-outline/16 p-8 text-center text-sm text-on-surface/45">Sem sessões ativas.</div> : null}
+              </div>
+            </Surface>
           </div>
         </div>
       )}
 
-      {tab === 'metrics' && (
-        <MetricsTab metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} />
-      )}
+      {tab === 'metrics' && <MetricsTab metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} />}
+      {tab === 'report' && <ReportTab users={users} />}
 
-      {tab === 'report' && (
-        <ReportTab visitors={visitors} />
-      )}
-
-      <VisitorDialog
-        open={visitorDialog.open}
-        item={visitorDialog.item}
-        saving={savingVisitor}
-        onClose={() => setVisitorDialog({ open: false, item: null })}
-        onSubmit={saveVisitor}
-      />
+      <UserDialog open={dialog.open} item={dialog.item} saving={saving} onClose={() => setDialog({ open: false, item: null })} onSubmit={saveUser} />
     </div>
   );
 }

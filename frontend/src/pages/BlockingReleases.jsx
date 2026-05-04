@@ -2765,17 +2765,19 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     }
   };
 
-  const loadOperationalAudit = async () => {
+  const loadOperationalAudit = async (overrides = {}) => {
     setWorking((current) => ({ ...current, audit: true }));
     try {
+      const nextFilters = { ...auditFilters, ...(overrides.filters || {}) };
+      const nextSearch = overrides.search !== undefined ? String(overrides.search || '') : auditSearch;
       const params = new URLSearchParams();
-      params.set('period', auditFilters.period);
+      params.set('period', nextFilters.period);
       params.set('limit', '500');
-      if (auditFilters.action !== 'all') params.set('action', auditFilters.action);
-      if (auditFilters.vlan !== 'all') params.set('vlan', auditFilters.vlan);
-      if (auditFilters.source !== 'all') params.set('source', auditFilters.source);
-      if (auditSearch.trim()) {
-        const raw = auditSearch.trim();
+      if (nextFilters.action !== 'all') params.set('action', nextFilters.action);
+      if (nextFilters.vlan !== 'all') params.set('vlan', nextFilters.vlan);
+      if (nextFilters.source !== 'all') params.set('source', nextFilters.source);
+      if (nextSearch.trim()) {
+        const raw = nextSearch.trim();
         if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(raw)) params.set('ip', raw);
         else if (raw.includes('.')) params.set('domain', raw);
         else params.set('hostname', raw);
@@ -2788,6 +2790,19 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     } finally {
       setWorking((current) => ({ ...current, audit: false }));
     }
+  };
+
+  const investigateRealtimeEvent = async (item) => {
+    const search = item.client_ip || item.domain || item.url_or_host || '';
+    const filters = {
+      ...auditFilters,
+      action: 'all',
+      source: 'all',
+      vlan: item.vlan_id ? String(item.vlan_id) : 'all',
+    };
+    setAuditSearch(search);
+    setAuditFilters(filters);
+    await loadOperationalAudit({ search, filters });
   };
 
   const loadRealtimeRadar = async (silent = false) => {
@@ -4251,7 +4266,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <ActionButton tone="ghost" icon={Search} onClick={() => { setAuditSearch(item.domain || item.client_ip || ''); }}>
+                        <ActionButton tone="ghost" icon={Search} onClick={() => investigateRealtimeEvent(item)}>
                           Investigar
                         </ActionButton>
                         {item.action === 'blocked' && item.domain ? (

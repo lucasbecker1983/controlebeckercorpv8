@@ -20,6 +20,11 @@ export type EndpointIdentity = {
 const latestFile = path.join(env.projectRoot, 'data', 'identity', 'latest.json');
 
 const normalizeIp = (value: unknown) => String(value || '').trim();
+const identityTime = (identity: EndpointIdentity) => {
+    const value = identity.received_at || identity.checked_at || '';
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+};
 
 export const identityEnrichmentService = {
     loadLatestByIp(): Map<string, EndpointIdentity> {
@@ -28,7 +33,11 @@ export const identityEnrichmentService = {
             const raw = JSON.parse(fs.readFileSync(latestFile, 'utf8')) as Record<string, EndpointIdentity>;
             for (const item of Object.values(raw || {})) {
                 const ip = normalizeIp(item?.ip);
-                if (ip) byIp.set(ip, item);
+                if (!ip) continue;
+                const current = byIp.get(ip);
+                if (!current || identityTime(item) >= identityTime(current)) {
+                    byIp.set(ip, item);
+                }
             }
         } catch {
             // optional enrichment

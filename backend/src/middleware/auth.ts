@@ -38,5 +38,6 @@ export const requireJwt = (req: AuthenticatedRequest, res: Response, next: NextF
 export const globalJwtGuard = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     if (PUBLIC_ROUTES.has(req.path)) return next();
     if (req.path.startsWith('/api/hotspot/public/')) return next();
+    if (req.path.startsWith('/api/collaborators/public/')) return next();
     return requireJwt(req, res, next);
 };

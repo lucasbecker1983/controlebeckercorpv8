@@ -3,6 +3,7 @@ import { ArrowRight, Building2, Lock, ShieldAlert, ShieldCheck, User } from 'luc
 import { api, resetAuthInvalidation } from '../services/api';
 import { motion } from 'framer-motion';
 import { resetAuthFetchInvalidation } from '../services/authFetch';
+import { storageRemove, storageSet } from '../services/browserStorage';
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -15,8 +16,8 @@ export default function Login({ onLogin }) {
     try {
       resetAuthInvalidation();
       resetAuthFetchInvalidation();
-      localStorage.removeItem('becker_token');
-      localStorage.removeItem('becker_user');
+      storageRemove('becker_token');
+      storageRemove('becker_user');
       const res = await api.post('/api/auth/login', { username, password });
       const token = res.data?.accessToken || res.data?.token || '';
       if (!res.data?.user || !token) {
@@ -25,13 +26,13 @@ export default function Login({ onLogin }) {
 
       resetAuthInvalidation();
       resetAuthFetchInvalidation();
-      localStorage.setItem('becker_token', token);
-      localStorage.setItem('becker_user', JSON.stringify(res.data.user));
+      storageSet('becker_token', token);
+      storageSet('becker_user', JSON.stringify(res.data.user));
       window.history.replaceState({}, '', '/');
       onLogin(res.data.user);
     } catch (err) {
-      localStorage.removeItem('becker_token');
-      localStorage.removeItem('becker_user');
+      storageRemove('becker_token');
+      storageRemove('becker_user');
       setError('Sessão não iniciada. Verifique backend/proxy.');
     }
     finally { setLoading(false); }

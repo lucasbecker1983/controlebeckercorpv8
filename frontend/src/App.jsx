@@ -21,8 +21,12 @@ import Lgpd from './pages/Lgpd';
 import Reports from './pages/Reports';
 import Hotspot from './pages/Hotspot';
 import HotspotPortal from './pages/HotspotPortal';
+import Collaborators from './pages/Collaborators';
+import CollaboratorPortal from './pages/CollaboratorPortal';
+import Maintenance from './pages/Maintenance';
 import { api, resetAuthInvalidation } from './services/api';
 import { resetAuthFetchInvalidation } from './services/authFetch';
+import { storageGet, storageRemove, storageSet } from './services/browserStorage';
 
 function getPreferenceScope(user) {
   const identifier = user?.username || user?.name || user?.email || user?.id;
@@ -36,30 +40,56 @@ function getPreferenceScope(user) {
 function readPreference(baseKey, user, fallback) {
   const scope = getPreferenceScope(user);
   if (scope) {
-    const scopedValue = localStorage.getItem(`${baseKey}_${scope}`);
+    const scopedValue = storageGet(`${baseKey}_${scope}`, '');
     if (scopedValue) return scopedValue;
   }
-  return localStorage.getItem(baseKey) || fallback;
+  return storageGet(baseKey, '') || fallback;
 }
 
-const resolveStoredTheme = (user) => readPreference('sgcg_theme', user, localStorage.getItem('becker_theme') || 'light');
+const resolveStoredTheme = (user) => readPreference('sgcg_theme', user, storageGet('becker_theme', '') || 'light');
 const resolveStoredAccent = (user) => readPreference('sgcg_accent', user, 'government');
 const resolveStoredUiStyle = (user) => readPreference('sgcg_ui_style', user, 'solid');
 
+function isCollaboratorPortalRequest() {
+  const { hostname, pathname } = window.location;
+  return pathname.startsWith('/collab/portal')
+    || hostname === '192.168.30.1'
+    || hostname === 'connectivitycheck.gstatic.com'
+    || hostname === 'clients3.google.com'
+    || hostname === 'captive.apple.com'
+    || hostname === 'www.msftconnecttest.com'
+    || hostname === 'msftconnecttest.com';
+}
+
+function isHotspotPortalRequest() {
+  const { hostname, pathname } = window.location;
+  return pathname.startsWith('/hotspot/portal') || hostname === '192.168.70.1';
+}
+
+function readStoredUser() {
+  try {
+    return JSON.parse(storageGet('becker_user', '{}') || '{}') || {};
+  } catch {
+    storageRemove('becker_token');
+    storageRemove('becker_user');
+    return {};
+  }
+}
+
 export default function App() {
   const [authReady, setAuthReady] = useState(false);
-  const [user, setUser] = useState(JSON.parse(localStorage.getItem('becker_user') || '{}'));
+  const [user, setUser] = useState(() => readStoredUser());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [theme, setTheme] = useState(() => resolveStoredTheme(JSON.parse(localStorage.getItem('becker_user') || '{}')));
-  const [accent, setAccent] = useState(() => resolveStoredAccent(JSON.parse(localStorage.getItem('becker_user') || '{}')));
-  const [uiStyle, setUiStyle] = useState(() => resolveStoredUiStyle(JSON.parse(localStorage.getItem('becker_user') || '{}')));
+  const [theme, setTheme] = useState(() => resolveStoredTheme(readStoredUser()));
+  const [accent, setAccent] = useState(() => resolveStoredAccent(readStoredUser()));
+  const [uiStyle, setUiStyle] = useState(() => resolveStoredUiStyle(readStoredUser()));
 
   useEffect(() => {
-    const token = localStorage.getItem('becker_token');
-    const storedUser = JSON.parse(localStorage.getItem('becker_user') || '{}');
+    const token = storageGet('becker_token', '');
+    const storedUser = readStoredUser();
     if (!token || (!storedUser?.username && !storedUser?.id)) {
-      localStorage.removeItem('becker_token');
-      localStorage.removeItem('becker_user');
+      storageRemove('becker_token');
+      storageRemove('becker_user');
       setUser({});
     } else {
       setUser(storedUser);
@@ -69,8 +99,8 @@ export default function App() {
 
   useEffect(() => {
     const handleAuthInvalid = () => {
-      localStorage.removeItem('becker_token');
-      localStorage.removeItem('becker_user');
+      storageRemove('becker_token');
+      storageRemove('becker_user');
       setUser({});
       setAuthReady(true);
     };
@@ -90,22 +120,22 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-accent', accent);
     document.documentElement.setAttribute('data-ui-style', uiStyle);
-    localStorage.setItem('sgcg_theme', theme);
-    localStorage.setItem('sgcg_accent', accent);
-    localStorage.setItem('sgcg_ui_style', uiStyle);
-    localStorage.setItem('becker_theme', theme);
+    storageSet('sgcg_theme', theme);
+    storageSet('sgcg_accent', accent);
+    storageSet('sgcg_ui_style', uiStyle);
+    storageSet('becker_theme', theme);
     if (scope) {
-      localStorage.setItem(`sgcg_theme_${scope}`, theme);
-      localStorage.setItem(`sgcg_accent_${scope}`, accent);
-      localStorage.setItem(`sgcg_ui_style_${scope}`, uiStyle);
+      storageSet(`sgcg_theme_${scope}`, theme);
+      storageSet(`sgcg_accent_${scope}`, accent);
+      storageSet(`sgcg_ui_style_${scope}`, uiStyle);
     }
   }, [theme, accent, uiStyle, user]);
 
   const handleLogout = () => {
     resetAuthInvalidation();
     resetAuthFetchInvalidation();
-    localStorage.removeItem('becker_token');
-    localStorage.removeItem('becker_user');
+    storageRemove('becker_token');
+    storageRemove('becker_user');
     window.history.replaceState({}, '', '/');
     setUser({});
     setAuthReady(true);
@@ -116,8 +146,16 @@ export default function App() {
     return <div className="flex min-h-screen items-center justify-center bg-surface text-on-surface">Carregando sessão institucional...</div>;
   }
 
-  if (window.location.pathname.startsWith('/hotspot/portal')) {
+  if (isHotspotPortalRequest()) {
     return <HotspotPortal />;
+  }
+
+  if (isCollaboratorPortalRequest()) {
+    return <CollaboratorPortal />;
+  }
+
+  if (window.location.pathname.startsWith('/manutencao')) {
+    return <Maintenance />;
   }
 
   if (!user?.id && !user?.username) {
@@ -125,7 +163,7 @@ export default function App() {
       resetAuthInvalidation();
       resetAuthFetchInvalidation();
       setUser(nextUser);
-      localStorage.setItem('becker_user', JSON.stringify(nextUser));
+      storageSet('becker_user', JSON.stringify(nextUser));
     }} />;
   }
 
@@ -179,6 +217,7 @@ export default function App() {
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />
           <Route path="/hotspot" element={<Hotspot />} />
+          <Route path="/colaboradores-mobile" element={<Collaborators />} />
           <Route
             path="/settings"
             element={(

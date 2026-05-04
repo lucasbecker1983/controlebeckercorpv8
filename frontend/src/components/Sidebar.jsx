@@ -1,4 +1,4 @@
-import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, UserCog, Waypoints, Wifi } from 'lucide-react';
+import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, Smartphone, UserCog, Waypoints, Wifi } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -25,6 +25,7 @@ const menu = [
       { label: 'Radar Operacional & Observabilidade', icon: Eye, path: '/proxy' },
       { label: 'Segurança Operacional', icon: Network, path: '/security' },
       { label: 'Hotspot', icon: Wifi, path: '/hotspot' },
+      { label: 'Acesso Mobile', icon: Smartphone, path: '/colaboradores-mobile' },
       { label: 'Operações Técnicas', icon: Boxes, path: '/control' },
       { label: 'Continuidade & Backup', icon: LayoutDashboard, path: '/backups' },
     ],

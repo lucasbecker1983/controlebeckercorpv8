@@ -185,6 +185,23 @@ CREATE TABLE IF NOT EXISTS emergency_vlan_bypass (
 CREATE INDEX IF NOT EXISTS idx_emergency_vlan_bypass_active
     ON emergency_vlan_bypass (vlan_id, active, expires_at);
 
+CREATE TABLE IF NOT EXISTS total_vlan_blocks (
+    id BIGSERIAL PRIMARY KEY,
+    vlan_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    requested_by VARCHAR(128) NOT NULL DEFAULT 'system',
+    activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deactivated_at TIMESTAMPTZ,
+    deactivated_by VARCHAR(128),
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_total_vlan_blocks_active
+    ON total_vlan_blocks (vlan_id, active, activated_at);
+
 CREATE TABLE IF NOT EXISTS access_events (
     id BIGSERIAL PRIMARY KEY,
     occurred_at TIMESTAMPTZ NOT NULL,

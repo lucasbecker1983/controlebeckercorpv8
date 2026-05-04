@@ -42,6 +42,11 @@ const HOTSPOT_SUCCESS_REDIRECT_URL = 'https://www.jacarezinho.pr.gov.br/';
 
 const onlyDigits = (value: unknown) => String(value || '').replace(/\D/g, '');
 const normalizeMac = (value: unknown) => String(value || '').trim().toLowerCase();
+const MAC_ADDRESS_REGEX = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
+const normalizeOptionalMac = (value: unknown) => {
+    const normalized = normalizeMac(value);
+    return MAC_ADDRESS_REGEX.test(normalized) ? normalized : null;
+};
 
 const normalizeIp = (value: unknown) => {
     const raw = String(value || '').split(',')[0].trim();
@@ -100,6 +105,7 @@ async function ensureSchema() {
             full_name TEXT NOT NULL,
             cpf VARCHAR(11) NOT NULL UNIQUE,
             birth_date DATE NOT NULL,
+            mac_address VARCHAR(17),
             password_hash TEXT NOT NULL,
             active BOOLEAN NOT NULL DEFAULT TRUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -107,6 +113,7 @@ async function ensureSchema() {
         );
 
         ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS mother_name;
+        ALTER TABLE hotspot_visitors ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17);
 
         CREATE TABLE IF NOT EXISTS hotspot_devices (
             id BIGSERIAL PRIMARY KEY,
@@ -137,6 +144,9 @@ async function ensureSchema() {
         );
 
         CREATE INDEX IF NOT EXISTS idx_hotspot_devices_mac ON hotspot_devices (mac_address);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_hotspot_visitors_mac
+            ON hotspot_visitors (mac_address)
+            WHERE mac_address IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_hotspot_sessions_status ON hotspot_sessions (status, expires_at DESC);
         CREATE INDEX IF NOT EXISTS idx_hotspot_sessions_vlan ON hotspot_sessions (vlan_id, started_at DESC);
         REVOKE ALL ON hotspot_visitors, hotspot_devices, hotspot_sessions FROM PUBLIC;
@@ -261,16 +271,53 @@ async function revokeRuntimeIps(rows: Array<{ client_ip?: string | null }>) {
     return ips.length;
 }
 
+async function revokeActiveSessionsByDeviceMacOrIp(deviceId: number | null, mac: string | null, ip: string | null, reason: string) {
+    const result = await pool.query(
+        `UPDATE hotspot_sessions
+            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+          WHERE status = 'active'
+            AND (
+                ($1::bigint IS NOT NULL AND device_id = $1::bigint)
+                OR ($2::text IS NOT NULL AND mac_address = $2::text)
+                OR ($3::inet IS NOT NULL AND client_ip = $3::inet)
+            )
+          RETURNING host(client_ip) AS client_ip`,
+        [deviceId || null, mac || null, ip || null],
+    );
+    const runtimeRevoked = await revokeRuntimeIps(result.rows);
+    return { revoked_sessions: result.rowCount || 0, runtime_revoked: runtimeRevoked, reason };
+}
+
 async function findKnownDevice(mac: string) {
+    const normalizedMac = normalizeOptionalMac(mac);
+    if (!normalizedMac) return null;
     const found = await pool.query(
         `SELECT d.*, v.full_name, v.cpf, v.active AS visitor_active
            FROM hotspot_devices d
            JOIN hotspot_visitors v ON v.id = d.visitor_id
           WHERE d.mac_address = $1 AND d.active = TRUE
           LIMIT 1`,
-        [mac],
+        [normalizedMac],
     );
-    return found.rowCount && found.rows[0].visitor_active ? found.rows[0] : null;
+    if (found.rowCount && found.rows[0].visitor_active) return found.rows[0];
+
+    const visitor = await pool.query(
+        `SELECT NULL::bigint AS id,
+                v.id AS visitor_id,
+                v.mac_address,
+                NULL::inet AS first_ip,
+                NULL::inet AS last_ip,
+                NULL::integer AS vlan_id,
+                TRUE AS active,
+                v.full_name,
+                v.cpf,
+                v.active AS visitor_active
+           FROM hotspot_visitors v
+          WHERE v.mac_address = $1 AND v.active = TRUE
+          LIMIT 1`,
+        [normalizedMac],
+    );
+    return visitor.rowCount && visitor.rows[0].visitor_active ? visitor.rows[0] : null;
 }
 
 async function readHotspotEnforcementStatus() {
@@ -305,6 +352,7 @@ async function audit(req: Request, action: string, success: boolean, payload: an
 }
 
 async function createSession(req: Request, visitor: any, device: any, authMethod: string, ip: string | null, mac: string | null, vlanId: number | null) {
+    await revokeActiveSessionsByDeviceMacOrIp(device?.id || null, mac, ip, authMethod).catch(() => null);
     const session = await pool.query(
         `INSERT INTO hotspot_sessions
             (visitor_id, device_id, client_ip, mac_address, vlan_id, auth_method, user_agent, expires_at)
@@ -318,7 +366,8 @@ async function createSession(req: Request, visitor: any, device: any, authMethod
 }
 
 async function upsertDevice(visitorId: number, ip: string | null, mac: string | null, vlanId: number | null) {
-    if (!mac) return null;
+    const normalizedMac = normalizeOptionalMac(mac);
+    if (!normalizedMac) return null;
     const result = await pool.query(
         `INSERT INTO hotspot_devices (visitor_id, mac_address, first_ip, last_ip, vlan_id)
          VALUES ($1,$2,$3::inet,$3::inet,$4)
@@ -329,9 +378,28 @@ async function upsertDevice(visitorId: number, ip: string | null, mac: string | 
             last_seen_at = NOW(),
             active = TRUE
          RETURNING *`,
-        [visitorId, mac, ip || null, vlanId],
+        [visitorId, normalizedMac, ip || null, vlanId],
     );
     return result.rows[0];
+}
+
+async function assignVisitorMac(visitorId: number, mac: string | null) {
+    const normalizedMac = normalizeOptionalMac(mac);
+    if (!normalizedMac) return null;
+    const result = await pool.query(
+        `UPDATE hotspot_visitors
+            SET mac_address = $2,
+                updated_at = NOW()
+          WHERE id = $1
+            AND NOT EXISTS (
+                SELECT 1 FROM hotspot_visitors other
+                 WHERE other.mac_address = $2
+                   AND other.id <> $1
+            )
+          RETURNING mac_address`,
+        [visitorId, normalizedMac],
+    );
+    return result.rowCount ? result.rows[0].mac_address : null;
 }
 
 function publicVisitor(row: any) {
@@ -339,6 +407,7 @@ function publicVisitor(row: any) {
         id: row.id,
         full_name: row.full_name,
         cpf: maskCpf(row.cpf),
+        mac_address: row.mac_address || null,
     };
 }
 
@@ -367,32 +436,42 @@ async function auditAdmin(req: AuthenticatedRequest, action: string, success: bo
     });
 }
 
+router.use('/public', (_req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+    next();
+});
+
 router.get('/public/context', async (req, res) => {
     await ensureSchema();
     const ip = getClientIp(req);
     const vlanId = inferVlanId(ip);
     const mac = await inferMac(ip);
-    await revokeHotspotIp(ip).catch(() => false);
 
     if (!mac) {
+        const revoked = await revokeActiveSessionsByDeviceMacOrIp(null, null, ip, 'context_without_mac').catch(() => null);
         await audit(req, 'hotspot_mac_not_found', true, { ip, vlan_id: vlanId }, {}, 'MAC nao encontrado na tabela de vizinhanca.');
-        return res.json({ authenticated: false, ip, mac: null, vlan_id: vlanId, requires_login: true });
+        return res.json({ authenticated: false, ip, mac: null, vlan_id: vlanId, requires_login: true, revoked });
     }
 
     const row = await findKnownDevice(mac);
 
     if (!row) {
+        const revoked = await revokeActiveSessionsByDeviceMacOrIp(null, mac, ip, 'context_unknown_mac').catch(() => null);
         await audit(req, 'hotspot_mac_unknown', true, { ip, mac, vlan_id: vlanId }, {}, 'Dispositivo ainda nao cadastrado.');
-        return res.json({ authenticated: false, ip, mac, vlan_id: vlanId, requires_login: true });
+        return res.json({ authenticated: false, ip, mac, vlan_id: vlanId, requires_login: true, revoked });
     }
 
-    const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf };
+    const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address };
+    const revoked = await revokeActiveSessionsByDeviceMacOrIp(row.id, mac, ip, 'context_known_mac_requires_confirm').catch(() => null);
     await audit(
         req,
         'hotspot_mac_recognized_confirmation_required',
         true,
         { ip, mac, vlan_id: vlanId },
-        { visitor_id: visitor.id, device_id: row.id },
+        { visitor_id: visitor.id, device_id: row.id, revoked },
         'Dispositivo reconhecido por MAC; confirmacao explicita exigida no portal.',
     );
     res.json({
@@ -404,7 +483,8 @@ router.get('/public/context', async (req, res) => {
         mac,
         vlan_id: vlanId,
         visitor: publicVisitor(visitor),
-        message: `Bem-vindo de volta, ${visitor.full_name}. Clique para navegar.`,
+        revoked,
+        message: `Bem-vindo, ${visitor.full_name}. Clique em Entrar na Internet para navegar.`,
     });
 });
 
@@ -425,7 +505,7 @@ router.post('/public/continue', async (req, res) => {
         return res.status(401).json({ error: 'Dispositivo ainda não cadastrado. Faça login ou realize o primeiro acesso.' });
     }
 
-    const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf };
+    const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address };
     await pool.query(
         `UPDATE hotspot_sessions
             SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
@@ -465,18 +545,48 @@ router.post('/public/register', async (req, res) => {
         return res.status(400).json({ error: 'Preencha nome completo, CPF, data de nascimento e senha com ao menos 6 caracteres.' });
     }
 
-    const exists = await pool.query('SELECT id FROM hotspot_visitors WHERE cpf = $1', [cpf]);
+    const exists = await pool.query('SELECT id, active FROM hotspot_visitors WHERE cpf = $1 LIMIT 1', [cpf]);
     if (exists.rowCount) {
-        await audit(req, 'hotspot_register_failed', false, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, {}, 'CPF ja cadastrado.');
-        return res.status(409).json({ error: 'CPF já cadastrado. Entre com CPF e senha para associar este dispositivo.' });
+        if (exists.rows[0].active) {
+            await audit(req, 'hotspot_register_failed', false, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, {}, 'CPF ja cadastrado.');
+            return res.status(409).json({ error: 'CPF já cadastrado. Entre com CPF e senha para associar este dispositivo.' });
+        }
+
+        const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+        const visitorResult = await pool.query(
+            `UPDATE hotspot_visitors
+                SET full_name = $1,
+                    birth_date = $2::date,
+                    password_hash = $3,
+                    active = TRUE,
+                    mac_address = CASE
+                        WHEN $4::varchar IS NULL THEN mac_address
+                        WHEN NOT EXISTS (
+                            SELECT 1 FROM hotspot_visitors other
+                             WHERE other.mac_address = $4::varchar
+                               AND other.id <> hotspot_visitors.id
+                        ) THEN $4::varchar
+                        ELSE mac_address
+                    END,
+                    updated_at = NOW()
+              WHERE id = $5
+              RETURNING id, full_name, cpf, mac_address`,
+            [fullName, birthDate, passwordHash, normalizeOptionalMac(mac), exists.rows[0].id],
+        );
+        const visitor = visitorResult.rows[0];
+        const device = await upsertDevice(visitor.id, ip, mac, vlanId);
+        const session = await createSession(req, visitor, device, 'reactivated_register', ip, mac, vlanId);
+
+        await audit(req, 'hotspot_register_reactivated', true, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id, device_id: device?.id, session_id: session.id }, 'Cadastro inativo do hotspot reativado pelo portal publico.');
+        return res.status(200).json({ authenticated: true, visitor: publicVisitor(visitor), ip, mac, vlan_id: vlanId, session, redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL });
     }
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     const visitorResult = await pool.query(
-        `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, password_hash)
-         VALUES ($1,$2,$3::date,$4)
-         RETURNING id, full_name, cpf`,
-        [fullName, cpf, birthDate, passwordHash],
+        `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, mac_address, password_hash)
+         VALUES ($1,$2,$3::date,$4,$5)
+         RETURNING id, full_name, cpf, mac_address`,
+        [fullName, cpf, birthDate, normalizeOptionalMac(mac), passwordHash],
     );
     const visitor = visitorResult.rows[0];
     const device = await upsertDevice(visitor.id, ip, mac, vlanId);
@@ -501,6 +611,7 @@ router.post('/public/login', async (req, res) => {
     }
 
     const visitor = result.rows[0];
+    await assignVisitorMac(visitor.id, mac);
     const device = await upsertDevice(visitor.id, ip, mac, vlanId);
     const session = await createSession(req, visitor, device, 'cpf_password', ip, mac, vlanId);
     await audit(req, 'hotspot_login_success', true, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id, device_id: device?.id, session_id: session.id }, 'Login do hotspot por CPF e senha.');
@@ -559,17 +670,19 @@ router.post('/enforcement/reconcile', requireJwt, async (req: AuthenticatedReque
     res.json({ success: true, enforcement: await readHotspotEnforcementStatus() });
 });
 
-router.get('/visitors', requireJwt, async (_req: AuthenticatedRequest, res) => {
+router.get('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
     await ensureSchema();
+    const includeInactive = String(req.query.include_inactive || req.query.includeInactive || '').toLowerCase() === 'true';
     const result = await pool.query(`
-        SELECT v.id, v.full_name, v.cpf, v.birth_date, v.active, v.created_at,
+        SELECT v.id, v.full_name, v.cpf, v.birth_date, v.mac_address, v.active, v.created_at,
                COUNT(d.id)::int AS devices
           FROM hotspot_visitors v
           LEFT JOIN hotspot_devices d ON d.visitor_id = v.id
+         WHERE ($1::boolean = TRUE OR v.active = TRUE)
          GROUP BY v.id
          ORDER BY v.created_at DESC
          LIMIT 200
-    `);
+    `, [includeInactive]);
     res.json({ visitors: result.rows.map((row) => adminVisitor(row)) });
 });
 
@@ -578,7 +691,7 @@ router.get('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Visitante inválido.' });
     const result = await pool.query(
-        `SELECT v.id, v.full_name, v.cpf, v.birth_date, v.active, v.created_at,
+        `SELECT v.id, v.full_name, v.cpf, v.birth_date, v.mac_address, v.active, v.created_at,
                 COUNT(d.id)::int AS devices
            FROM hotspot_visitors v
            LEFT JOIN hotspot_devices d ON d.visitor_id = v.id
@@ -596,8 +709,14 @@ router.post('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
     const fullName = String(req.body.full_name || '').trim();
     const cpf = onlyDigits(req.body.cpf);
     const birthDate = String(req.body.birth_date || '').trim();
+    const macAddress = normalizeOptionalMac(req.body.mac_address);
     const password = String(req.body.password || '');
     const active = req.body.active !== false;
+
+    if (String(req.body.mac_address || '').trim() && !macAddress) {
+        await auditAdmin(req, 'hotspot_visitor_create_failed', false, { cpf: cpf ? maskCpf(cpf) : null, mac_address: req.body.mac_address }, {}, 'MAC invalido.', 400);
+        return res.status(400).json({ error: 'Informe o MAC no formato aa:bb:cc:dd:ee:ff.' });
+    }
 
     if (fullName.length < 6 || cpf.length !== 11 || !isValidBirthDate(birthDate) || password.length < 6) {
         await auditAdmin(req, 'hotspot_visitor_create_failed', false, { cpf: cpf ? maskCpf(cpf) : null }, {}, 'Dados obrigatorios invalidos.', 400);
@@ -607,11 +726,12 @@ router.post('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     try {
         const result = await pool.query(
-            `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, password_hash, active)
-             VALUES ($1,$2,$3::date,$4,$5)
-             RETURNING id, full_name, cpf, birth_date, active, created_at, 0::int AS devices`,
-            [fullName, cpf, birthDate, passwordHash, active],
+            `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, mac_address, password_hash, active)
+             VALUES ($1,$2,$3::date,$4,$5,$6)
+             RETURNING id, full_name, cpf, birth_date, mac_address, active, created_at, 0::int AS devices`,
+            [fullName, cpf, birthDate, macAddress, passwordHash, active],
         );
+        if (macAddress) await upsertDevice(Number(result.rows[0].id), null, macAddress, HOTSPOT_VLAN_ID).catch(() => null);
         await auditAdmin(req, 'hotspot_visitor_created', true, { cpf: maskCpf(cpf), active }, { visitor_id: result.rows[0].id }, 'Visitante de hotspot criado pelo SGCG.');
         res.status(201).json({ visitor: adminVisitor(result.rows[0], true) });
     } catch (error: any) {
@@ -630,8 +750,14 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
     const fullName = String(req.body.full_name || '').trim();
     const cpf = onlyDigits(req.body.cpf);
     const birthDate = String(req.body.birth_date || '').trim();
+    const macAddress = normalizeOptionalMac(req.body.mac_address);
     const password = String(req.body.password || '');
     const active = req.body.active !== false;
+
+    if (String(req.body.mac_address || '').trim() && !macAddress) {
+        await auditAdmin(req, 'hotspot_visitor_update_failed', false, { visitor_id: id, cpf: cpf ? maskCpf(cpf) : null, mac_address: req.body.mac_address }, {}, 'MAC invalido.', 400);
+        return res.status(400).json({ error: 'Informe o MAC no formato aa:bb:cc:dd:ee:ff.' });
+    }
 
     if (fullName.length < 6 || cpf.length !== 11 || !isValidBirthDate(birthDate) || (password && password.length < 6)) {
         await auditAdmin(req, 'hotspot_visitor_update_failed', false, { visitor_id: id, cpf: cpf ? maskCpf(cpf) : null }, {}, 'Dados obrigatorios invalidos.', 400);
@@ -648,14 +774,16 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
                 SET full_name = $1,
                     cpf = $2,
                     birth_date = $3::date,
-                    active = $4,
-                    password_hash = COALESCE($5, password_hash),
+                    mac_address = $4,
+                    active = $5,
+                    password_hash = COALESCE($6, password_hash),
                     updated_at = NOW()
-              WHERE id = $6
-              RETURNING id, full_name, cpf, birth_date, active, created_at,
+              WHERE id = $7
+              RETURNING id, full_name, cpf, birth_date, mac_address, active, created_at,
                         (SELECT COUNT(*)::int FROM hotspot_devices d WHERE d.visitor_id = hotspot_visitors.id) AS devices`,
-            [fullName, cpf, birthDate, active, passwordHash, id],
+            [fullName, cpf, birthDate, macAddress, active, passwordHash, id],
         );
+        if (macAddress) await upsertDevice(id, null, macAddress, HOTSPOT_VLAN_ID).catch(() => null);
         if (!active && previous.rows[0].active) {
             await pool.query(`UPDATE hotspot_devices SET active = FALSE WHERE visitor_id = $1`, [id]);
             const sessions = await pool.query(
@@ -910,6 +1038,143 @@ router.post('/access-log/sync', requireJwt, async (req: AuthenticatedRequest, re
         res.json({ success: true, inserted: result.rowCount });
     } catch (error: any) {
         res.status(500).json({ error: error.message || 'Erro ao sincronizar log.' });
+    }
+});
+
+router.get('/report/validate', requireJwt, async (req: AuthenticatedRequest, res) => {
+    try {
+        await ensureSchema();
+        await ensureAccessLogSchema();
+        const from = req.query.from ? String(req.query.from) : null;
+        const to = req.query.to ? String(req.query.to) : null;
+        const visitorId = req.query.visitor_id ? Number(req.query.visitor_id) : null;
+        const vlanId = req.query.vlan_id ? Number(req.query.vlan_id) : null;
+
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+        if (from) { conditions.push(`s.started_at >= $${params.length + 1}::date`); params.push(from); }
+        if (to) { conditions.push(`s.started_at < ($${params.length + 1}::date + INTERVAL '1 day')`); params.push(to); }
+        if (visitorId && Number.isFinite(visitorId)) { conditions.push(`s.visitor_id = $${params.length + 1}`); params.push(visitorId); }
+        if (vlanId && Number.isFinite(vlanId)) { conditions.push(`s.vlan_id = $${params.length + 1}`); params.push(vlanId); }
+        const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+
+        const [summary, missingLogs, duplicateLogs, identityGaps, ipGaps, durationIssues, staleLogs, domainGaps] = await Promise.all([
+            pool.query(`
+                SELECT COUNT(*)::int AS total_sessions,
+                       COUNT(*) FILTER (WHERE al.session_id IS NOT NULL)::int AS logged_sessions,
+                       COUNT(DISTINCT s.visitor_id)::int AS unique_visitors
+                FROM hotspot_sessions s
+                LEFT JOIN hotspot_access_log al ON al.session_id = s.id
+                ${where}
+            `, params),
+            pool.query(`
+                SELECT s.id, s.started_at, host(s.client_ip) AS client_ip, s.vlan_id
+                FROM hotspot_sessions s
+                LEFT JOIN hotspot_access_log al ON al.session_id = s.id
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} al.session_id IS NULL
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT al.session_id, COUNT(*)::int AS copies
+                FROM hotspot_access_log al
+                JOIN hotspot_sessions s ON s.id = al.session_id
+                ${where}
+                GROUP BY al.session_id
+                HAVING COUNT(*) > 1
+                ORDER BY copies DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT s.id, s.visitor_id, host(s.client_ip) AS client_ip, s.started_at
+                FROM hotspot_sessions s
+                LEFT JOIN hotspot_visitors v ON v.id = s.visitor_id
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} (s.visitor_id IS NULL OR v.id IS NULL OR v.full_name IS NULL OR v.cpf IS NULL)
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT s.id, s.visitor_id, s.started_at
+                FROM hotspot_sessions s
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} s.client_ip IS NULL
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT s.id, s.started_at, COALESCE(s.revoked_at, s.last_seen_at) AS ended_at
+                FROM hotspot_sessions s
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} COALESCE(s.revoked_at, s.last_seen_at) < s.started_at
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT s.id,
+                       GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(s.revoked_at, s.last_seen_at) - s.started_at))::int) AS computed_duration,
+                       al.duration_seconds AS logged_duration
+                FROM hotspot_sessions s
+                JOIN hotspot_access_log al ON al.session_id = s.id
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} ABS(COALESCE(al.duration_seconds, -1) - GREATEST(0, EXTRACT(EPOCH FROM (COALESCE(s.revoked_at, s.last_seen_at) - s.started_at))::int)) > 60
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params),
+            pool.query(`
+                SELECT s.id, host(s.client_ip) AS client_ip, s.started_at
+                FROM hotspot_sessions s
+                LEFT JOIN hotspot_access_log al ON al.session_id = s.id
+                ${where}
+                  ${where ? 'AND' : 'WHERE'} COALESCE(al.top_domain, '') = ''
+                    AND EXISTS (
+                        SELECT 1 FROM dns_policy_events dpe
+                        WHERE dpe.client_ip = s.client_ip
+                          AND dpe.occurred_at >= s.started_at
+                          AND dpe.action != 'blocked'
+                          AND dpe.query_name IS NOT NULL
+                          AND dpe.query_name != '-'
+                        LIMIT 1
+                    )
+                ORDER BY s.started_at DESC
+                LIMIT 25
+            `, params).catch(() => ({ rows: [] })),
+        ]);
+
+        const checks = [
+            { key: 'missing_logs', label: 'Sessões fora do log imutável', severity: 'critical', count: missingLogs.rowCount || 0, rows: missingLogs.rows },
+            { key: 'duplicate_logs', label: 'Sessões duplicadas no log imutável', severity: 'critical', count: duplicateLogs.rowCount || 0, rows: duplicateLogs.rows },
+            { key: 'identity_gaps', label: 'Sessões sem visitante íntegro', severity: 'critical', count: identityGaps.rowCount || 0, rows: identityGaps.rows },
+            { key: 'ip_gaps', label: 'Sessões sem IP de origem', severity: 'critical', count: ipGaps.rowCount || 0, rows: ipGaps.rows },
+            { key: 'duration_issues', label: 'Sessões com duração incoerente', severity: 'critical', count: durationIssues.rowCount || 0, rows: durationIssues.rows },
+            { key: 'stale_logs', label: 'Duração do log divergente da sessão', severity: 'warning', count: staleLogs.rowCount || 0, rows: staleLogs.rows },
+            { key: 'domain_gaps', label: 'Sessões com DNS disponível sem site principal no log', severity: 'warning', count: domainGaps.rows.length || 0, rows: domainGaps.rows },
+        ];
+        const critical = checks.filter((c) => c.severity === 'critical').reduce((acc, c) => acc + c.count, 0);
+        const warning = checks.filter((c) => c.severity === 'warning').reduce((acc, c) => acc + c.count, 0);
+
+        res.json({
+            valid: critical === 0,
+            status: critical ? 'invalid' : warning ? 'warning' : 'valid',
+            generated_at: new Date().toISOString(),
+            scope: { from, to, visitor_id: visitorId, vlan_id: vlanId || HOTSPOT_VLAN_ID },
+            summary: {
+                total_sessions: Number(summary.rows[0]?.total_sessions || 0),
+                logged_sessions: Number(summary.rows[0]?.logged_sessions || 0),
+                unique_visitors: Number(summary.rows[0]?.unique_visitors || 0),
+                critical,
+                warning,
+            },
+            checks,
+            recommendation: critical
+                ? 'Sincronize o log, corrija as inconsistências críticas e valide novamente antes de emitir o PDF.'
+                : warning
+                    ? 'O relatório pode ser emitido, mas recomenda-se revisar os avisos antes de anexar a auditorias externas.'
+                    : 'Relatório consistente para emissão institucional.',
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Erro ao validar relatório.' });
     }
 });
 

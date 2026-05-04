@@ -13,11 +13,15 @@ type RunResult = {
     code: number;
 };
 
+const elevatedCommandPaths: Record<string, string> = {
+    ufw: '/usr/sbin/ufw',
+};
+
 const withPrivilege = (command: string, args: string[], elevated?: boolean) => {
     if (!elevated) return { command, args };
     return {
         command: 'sudo',
-        args: ['-n', command, ...args],
+        args: ['-n', elevatedCommandPaths[command] || command, ...args],
     };
 };
 
