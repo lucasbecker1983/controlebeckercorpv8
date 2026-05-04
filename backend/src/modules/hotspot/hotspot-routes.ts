@@ -160,12 +160,44 @@ async function inferMac(ip: string | null) {
     return match ? normalizeMac(match[1]) : null;
 }
 
-async function ensureRule(checkCommand: string, insertCommand: string) {
-    try {
-        await execCmdStrict(checkCommand);
-    } catch {
-        await execCmdStrict(insertCommand);
+async function countRuntimeRulesWithComment(table: 'filter' | 'nat', chain: string, comment: string) {
+    const readCommand = table === 'nat'
+        ? `iptables -t nat -S ${chain} | grep -- "--comment ${comment}" || true`
+        : `iptables -S ${chain} | grep -- "--comment ${comment}" || true`;
+    const output = await execCmd(readCommand).catch(() => '');
+    return output
+        .split('\n')
+        .filter((line) => line.startsWith(`-A ${chain} `) && line.includes(`--comment ${comment}`))
+        .length;
+}
+
+async function getPortalInsertPosition(table: 'filter' | 'nat', chain: string) {
+    const totalBlockCount = await countRuntimeRulesWithComment(table, chain, 'sgcg-total-vlan-block');
+    const vipBypassCount = await countRuntimeRulesWithComment(table, chain, 'sgcg-vip-bypass');
+    return totalBlockCount + vipBypassCount + 1;
+}
+
+async function removeRuntimeRule(checkCommand: string, deleteCommand: string) {
+    while (true) {
+        try {
+            await execCmdStrict(checkCommand);
+            await execCmdStrict(deleteCommand);
+        } catch {
+            break;
+        }
     }
+}
+
+async function ensureOrderedPortalRule(
+    table: 'filter' | 'nat',
+    chain: string,
+    checkCommand: string,
+    deleteCommand: string,
+    insertCommandForPosition: (position: number) => string,
+) {
+    await removeRuntimeRule(checkCommand, deleteCommand);
+    const position = await getPortalInsertPosition(table, chain);
+    await execCmdStrict(insertCommandForPosition(position));
 }
 
 async function listAuthorizedHotspotIps() {
@@ -222,13 +254,19 @@ async function ensureHotspotEnforcement() {
     await execCmdStrict(`ipset create ${HOTSPOT_AUTH_SET} hash:ip timeout ${HOTSPOT_SESSION_SECONDS} -exist`);
     await revokeLegacyAutoSessions();
     await expireExpiredSessions();
-    await ensureRule(
+    await ensureOrderedPortalRule(
+        'nat',
+        'PREROUTING',
         `iptables -t nat -C PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
-        `iptables -t nat -I PREROUTING 1 -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
+        `iptables -t nat -D PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
+        (position) => `iptables -t nat -I PREROUTING ${position} -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
     );
-    await ensureRule(
+    await ensureOrderedPortalRule(
+        'filter',
+        'FORWARD',
         `iptables -C FORWARD -i ${HOTSPOT_VLAN_IFACE} -o ${HOTSPOT_WAN_IFACE} -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
-        `iptables -I FORWARD 1 -i ${HOTSPOT_VLAN_IFACE} -o ${HOTSPOT_WAN_IFACE} -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
+        `iptables -D FORWARD -i ${HOTSPOT_VLAN_IFACE} -o ${HOTSPOT_WAN_IFACE} -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
+        (position) => `iptables -I FORWARD ${position} -i ${HOTSPOT_VLAN_IFACE} -o ${HOTSPOT_WAN_IFACE} -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
     );
     await pruneUnauthorizedHotspotIps();
 }

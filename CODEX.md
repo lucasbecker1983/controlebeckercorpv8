@@ -3765,3 +3765,71 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `https://console.jacarezinho.cloud`
   - `https://console.interno.jacarezinho`
 - evitar editar diretamente apenas um dos vhosts; alterar o snippet comum quando a mudança pertencer à superfície da aplicação
+
+## 2026-05-04 — Liberação Governo appjacarezinho.govbr.cloud
+
+- adicionada a URL/host `appjacarezinho.govbr.cloud` à política institucional `Governo`
+- persistência aplicada:
+  - `release_policies` recebeu liberação global com categoria `Governo`
+  - `domain_policy_entries` da política nomeada `Governo` recebeu entrada `domain`
+- catálogo-base `Governo` em `backend-proxy/src/services/blocking-release-service.ts` foi ampliado com o host para preservar a liberação em futuras restaurações/baselines
+- compilação e aplicação executadas:
+  - `cd backend-proxy && npm run build` concluído sem erros
+  - `blockingReleaseService.apply('codex')` concluído com `success=true`
+  - `unbound-checkconf` retornou sem erros durante a validação do apply
+  - `backend-proxy` reiniciado via `pm2 restart backend-proxy --update-env` e voltou `online`
+- validação de artefatos confirmou `appjacarezinho.govbr.cloud` em:
+  - `backend-proxy/regras/generated/proxy_whitelist.acl`
+  - `backend-proxy/regras/generated/proxy_protected_ssl.acl`
+  - `backend-proxy/regras/generated/bloqueios-liberacoes/allowlist-global.acl`
+  - `backend-proxy/regras/generated/bloqueios-liberacoes/export.json`
+  - `/etc/unbound/becker/allowed.rpz`
+- o RPZ permitido passou a conter também `*.appjacarezinho.govbr.cloud` como passthru
+
+## Próximo passo recomendado
+
+- testar acesso real ao portal `appjacarezinho.govbr.cloud` em uma estação sujeita às políticas institucionais, confirmando DNS, navegação HTTPS e ausência de bloqueio por camada social/DoH/ACL
+
+## 2026-05-04 — Revisão dos Portais Cativos Após Mudança dos VIPs
+
+- revisados os portais cativos de Colaboradores VLAN30 e Hotspot VLAN70 após a nova estratégia de `sgcg-vip-bypass`
+- diagnóstico confirmado:
+  - os vhosts Nginx dos portais respondiam corretamente em `192.168.30.1:80` e `192.168.70.1:80`
+  - os ipsets `sgcg_collab_v30_auth` e `sgcg_hotspot_v70_auth` estavam ativos e referenciados
+  - o DNAT HTTP dos cativos estava presente
+  - o `REJECT` do Hotspot VLAN70 estava ficando depois das permissões globais de WhatsApp/redes sociais, permitindo caminho indevido para cliente não autenticado
+- estratégia corrigida:
+  - os módulos `backend/src/modules/collaborators/collaborators-routes.ts` e `backend/src/modules/hotspot/hotspot-routes.ts` passaram a remover duplicatas da própria regra e reinserir os cativos em posição calculada
+  - ordem incontestável de runtime:
+    - `sgcg-total-vlan-block`, quando ativo
+    - `sgcg-vip-bypass`
+    - portais cativos VLAN30/VLAN70
+    - permissões WhatsApp/redes sociais/políticas gerais
+  - a leitura da ordem passou a usar `iptables -S ... | grep -- "--comment ..."` para evitar estouro de buffer em `iptables-save -t nat`
+- allowlist do shell ajustada em `backend/src/utils/sys.ts`:
+  - leitura leve por comentário das cadeias `PREROUTING` e `FORWARD`
+  - deleção das regras Hotspot
+  - inserção numerada dinâmica das regras Colaboradores/Hotspot
+- aplicação executada:
+  - `cd backend && npm run build` concluído sem erros
+  - `ensureHotspotEnforcement()` executado no runtime compilado
+  - `ensureCollabEnforcement()` executado no runtime compilado
+  - `pm2 restart bcc-backend --update-env` concluído e processo voltou `online`
+- validação de firewall:
+  - `nat/PREROUTING` ficou com todos os `sgcg-vip-bypass` antes dos DNATs dos portais
+  - DNAT VLAN30 ficou na posição 9 e DNAT VLAN70 na posição 10 da listagem filtrada
+  - `filter/FORWARD` ficou com todos os `sgcg-vip-bypass` antes dos `REJECT` dos portais
+  - `REJECT` VLAN30 ficou antes de `SGCG WHATSAPP ALLOW`
+  - `REJECT` VLAN70 ficou antes de `SGCG WHATSAPP ALLOW`
+- validação HTTP:
+  - `GET http://192.168.30.1/api/collaborators/public/context` com `X-Forwarded-For: 192.168.30.250` retornou `authenticated=false`, `auth_required=true`, `requires_login=true`
+  - `HEAD http://192.168.30.1/generate_204` retornou `200 OK text/html`, servindo o portal
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.250` retornou `authenticated=false`, `requires_login=true`
+  - `HEAD http://192.168.70.1/generate_204` retornou `302` para `http://192.168.70.1/hotspot/portal`
+
+## Próximo passo recomendado
+
+- testar em um cliente real não autenticado nas VLANs 30 e 70:
+  - acesso HTTP deve cair no portal
+  - tentativa de WhatsApp/redes sociais antes do login deve ser barrada
+  - após autenticação, o IP deve entrar no ipset correto e navegar conforme a política da VLAN

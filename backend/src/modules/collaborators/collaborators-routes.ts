@@ -155,8 +155,44 @@ export async function ensureSchema() {
 
 // ─── Enforcement helpers ────────────────────────────────────────────────────
 
-async function ensureRule(check: string, insert: string) {
-    try { await execCmdStrict(check); } catch { await execCmdStrict(insert); }
+async function countRuntimeRulesWithComment(table: 'filter' | 'nat', chain: string, comment: string) {
+    const readCommand = table === 'nat'
+        ? `iptables -t nat -S ${chain} | grep -- "--comment ${comment}" || true`
+        : `iptables -S ${chain} | grep -- "--comment ${comment}" || true`;
+    const output = await execCmd(readCommand).catch(() => '');
+    return output
+        .split('\n')
+        .filter((line) => line.startsWith(`-A ${chain} `) && line.includes(`--comment ${comment}`))
+        .length;
+}
+
+async function getPortalInsertPosition(table: 'filter' | 'nat', chain: string) {
+    const totalBlockCount = await countRuntimeRulesWithComment(table, chain, 'sgcg-total-vlan-block');
+    const vipBypassCount = await countRuntimeRulesWithComment(table, chain, 'sgcg-vip-bypass');
+    return totalBlockCount + vipBypassCount + 1;
+}
+
+async function removeRuntimeRule(check: string, remove: string) {
+    while (true) {
+        try {
+            await execCmdStrict(check);
+            await execCmdStrict(remove);
+        } catch {
+            break;
+        }
+    }
+}
+
+async function ensureOrderedPortalRule(
+    table: 'filter' | 'nat',
+    chain: string,
+    check: string,
+    remove: string,
+    insertForPosition: (position: number) => string,
+) {
+    await removeRuntimeRule(check, remove);
+    const position = await getPortalInsertPosition(table, chain);
+    await execCmdStrict(insertForPosition(position));
 }
 
 async function isAuthRequired(): Promise<boolean> {
@@ -249,13 +285,19 @@ export async function ensureCollabEnforcement() {
     }
     await execCmdStrict(`ipset create ${COLLAB_AUTH_SET} hash:ip timeout ${COLLAB_SESSION_SECONDS} -exist`);
     await expireExpiredSessions();
-    await ensureRule(
+    await ensureOrderedPortalRule(
+        'nat',
+        'PREROUTING',
         `iptables -t nat -C PREROUTING -i ${COLLAB_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${COLLAB_AUTH_SET} src -j DNAT --to-destination ${COLLAB_GATEWAY_IP}:80`,
-        `iptables -t nat -I PREROUTING 1 -i ${COLLAB_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${COLLAB_AUTH_SET} src -j DNAT --to-destination ${COLLAB_GATEWAY_IP}:80`,
+        `iptables -t nat -D PREROUTING -i ${COLLAB_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${COLLAB_AUTH_SET} src -j DNAT --to-destination ${COLLAB_GATEWAY_IP}:80`,
+        (position) => `iptables -t nat -I PREROUTING ${position} -i ${COLLAB_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${COLLAB_AUTH_SET} src -j DNAT --to-destination ${COLLAB_GATEWAY_IP}:80`,
     );
-    await ensureRule(
+    await ensureOrderedPortalRule(
+        'filter',
+        'FORWARD',
         `iptables -C FORWARD -i ${COLLAB_VLAN_IFACE} -o ${COLLAB_WAN_IFACE} -m set ! --match-set ${COLLAB_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
-        `iptables -I FORWARD 1 -i ${COLLAB_VLAN_IFACE} -o ${COLLAB_WAN_IFACE} -m set ! --match-set ${COLLAB_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
+        `iptables -D FORWARD -i ${COLLAB_VLAN_IFACE} -o ${COLLAB_WAN_IFACE} -m set ! --match-set ${COLLAB_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
+        (position) => `iptables -I FORWARD ${position} -i ${COLLAB_VLAN_IFACE} -o ${COLLAB_WAN_IFACE} -m set ! --match-set ${COLLAB_AUTH_SET} src -j REJECT --reject-with icmp-port-unreachable`,
     );
     await pruneStaleIps();
 }

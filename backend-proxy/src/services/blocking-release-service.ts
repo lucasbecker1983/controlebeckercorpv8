@@ -174,6 +174,7 @@ const BASELINE_ALLOW_CATALOG = {
         'governancabrasil.com.br',
         'interno.empresafacil.pr.gov.br',
         'jacarezinho.pr.leg.br',
+        'appjacarezinho.govbr.cloud',
         'pncp.gov.br',
         'receita.pr.gov.br',
         'salas-apps-pr.sebrae.com.br',
