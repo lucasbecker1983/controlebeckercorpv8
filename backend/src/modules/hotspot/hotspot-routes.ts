@@ -482,6 +482,15 @@ router.use('/public', (_req, res, next) => {
     next();
 });
 
+router.get('/public/capport', (_req, res) => {
+    res.type('application/captive+json');
+    res.json({
+        captive: true,
+        'user-portal-url': 'http://192.168.70.1/hotspot/portal',
+        'venue-info-url': 'http://192.168.70.1/hotspot/portal',
+    });
+});
+
 router.get('/public/context', async (req, res) => {
     await ensureSchema();
     const ip = getClientIp(req);
@@ -503,26 +512,28 @@ router.get('/public/context', async (req, res) => {
     }
 
     const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address };
-    const revoked = await revokeActiveSessionsByDeviceMacOrIp(row.id, mac, ip, 'context_known_mac_requires_confirm').catch(() => null);
+    const session = await createSession(req, visitor, row, 'mac_auto', ip, mac, vlanId);
     await audit(
         req,
-        'hotspot_mac_recognized_confirmation_required',
+        'hotspot_mac_auto_login',
         true,
         { ip, mac, vlan_id: vlanId },
-        { visitor_id: visitor.id, device_id: row.id, revoked },
-        'Dispositivo reconhecido por MAC; confirmacao explicita exigida no portal.',
+        { visitor_id: visitor.id, device_id: row.id, session_id: session.id },
+        'Dispositivo reconhecido por MAC; sessao autorizada automaticamente no portal.',
     );
     res.json({
-        authenticated: false,
+        authenticated: true,
         recognized: true,
-        requires_confirm: true,
+        welcome_back: true,
+        requires_confirm: false,
         requires_login: false,
         ip,
         mac,
         vlan_id: vlanId,
         visitor: publicVisitor(visitor),
-        revoked,
-        message: `Bem-vindo, ${visitor.full_name}. Clique em Entrar na Internet para navegar.`,
+        session,
+        redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL,
+        message: `Bem-vindo de volta, ${visitor.full_name}. Seu dispositivo foi reconhecido automaticamente.`,
     });
 });
 

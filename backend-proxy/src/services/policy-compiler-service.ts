@@ -112,6 +112,9 @@ const normalizeIpv4Cidrs = (entries: string[]) => {
 
 const sha256 = (content: string) => crypto.createHash('sha256').update(content).digest('hex');
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const UNBOUND_TAGGED_RPZ_SUSPENDED = true;
+const UNBOUND_TAGGED_RPZ_SUSPENDED_MARKER = '# SGCG safe-mode: tagged RPZ suspended to preserve recursive DNS stability.';
+const UNBOUND_GLOBAL_RPZ_ACTIVE_MARKER = '# SGCG safe-mode: global RPZ remains active while tagged VLAN/VIP RPZ stays suspended.';
 const urlLiteralToRegex = (value: string) => {
     const normalized = String(value || '').trim();
     if (!normalized) return null;
@@ -244,6 +247,10 @@ export class PolicyCompilerService {
         return `vlan_${vlanId}`;
     }
 
+    private buildVipBypassTag() {
+        return 'vip_bypass';
+    }
+
     private compileScopes(
         blocks: PolicyRow[],
         allows: PolicyRow[],
@@ -343,6 +350,8 @@ export class PolicyCompilerService {
         const compilerIncludeLoaded = compilerIncludePresent
             && (unboundMainConfig.includes(env.unboundPolicyConf) || unboundMainConfig.includes('/etc/unbound/unbound.conf.d/*.conf'));
         const moduleConfigOk = compilerIncludeContent.includes('module-config: "respip validator iterator"');
+        const taggedRpzSuspended = compilerIncludeContent.includes(UNBOUND_TAGGED_RPZ_SUSPENDED_MARKER);
+        const globalRpzActive = compilerIncludeContent.includes(UNBOUND_GLOBAL_RPZ_ACTIVE_MARKER);
         const vipBypassReferenced = compilerIncludeContent.includes(`zonefile: "${env.vipConf}"`);
         const allowedReferenced = compilerIncludeContent.includes(`zonefile: "${env.whitelistFile}"`);
         const blockedReferenced = compilerIncludeContent.includes(`zonefile: "${env.blockedRpzFile}"`);
@@ -358,7 +367,7 @@ export class PolicyCompilerService {
                 compilerIncludePresent,
                 compilerIncludeLoaded,
                 moduleConfigOk,
-                rpzReferencesOk: false,
+                rpzReferencesOk: taggedRpzSuspended ? (!globalRpzActive || (allowedReferenced && blockedReferenced)) : false,
                 vipBypassReferenced,
                 allowedReferenced,
                 blockedReferenced,
@@ -389,7 +398,7 @@ export class PolicyCompilerService {
         const missingTaggedVpcFiles: string[] = [];
         const missingTaggedVpcTags: string[] = [];
 
-        if (!emergencyBypassActive) {
+        if (!emergencyBypassActive && !taggedRpzSuspended) {
             for (const entry of expectedTaggedVlans) {
                 const vlanId = entry.vlanId;
                 const allowPath = path.join(this.unboundPolicyDir, `allowlist-vlan-${vlanId}.rpz`);
@@ -418,7 +427,9 @@ export class PolicyCompilerService {
             compilerIncludePresent,
             compilerIncludeLoaded,
             moduleConfigOk,
-            rpzReferencesOk: emergencyBypassActive || (vipBypassReferenced && allowedReferenced && blockedReferenced),
+            rpzReferencesOk: emergencyBypassActive
+                || (taggedRpzSuspended ? (allowedReferenced && blockedReferenced) : false)
+                || (vipBypassReferenced && allowedReferenced && blockedReferenced),
             vipBypassReferenced,
             allowedReferenced,
             blockedReferenced,
@@ -548,8 +559,6 @@ export class PolicyCompilerService {
         const accessVlans = state.vlans
             .filter((vlan) => String(vlan.subnet_cidr || '').trim())
             .sort((left, right) => left.vlan_id - right.vlan_id);
-        const managedTags = compiled.managedVlans.map((vlan) => this.buildVlanTag(vlan.vlan_id)).join(' ');
-
         const unboundPolicyLines = [
             '# BeckerCorp Policy Compiler — gerado automaticamente',
             'server:',
@@ -560,19 +569,46 @@ export class PolicyCompilerService {
             '',
         ];
 
-        if (compiled.managedVlans.length) {
+        if (UNBOUND_TAGGED_RPZ_SUSPENDED) {
             unboundPolicyLines.push(
-                `    define-tag: "${managedTags}"`,
-                ...compiled.managedVlans.map((vlan) => `    access-control-tag: ${vlan.subnet_cidr} "${this.buildVlanTag(vlan.vlan_id)}"`),
+                UNBOUND_TAGGED_RPZ_SUSPENDED_MARKER,
+                UNBOUND_GLOBAL_RPZ_ACTIVE_MARKER,
+                '# VIP bypass por rpz-client-ip e RPZ por VLAN permanecem gerados em disco,',
+                '# mas nao sao anexados ao Unbound ate a causa do SERVFAIL global ser isolada.',
                 '',
+                'rpz:',
+                '    name: "rpz.allow.becker.local."',
+                `    zonefile: "${env.whitelistFile}"`,
+                '',
+                'rpz:',
+                '    name: "rpz.block.becker.local."',
+                `    zonefile: "${env.blockedRpzFile}"`,
+                '    rpz-log: yes',
+                '    rpz-log-name: "becker-blocked"',
+                '    rpz-action-override: nxdomain',
             );
-        }
+        } else if (mode !== 'acl-only' && !emergencyBypassActive) {
+            const managedTags = compiled.managedVlans.map((vlan) => this.buildVlanTag(vlan.vlan_id)).join(' ');
+            const vipBypassTag = this.buildVipBypassTag();
+            const definedTags = sortedUnique([
+                vipBypassTag,
+                ...compiled.managedVlans.map((vlan) => this.buildVlanTag(vlan.vlan_id)),
+            ]).join(' ');
 
-        if (mode !== 'acl-only' && !emergencyBypassActive) {
+            if (definedTags) {
+                unboundPolicyLines.push(
+                    `    define-tag: "${definedTags}"`,
+                    ...compiled.managedVlans.map((vlan) => `    access-control-tag: ${vlan.subnet_cidr} "${this.buildVlanTag(vlan.vlan_id)}"`),
+                    ...compiled.dnsBypassEntries.map((cidr) => `    access-control-tag: ${cidr} "${vipBypassTag}"`),
+                    '',
+                );
+            }
+
             unboundPolicyLines.push(
                 'rpz:',
                 '    name: "rpz.vippass.becker.local."',
                 `    zonefile: "${env.vipConf}"`,
+                `    tags: "${vipBypassTag}"`,
                 '',
                 ...dnsTaggedVlans.flatMap((vlan) => ([
                     'rpz:',

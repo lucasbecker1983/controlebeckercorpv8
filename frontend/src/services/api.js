@@ -17,6 +17,7 @@ const isPublicRoute = (requestUrl = '') => (
     isAuthRoute(requestUrl)
     || requestUrl.includes('/api/hotspot/public/')
     || requestUrl.includes('/api/collaborators/public/')
+    || requestUrl.includes('/api/support/public/')
 );
 
 export const api = axios.create({

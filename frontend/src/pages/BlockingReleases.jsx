@@ -14,6 +14,7 @@ import {
   Flame,
   Globe2,
   Layers3,
+  Loader2,
   Zap,
   Timer,
   MoreHorizontal,
@@ -93,6 +94,8 @@ const CONTINGENCY_PROVIDERS = [
   { key: 'cloudflare', label: 'Cloudflare' },
   { key: 'quad9', label: 'Quad9' },
 ];
+
+const PONTORH_OPENDNS_RESOLVERS = ['208.67.222.222', '208.67.220.220'];
 
 // ── DnsIgnoredTab ─────────────────────────────────────────────────────────────
 
@@ -289,10 +292,8 @@ function DnsIgnoredTab() {
 }
 
 const VIP_RUNTIME_BADGES = [
-  { label: 'VIP real', tone: 'primary' },
   { label: 'Firewall livre', tone: 'success' },
-  { label: 'Unbound recursivo liberado', tone: 'success' },
-  { label: 'RPZ passthrough', tone: 'warning' },
+  { label: 'DNS sem RPZ', tone: 'warning' },
   { label: 'Sem proxy', tone: 'neutral' },
 ];
 
@@ -1187,7 +1188,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
   );
 }
 
-function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
+function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep = 0 }) {
   const [form, setForm] = useState({
     ip: '',
     description: '',
@@ -1230,12 +1231,12 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
     <DialogShell
       open={open}
       title={item ? 'Editar VIP' : 'Adicionar VIP'}
-      subtitle="VIP é bypass total real: sai direto pelo firewall e pode usar o Unbound recursivo local sem bloqueios de RPZ, proxy ou interceptação."
+      subtitle="VIP é bypass total real: sai direto pelo firewall e pode usar qualquer DNS configurado na máquina, público, externo ou Unbound recursivo local, sem bloqueios de RPZ, proxy ou interceptação."
       onClose={onClose}
       size="max-w-3xl"
       footer={(
         <div className="flex flex-wrap justify-end gap-2">
-          <ActionButton onClick={onClose}>Cancelar</ActionButton>
+          <ActionButton onClick={onClose} disabled={saving}>Cancelar</ActionButton>
           <ActionButton
             tone="primary"
             onClick={() => onSubmit({
@@ -1268,16 +1269,22 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving }) {
       )}
     >
       <div className="space-y-5">
-        <ThemeAwareSurface tone="primary" className="p-5">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Impacto automático de VIP real</div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {VIP_RUNTIME_BADGES.map((badge) => (
-              <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
-            ))}
+        <OperationProgress
+          title="Aplicando VIP em todas as camadas"
+          steps={VIP_PROGRESS_STEPS}
+          active={saving}
+          currentStep={progressStep}
+        />
+        <ThemeAwareSurface tone="warning" className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm font-black text-on-surface">Exceção forte de navegação</div>
+            <p className="mt-1 text-sm leading-5 text-on-surface/62">
+              O IP fica fora dos bloqueios comuns e a sincronização técnica ocorre ao salvar.
+            </p>
           </div>
-          <p className="mt-4 text-sm leading-6 text-on-surface/68">
-            Salvar aqui já transforma o IP em exceção administrativa forte em todas as camadas gerenciadas pelo módulo.
-          </p>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            {VIP_RUNTIME_BADGES.map((badge) => <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />)}
+          </div>
         </ThemeAwareSurface>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
@@ -1697,7 +1704,59 @@ const SPORADIC_DURATIONS = [
   { value: 1440, label: '1 dia' },
 ];
 
-function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving }) {
+const SPORADIC_PROGRESS_STEPS = [
+  'Registrando exceção temporária',
+  'Reforçando VIP e bypass do IP',
+  'Atualizando DNS/RPZ e ACLs',
+  'Recarregando enforcement',
+  'Atualizando a tela',
+];
+
+const VIP_PROGRESS_STEPS = [
+  'Salvando cadastro VIP',
+  'Reforçando bypass total do IP',
+  'Atualizando Unbound recursivo e proxy',
+  'Recarregando enforcement',
+  'Atualizando a tela',
+];
+
+function OperationProgress({ title, steps = [], active = false, currentStep = 0 }) {
+  if (!active) return null;
+  const boundedStep = Math.min(Math.max(currentStep, 0), steps.length - 1);
+  const progress = Math.max(8, Math.round(((boundedStep + 1) / Math.max(steps.length, 1)) * 100));
+
+  return (
+    <ThemeAwareSurface tone="warning" className="p-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-orange-500/20 bg-orange-500/10 text-warning">
+          <Loader2 size={18} className="animate-spin" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-on-surface">{title}</div>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
+            <div className="h-full rounded-full bg-orange-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+          </div>
+          <div className="mt-3 grid gap-2">
+            {steps.map((step, index) => (
+              <div
+                key={step}
+                className={cx(
+                  'flex items-center gap-2 text-xs font-semibold transition',
+                  index <= boundedStep ? 'text-on-surface' : 'text-on-surface/42',
+                )}
+              >
+                {index < boundedStep ? <CheckCircle2 size={14} className="text-info" /> : index === boundedStep ? <Loader2 size={14} className="animate-spin text-warning" /> : <Clock3 size={14} />}
+                <span>{step}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </ThemeAwareSurface>
+  );
+}
+
+function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progressStep = 0 }) {
   const emptyForm = {
     ip: '',
     requested_by: '',
@@ -1747,7 +1806,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving }) {
       size="max-w-2xl"
       footer={(
         <div className="flex flex-wrap justify-end gap-2">
-          <ActionButton onClick={onClose}>Cancelar</ActionButton>
+          <ActionButton onClick={onClose} disabled={saving}>Cancelar</ActionButton>
           <ActionButton tone="warning" onClick={handleSubmit} disabled={saving || !isValid}>
             {saving ? 'Salvando e aplicando...' : 'Salvar e aplicar agora'}
           </ActionButton>
@@ -1755,6 +1814,12 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving }) {
       )}
     >
       <div className="space-y-5">
+        <OperationProgress
+          title="Aplicando exceção esporádica"
+          steps={SPORADIC_PROGRESS_STEPS}
+          active={saving}
+          currentStep={progressStep}
+        />
         <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
           <div className="flex items-start gap-3">
             <Zap size={18} className="mt-0.5 shrink-0 text-warning" />
@@ -2139,6 +2204,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const [contingencyEditor, setContingencyEditor] = useState({ open: false, mode: 'activate' });
   const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', subtitle: '', bullets: [], tone: 'warning', confirmLabel: 'Confirmar', action: null });
   const [working, setWorking] = useState({ policy: false, vip: false, sporadic: false, contingency: false, engine: false, audit: false });
+  const [operationProgress, setOperationProgress] = useState({ vip: 0, sporadic: 0 });
   const [policySearch, setPolicySearch] = useState('');
   const [policyFilters, setPolicyFilters] = useState({ type: 'all', status: 'all', scope: 'all' });
   const [vlanSearch, setVlanSearch] = useState('');
@@ -2152,6 +2218,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const [vipSearch, setVipSearch] = useState('');
   const [auditSearch, setAuditSearch] = useState('');
   const [auditFilters, setAuditFilters] = useState({ period: '24h', action: 'all', vlan: 'all', source: 'all' });
+  const [observabilityFocus, setObservabilityFocus] = useState('');
   const [radarSearch, setRadarSearch] = useState('');
   const [radarFilters, setRadarFilters] = useState({ window: '10', action: 'all', source: 'all', vlan: 'all' });
   const deferredPolicySearch = useDeferredValue(policySearch);
@@ -2189,6 +2256,11 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     setSearchParams(nextParams, { replace: true });
   };
 
+  const openObservabilityAudit = () => {
+    setObservabilityFocus('audit');
+    startTransition(() => handleTabChange('observability'));
+  };
+
   const requestAction = async (endpoint, method = 'POST', body) => {
     const response = await authFetch(`${API}/api/bloqueios-liberacoes/${endpoint}`, {
       method,
@@ -2199,6 +2271,20 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       throw new Error(payload.error || 'Falha operacional');
     }
     return payload;
+  };
+
+  const beginOperationProgress = (key, steps) => {
+    let step = 0;
+    setOperationProgress((current) => ({ ...current, [key]: 0 }));
+    const timer = window.setInterval(() => {
+      step = Math.min(step + 1, Math.max(steps.length - 2, 0));
+      setOperationProgress((current) => ({ ...current, [key]: step }));
+    }, 850);
+
+    return () => {
+      window.clearInterval(timer);
+      setOperationProgress((current) => ({ ...current, [key]: Math.max(steps.length - 1, 0) }));
+    };
   };
 
   const runAction = async (endpoint, method = 'POST', body, options = { reload: true }) => {
@@ -2427,50 +2513,136 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     </>
   );
 
-  const quickActionItems = [
+  const quickActionGroups = [
     {
-      label: 'Editar global',
-      tone: 'primary',
-      icon: Layers3,
-      onClick: () => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' }),
+      label: 'Governança',
+      items: [
+        {
+          label: 'Política',
+          title: 'Nova política institucional',
+          tone: 'primary',
+          icon: Plus,
+          onClick: () => setPolicyEditor({ open: true, item: null }),
+        },
+        {
+          label: 'Escopo global',
+          title: 'Editar política global',
+          tone: 'ghost',
+          icon: Layers3,
+          onClick: () => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' }),
+        },
+        {
+          label: 'VIP',
+          title: 'Adicionar exceção VIP',
+          tone: 'warning',
+          icon: ShieldAlert,
+          onClick: () => setVipEditor({ open: true, item: null }),
+        },
+      ],
     },
     {
-      label: 'Nova política',
-      tone: 'success',
-      icon: Plus,
-      onClick: () => setPolicyEditor({ open: true, item: null }),
-    },
-    {
-      label: 'Adicionar VIP',
-      tone: 'warning',
-      icon: Plus,
-      onClick: () => setVipEditor({ open: true, item: null }),
-    },
-    {
-      label: emergencyBypassActive ? 'Emergência OFF' : 'Emergência ON',
-      tone: 'danger',
-      icon: ShieldAlert,
-      onClick: () => openEmergencyBypassDialog(!emergencyBypassActive),
+      label: 'Operação',
+      items: [
+        {
+          label: 'Aplicar',
+          title: 'Aplicar políticas agora',
+          tone: 'success',
+          icon: Power,
+          disabled: working.engine,
+          onClick: () => runEngineAction('apply', 'Políticas aplicadas.'),
+        },
+        {
+          label: 'Atualizar',
+          title: 'Recarregar leitura do módulo',
+          tone: 'ghost',
+          icon: RefreshCcw,
+          disabled: loading || loadingState.critical,
+          onClick: () => loadAll().then(() => flash('Status atualizado.', 'success')).catch((error) => flash(error.message || 'Falha ao atualizar.', 'danger')),
+        },
+        {
+          label: 'Auditoria',
+          title: 'Abrir observabilidade e trilhas',
+          tone: 'ghost',
+          icon: ScrollText,
+          onClick: openObservabilityAudit,
+        },
+      ],
     },
     {
       label: 'Contingência',
-      tone: contingencyActive ? 'danger' : 'neutral',
-      icon: Flame,
-      onClick: () => startTransition(() => handleTabChange('contingency')),
-    },
-    {
-      label: 'Apply',
-      tone: 'success',
-      icon: Power,
-      onClick: () => runEngineAction('apply', 'Políticas aplicadas.'),
-    },
-    {
-      label: 'Atualizar',
-      tone: 'ghost',
-      icon: RefreshCcw,
-      onClick: () => loadAll().then(() => flash('Status atualizado.', 'success')).catch((error) => flash(error.message || 'Falha ao atualizar.', 'danger')),
+      items: [
+        {
+          label: contingencyActive ? 'DNS ativo' : 'DNS reserva',
+          title: 'Abrir contingência DNS',
+          tone: contingencyActive ? 'danger' : 'neutral',
+          icon: Flame,
+          onClick: () => startTransition(() => handleTabChange('contingency')),
+        },
+        {
+          label: emergencyBypassActive ? 'Encerrar emergência' : 'Emergência',
+          title: emergencyBypassActive ? 'Desativar bypass emergencial' : 'Ativar bypass emergencial',
+          tone: 'danger',
+          icon: TriangleAlert,
+          onClick: () => openEmergencyBypassDialog(!emergencyBypassActive),
+        },
+      ],
     },
   ];
+
+  const quickActionsPanel = (
+    <ThemeAwareSurface className="p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div>
+          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/46">Comando</div>
+          <div className="mt-1 text-sm font-black text-on-surface">Ações rápidas</div>
+        </div>
+        <StateBadge
+          label={emergencyBypassActive ? 'Emergência' : contingencyActive ? 'Contingência' : 'Normal'}
+          tone={emergencyBypassActive ? 'danger' : contingencyActive ? 'warning' : 'success'}
+        />
+        <div className="flex flex-wrap gap-2">
+          <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
+            <span className="text-[11px] font-semibold text-on-surface/52">Motor</span>
+            <span className="ml-2 text-sm font-black text-on-surface">{MODE_LABELS[engineMode] || engineMode}</span>
+          </div>
+          <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
+            <span className="text-[11px] font-semibold text-on-surface/52">VIPs</span>
+            <span className="ml-2 text-sm font-black text-on-surface">{activeVips.length}</span>
+          </div>
+          <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
+            <span className="text-[11px] font-semibold text-on-surface/52">Escopo</span>
+            <span className="ml-2 text-sm font-black text-on-surface">{managedVlanIds.length} VLANs</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
+        {quickActionGroups.map((group) => (
+          <div key={group.label} className="min-w-[260px] flex-1 rounded-2xl border border-outline/12 bg-surface-high/42 p-3">
+            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-on-surface/42">{group.label}</div>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {group.items.map((item) => (
+                <ActionButton
+                  key={`${group.label}-${item.label}`}
+                  tone={item.tone}
+                  icon={item.icon}
+                  title={item.title}
+                  disabled={item.disabled}
+                  onClick={item.onClick}
+                  className={cx(
+                    'min-h-10 justify-start rounded-2xl px-3 shadow-none',
+                    group.label === 'Contingência' && item.tone === 'danger' ? 'border-danger/24 bg-danger/12' : '',
+                  )}
+                >
+                  {item.label}
+                </ActionButton>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </ThemeAwareSurface>
+  );
 
   const overviewCards = [
     {
@@ -2909,6 +3081,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
   const saveVip = async (form) => {
     setWorking((current) => ({ ...current, vip: true }));
+    const finishProgress = beginOperationProgress('vip', VIP_PROGRESS_STEPS);
     try {
       const payload = {
         ip: form.ip.trim(),
@@ -2931,18 +3104,30 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         active: vipEditor.item ? Boolean(vipEditor.item.active) : true,
       };
 
+      let saved;
       if (vipEditor.item?.id) {
-        await requestAction(`exceptions/${vipEditor.item.id}`, 'PATCH', payload);
+        saved = await requestAction(`exceptions/${vipEditor.item.id}`, 'PATCH', payload);
       } else {
-        await requestAction('exceptions', 'POST', payload);
+        saved = await requestAction('exceptions', 'POST', payload);
       }
 
-      await loadAll();
+      if (saved?.id) {
+        setData((current) => {
+          const existing = current.exceptions || [];
+          const nextExceptions = vipEditor.item?.id
+            ? existing.map((entry) => String(entry.id) === String(saved.id) ? saved : entry)
+            : [saved, ...existing.filter((entry) => String(entry.id) !== String(saved.id))];
+          return { ...current, exceptions: nextExceptions };
+        });
+      }
+      finishProgress();
+      loadAll().catch((error) => flash(error.message || 'VIP salvo, mas houve falha ao atualizar dados secundários.', 'warning'));
       setVipEditor({ open: false, item: null });
       flash(vipEditor.item ? 'VIP atualizado com bypass total real.' : 'VIP criado com firewall livre e Unbound recursivo liberado.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao salvar VIP.', 'danger');
     } finally {
+      finishProgress();
       setWorking((current) => ({ ...current, vip: false }));
     }
   };
@@ -2972,14 +3157,26 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
   const saveSporadicException = async (form) => {
     setWorking((current) => ({ ...current, sporadic: true }));
+    const finishProgress = beginOperationProgress('sporadic', SPORADIC_PROGRESS_STEPS);
     try {
-      await requestAction('sporadic-exceptions', 'POST', form);
-      await loadAll();
+      const created = await requestAction('sporadic-exceptions', 'POST', form);
+      if (created?.id) {
+        setData((current) => ({
+          ...current,
+          sporadicExceptions: [
+            created,
+            ...(current.sporadicExceptions || []).filter((entry) => String(entry.id) !== String(created.id)),
+          ],
+        }));
+      }
+      finishProgress();
+      loadAll().catch((error) => flash(error.message || 'Exceção criada, mas houve falha ao atualizar dados secundários.', 'warning'));
       setSporadicEditor({ open: false });
       flash('Exceção esporádica criada e motor atualizado imediatamente.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao criar exceção esporádica.', 'danger');
     } finally {
+      finishProgress();
       setWorking((current) => ({ ...current, sporadic: false }));
     }
   };
@@ -3182,6 +3379,15 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   }, [activeTab, loading, radarFilters.window]);
 
   useEffect(() => {
+    if (activeTab !== 'observability' || loading || observabilityFocus !== 'audit') return undefined;
+    const timer = window.setTimeout(() => {
+      document.getElementById('observability-audit')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setObservabilityFocus('');
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [activeTab, loading, observabilityFocus]);
+
+  useEffect(() => {
     if (activeTab !== 'observability' || loading) return undefined;
     const token = localStorage.getItem('becker_token') || '';
     const es = new EventSource(`/api/dns/radar/live?token=${encodeURIComponent(token)}`);
@@ -3259,6 +3465,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         onClose={() => setVipEditor({ open: false, item: null })}
         onSubmit={saveVip}
         saving={working.vip}
+        progressStep={operationProgress.vip}
       />
 
       <SporadicExceptionEditorDialog
@@ -3266,6 +3473,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         onClose={() => setSporadicEditor({ open: false })}
         onSubmit={saveSporadicException}
         saving={working.sporadic}
+        progressStep={operationProgress.sporadic}
       />
 
       <VlanEditorDialog
@@ -3308,20 +3516,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         title={currentContext.title}
         description={currentContext.description}
         badges={headerBadges}
-        aside={(
-          <ThemeAwareSurface className="p-[var(--spacing-card)]">
-            <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Ações rápidas</div>
-            <div className="mt-3.5">
-              <QuickActionBar items={quickActionItems} />
-            </div>
-            <div className="mt-4 grid gap-2.5 sm:grid-cols-3 2xl:grid-cols-1">
-              <InlineStat label="Motor" value={MODE_LABELS[engineMode] || engineMode} tone="primary" />
-              <InlineStat label="VIPs ativos" value={activeVips.length} tone="warning" />
-              <InlineStat label="Escopo" value={`${managedVlanIds.length} VLANs válidas`} tone="success" />
-            </div>
-          </ThemeAwareSurface>
-        )}
       />
+
+      {quickActionsPanel}
 
       {banner ? (
         <ListRow className={banner.tone === 'danger'
@@ -3492,24 +3689,45 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       {!loading && activeTab === 'policies' ? (
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
-            title="Políticas nomeadas"
-            subtitle="Catálogo institucional de bloqueios e liberações por domínio, com leitura clara de escopo, status e justificativa."
+            title="Políticas Institucionais"
+            subtitle="Regras de bloqueio e liberação por domínio, organizadas por escopo e status."
             actions={<ActionButton tone="primary" icon={Plus} onClick={() => setPolicyEditor({ open: true, item: null })}>Nova Política</ActionButton>}
           >
             <div className="space-y-4 xl:space-y-5">
-              <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
-                <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr] xl:items-center">
-                  <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Fluxo de governança</div>
-                    <div className="mt-2 text-lg font-black text-on-surface">Nomear a política, definir o escopo e justificar a decisão</div>
-                    <div className="mt-2 text-sm leading-6 text-on-surface/68">
-                      Use esta tela para formalizar decisões como liberar um sistema institucional, bloquear uma plataforma social ou limitar uma regra a uma VLAN específica sem expor detalhes técnicos desnecessários.
+              <ThemeAwareSurface className="p-4">
+                <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="min-w-0">
+                    <div className="text-sm font-black text-on-surface">Catálogo de decisões</div>
+                    <div className="mt-1 max-w-3xl text-sm leading-5 text-on-surface/62">
+                      Cada política reúne domínios, escopo, situação e justificativa em um único registro.
                     </div>
                   </div>
-                  <div className="grid gap-2.5 sm:grid-cols-3 xl:grid-cols-1">
-                    <InlineStat label="Políticas" value={(data.domainPolicies || []).length} tone="primary" />
+                  <div className="grid gap-2 sm:grid-cols-3 xl:min-w-[460px]">
+                    <InlineStat label="Total" value={(data.domainPolicies || []).length} tone="primary" />
                     <InlineStat label="Ativas" value={(data.domainPolicies || []).filter((item) => item.enabled).length} tone="success" />
                     <InlineStat label="Inativas" value={(data.domainPolicies || []).filter((item) => !item.enabled).length} tone="neutral" />
+                  </div>
+                </div>
+              </ThemeAwareSurface>
+
+              <ThemeAwareSurface tone="warning" className="p-4 sm:p-5">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TriangleAlert size={18} className="text-amber-700" />
+                      <span className="text-sm font-black text-on-surface">Regra inegociável do PontoRH</span>
+                      <StateBadge label="Compatibilidade institucional" tone="warning" />
+                      <StateBadge label="VIP incluído" tone="danger" />
+                    </div>
+                    <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
+                      O aplicativo de registro de jornada usa DNS hardcoded e precisa consultar diretamente os resolvedores OpenDNS abaixo.
+                      Essas consultas não podem depender do Unbound nem ser capturadas pelo redirecionamento global de DNS do SGCG.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {PONTORH_OPENDNS_RESOLVERS.map((resolver) => (
+                      <StateBadge key={resolver} label={resolver} tone="warning" className="px-3.5 py-1.5" />
+                    ))}
                   </div>
                 </div>
               </ThemeAwareSurface>
@@ -3819,93 +4037,82 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         <div className="space-y-5 xl:space-y-6">
           <SectionCard
             title="Exceções VIP"
-            subtitle="VIP representa exceção total controlada: firewall livre, Unbound recursivo local sem bloqueio de RPZ e fora de proxy/interceptação."
+            subtitle="Lista operacional de IPs com bypass total controlado."
             actions={<ActionButton tone="warning" icon={Plus} onClick={() => setVipEditor({ open: true, item: null })}>Adicionar VIP</ActionButton>}
           >
-            <div className="grid gap-5 2xl:grid-cols-[0.82fr_1.18fr]">
-              <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Impacto técnico da exceção</div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {VIP_RUNTIME_BADGES.map((badge) => (
-                    <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
-                  ))}
+            <div className="space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+                <div className="relative">
+                  <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/40" />
+                  <TextInput value={vipSearch} onChange={(event) => setVipSearch(event.target.value)} placeholder="Buscar por IP, descrição, solicitante ou motivo" className="pl-11" />
                 </div>
-                <p className="mt-4 text-sm leading-7 text-on-surface/68">
-                  Cadastrar nesta área significa que o IP não segue bloqueio comum por domínio, pode continuar usando o Unbound recursivo local
-                  com passthrough de RPZ e também pode sair direto pela WAN se houver DNS manual configurado no aparelho.
-                </p>
-                <div className="mt-4 grid gap-2.5 md:grid-cols-2 2xl:grid-cols-1">
-                  <InlineStat label="VIPs ativos" value={activeVips.length} tone="warning" />
-                  <InlineStat label="VIPs inativos" value={(data.exceptions || []).filter((row) => !row.active).length} tone="neutral" />
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <InlineStat label="Ativos" value={activeVips.length} tone="warning" />
+                  <InlineStat label="Inativos" value={(data.exceptions || []).filter((row) => !row.active).length} tone="neutral" />
+                  <InlineStat label="Exibidos" value={filteredVips.length} tone="primary" />
                 </div>
-                <div className="mt-4 rounded-[22px] border border-outline/14 bg-surface/58 px-4 py-3 text-sm leading-6 text-on-surface/62">
-                  Salvar um VIP sincroniza o runtime imediatamente: ACCEPT total no firewall, bypass explícito no Squid, passthrough RPZ e retorno antes da interceptação seletiva.
-                </div>
-              </ThemeAwareSurface>
+              </div>
 
-              <div className="space-y-3.5 xl:space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="relative flex-1">
-                    <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface/40" />
-                    <TextInput value={vipSearch} onChange={(event) => setVipSearch(event.target.value)} placeholder="Buscar VIP por IP, descrição ou motivo" className="pl-11" />
-                  </div>
-                  <StateBadge label={`${filteredVips.length} resultado(s)`} tone="neutral" />
-                </div>
+              <div className="flex flex-wrap items-center gap-2 border-y border-outline/10 py-3">
+                <span className="text-xs font-semibold text-on-surface/55">Bypass aplicado:</span>
+                {VIP_RUNTIME_BADGES.map((badge) => <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />)}
+              </div>
 
-                <div className="space-y-2.5">
-                  {filteredVips.length ? filteredVips.map((item) => (
-                    (() => {
+              <div className="overflow-hidden rounded-[calc(var(--surface-radius)-2px)] border border-outline/12 bg-surface-high/42">
+                {filteredVips.length ? (
+                  <div className="divide-y divide-outline/10">
+                    {filteredVips.map((item) => {
                       const governance = governanceFromRecord(item, item.notes || item.reason || '');
+                      const title = item.description || item.hostname || 'Sem descrição';
+                      const owner = governance.requested_by || item.responsible || 'Sem responsável';
+                      const lifecycle = governance.lifecycle_status || (item.active ? 'Em vigor' : 'Inativo');
+                      const detailLine = [
+                        item.vlan_id ? `VLAN ${item.vlan_id}` : 'Sem VLAN fixa',
+                        `Atualizado ${formatDate(item.updated_at || item.created_at)}`,
+                        governance.review_date ? `Revisão ${governance.review_date}` : '',
+                      ].filter(Boolean).join(' • ');
+
                       return (
-                    <ListRow key={item.id}>
-                      <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-lg font-black text-on-surface">{item.ip}</span>
-                            <StateBadge label={item.active ? 'Ativo' : 'Inativo'} tone={item.active ? 'warning' : 'neutral'} />
-                            {VIP_RUNTIME_BADGES.slice(0, 4).map((badge) => (
-                              <VipImpactBadge key={badge.label} label={badge.label} tone={badge.tone} />
-                            ))}
-                          </div>
-                          <div className="mt-2 text-sm font-semibold text-on-surface">{item.description || item.hostname || 'Sem descrição'}</div>
-                          <div className="mt-2 text-sm leading-6 text-on-surface/62">{governance.summary || 'Sem motivo informado.'}</div>
-                          {(governance.legal_basis || governance.requested_by || governance.approval_scope || governance.review_date || governance.approved_by || governance.effective_from || governance.expires_at || governance.revoked_by) ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {governance.legal_basis ? <StateBadge label={`Base legal: ${governance.legal_basis}`} tone="neutral" /> : null}
-                              {governance.requested_by ? <StateBadge label={`Solicitante: ${governance.requested_by}`} tone="primary" /> : null}
-                              {governance.approval_scope ? <StateBadge label={`Aprovação: ${governance.approval_scope}`} tone="warning" /> : null}
-                              {governance.lifecycle_status ? <StateBadge label={`Status: ${governance.lifecycle_status}`} tone={governanceStatusTone(governance.lifecycle_status)} /> : null}
-                              {governance.review_date ? <StateBadge label={`Revisão: ${governance.review_date}`} tone="success" /> : null}
-                              {governance.approved_by ? <StateBadge label={`Aprovado por: ${governance.approved_by}`} tone="success" /> : null}
-                              {governance.effective_from ? <StateBadge label={`Vigência: ${formatDate(governance.effective_from)}`} tone="primary" /> : null}
-                              {governance.expires_at ? <StateBadge label={`Expira: ${formatDate(governance.expires_at)}`} tone="warning" /> : null}
-                              {governance.revoked_by ? <StateBadge label={`Revogado por: ${governance.revoked_by}`} tone="danger" /> : null}
+                        <div key={item.id} className={cx('grid gap-3 px-4 py-3 transition hover:bg-surface/72 lg:grid-cols-[minmax(150px,0.75fr)_minmax(220px,1.2fr)_minmax(160px,0.8fr)_auto] lg:items-center', !item.active && 'opacity-58')}>
+                          <div className="min-w-0">
+                            <div className="font-mono text-sm font-black text-on-surface">{item.ip}</div>
+                            <div className="mt-1 flex flex-wrap gap-1.5">
+                              <StateBadge label={item.active ? 'Ativo' : 'Inativo'} tone={item.active ? 'warning' : 'neutral'} />
+                              <StateBadge label={lifecycle} tone={governanceStatusTone(lifecycle)} />
                             </div>
-                          ) : null}
-                          <div className="mt-3 text-xs uppercase tracking-[0.16em] text-on-surface/45">
-                            Última alteração {formatDate(item.updated_at || item.created_at)}{item.vlan_id ? ` • VLAN ${item.vlan_id}` : ''}
+                          </div>
+
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-black text-on-surface">{title}</div>
+                            <div className="mt-1 line-clamp-2 text-sm leading-5 text-on-surface/58">{governance.summary || item.notes || 'Sem motivo informado.'}</div>
+                          </div>
+
+                          <div className="min-w-0 text-sm text-on-surface/62">
+                            <div className="truncate font-semibold text-on-surface/78">{owner}</div>
+                            <div className="mt-1 truncate text-xs text-on-surface/45">{detailLine}</div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2 lg:justify-end">
+                            <ActionButton tone="ghost" icon={Pencil} onClick={() => setVipEditor({ open: true, item })}>Editar</ActionButton>
+                            <ActionButton tone={item.active ? 'neutral' : 'success'} icon={Power} onClick={() => toggleVip(item)}>
+                              {item.active ? 'Desativar' : 'Ativar'}
+                            </ActionButton>
+                            <ActionButton tone="danger" icon={Ban} onClick={() => removeVip(item)}>Remover</ActionButton>
                           </div>
                         </div>
-                        <div className="flex flex-wrap gap-2">
-                          <ActionButton tone="primary" icon={Pencil} onClick={() => setVipEditor({ open: true, item })}>Editar</ActionButton>
-                          <ActionButton tone={item.active ? 'neutral' : 'success'} icon={Power} onClick={() => toggleVip(item)}>
-                            {item.active ? 'Desativar' : 'Ativar'}
-                          </ActionButton>
-                          <ActionButton tone="danger" icon={Ban} onClick={() => removeVip(item)}>Remover</ActionButton>
-                        </div>
-                      </div>
-                    </ListRow>
                       );
-                    })()
-                  )) : (
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-6">
                     <EmptyStateBlock
                       icon={ShieldAlert}
                       title="Nenhum VIP encontrado"
-                      description="Crie um VIP para garantir firewall livre, Unbound recursivo liberado e saída fora de proxy/interceptação."
+                      description="Ajuste a busca ou cadastre um novo IP com bypass controlado."
                       action={<ActionButton tone="warning" icon={Plus} onClick={() => setVipEditor({ open: true, item: null })}>Adicionar VIP</ActionButton>}
                     />
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </SectionCard>
@@ -4289,19 +4496,20 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             </div>
           </SectionCard>
 
-          <SectionCard
-            title="Relatório de Dados"
-            subtitle="Leitura central de governança de dados para identificar quem acessou o quê, em qual rede, com qual decisão aplicada e sob qual política institucional."
-            actions={(
-              <QuickActionBar
-                items={[
-                  { label: 'Filtrar', tone: 'primary', icon: Filter, onClick: loadOperationalAudit },
-                  { label: 'Exportar evidências em PDF', tone: 'success', icon: Download, onClick: exportAuditPdf },
-                ]}
-              />
-            )}
-          >
-            <div className="space-y-4 xl:space-y-5">
+          <div id="observability-audit" className="scroll-mt-6">
+            <SectionCard
+              title="Relatório de Dados"
+              subtitle="Leitura central de governança de dados para identificar quem acessou o quê, em qual rede, com qual decisão aplicada e sob qual política institucional."
+              actions={(
+                <QuickActionBar
+                  items={[
+                    { label: 'Filtrar', tone: 'primary', icon: Filter, onClick: loadOperationalAudit },
+                    { label: 'Exportar evidências em PDF', tone: 'success', icon: Download, onClick: exportAuditPdf },
+                  ]}
+                />
+              )}
+            >
+              <div className="space-y-4 xl:space-y-5">
               <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
                 <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr] xl:items-center">
                   <div>
@@ -4400,8 +4608,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   />
                 )}
               </div>
-            </div>
-          </SectionCard>
+              </div>
+            </SectionCard>
+          </div>
 
           <SectionCard title="Trilha administrativa" subtitle="Mudanças feitas por operadores: políticas, apply, rollback e ações administrativas.">
             <div className="space-y-2.5">

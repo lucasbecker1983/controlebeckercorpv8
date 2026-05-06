@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, FileCheck2, Loader2, LockKeyhole, ShieldCheck, UserPlus, Wifi } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, FileCheck2, Loader2, LogIn, ShieldCheck, UserPlus, Wifi } from 'lucide-react';
 import { api } from '../services/api';
 
 const emptyRegister = {
@@ -7,6 +7,7 @@ const emptyRegister = {
   cpf: '',
   birth_date: '',
   password: '',
+  lgpd_accepted: false,
 };
 
 const emptyLogin = {
@@ -20,7 +21,7 @@ function redirectAfterAuthentication(data) {
   const target = data?.redirect_url || DEFAULT_SUCCESS_REDIRECT_URL;
   window.setTimeout(() => {
     window.location.assign(target);
-  }, 800);
+  }, data?.welcome_back ? 2500 : 800);
 }
 
 function formatCpf(value) {
@@ -32,18 +33,34 @@ function formatCpf(value) {
 }
 
 function Field({ label, value, onChange, type = 'text', autoComplete, placeholder, ...inputProps }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === 'password';
+
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-bold text-slate-700">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        {...inputProps}
-        className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-950 outline-none transition focus:border-sky-800 focus:ring-4 focus:ring-sky-800/12"
-      />
+      <div className="relative">
+        <input
+          type={isPassword && showPassword ? 'text' : type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          {...inputProps}
+          className={`h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-base text-slate-950 outline-none transition focus:border-sky-800 focus:ring-4 focus:ring-sky-800/12 ${isPassword ? 'pr-12' : ''}`}
+        />
+        {isPassword ? (
+          <button
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            className="absolute right-2 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-800/30"
+            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+            title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          >
+            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        ) : null}
+      </div>
     </label>
   );
 }
@@ -152,7 +169,7 @@ function TermsView({ onBack }) {
 }
 
 export default function HotspotPortal() {
-  const [mode, setMode] = useState('register');
+  const [mode, setMode] = useState('login');
   const [view, setView] = useState('connect');
   const [registerForm, setRegisterForm] = useState(emptyRegister);
   const [loginForm, setLoginForm] = useState(emptyLogin);
@@ -174,7 +191,7 @@ export default function HotspotPortal() {
       const res = await api.get('/api/hotspot/public/context');
       setContext(res.data);
       if (res.data?.authenticated) {
-        setStatus({ type: 'success', message: 'Acesso institucional reconhecido automaticamente para este dispositivo.' });
+        setStatus({ type: 'success', message: res.data?.message || 'Acesso institucional reconhecido automaticamente para este dispositivo.' });
         redirectAfterAuthentication(res.data);
       } else if (res.data?.recognized && res.data?.requires_confirm) {
         setStatus({ type: 'success', message: res.data?.message || `Bem-vindo, ${res.data?.visitor?.full_name || 'visitante'}. Clique em Entrar na Internet para navegar.` });
@@ -210,15 +227,19 @@ export default function HotspotPortal() {
 
   const submitRegister = async (event) => {
     event.preventDefault();
+    if (!registerForm.lgpd_accepted) {
+      setStatus({ type: 'danger', message: 'Para concluir o cadastro, aceite os termos e a política de tratamento de dados pessoais.' });
+      return;
+    }
     setSubmitting(true);
     try {
-      const res = await api.post('/api/hotspot/public/register', {
+      await api.post('/api/hotspot/public/register', {
         ...registerForm,
         cpf: registerForm.cpf.replace(/\D/g, ''),
       });
-      setContext(res.data);
-      setStatus({ type: 'success', message: 'Cadastro institucional concluído. Este dispositivo foi associado ao seu acesso.' });
-      redirectAfterAuthentication(res.data);
+      setRegisterForm(emptyRegister);
+      setMode('login');
+      setStatus({ type: 'success', message: 'Cadastro institucional concluído. Faça login para continuar a navegação neste dispositivo.' });
     } catch (error) {
       setStatus({ type: 'danger', message: error?.response?.data?.error || 'Falha ao concluir cadastro.' });
     } finally {
@@ -248,14 +269,17 @@ export default function HotspotPortal() {
     <main className="min-h-screen bg-slate-100 text-slate-950">
       <section className="mx-auto flex min-h-screen w-full max-w-3xl flex-col px-4 py-5 sm:px-6 sm:py-8">
         <header className="overflow-hidden rounded-lg border border-sky-950/10 bg-white shadow-lg">
-          <div className="bg-sky-950 px-4 py-4 text-white sm:px-6">
-            <div className="flex items-center gap-3">
+          <div className="bg-[linear-gradient(135deg,#082f49_0%,#0f4c81_54%,#0f766e_100%)] px-4 py-5 text-white sm:px-6 sm:py-6">
+            <div className="flex items-center gap-3 sm:gap-4">
               <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-white/20 bg-white p-1.5">
                 <img src="/LOGO-JACAREZINHO.png" alt="Brasão de Jacarezinho" className="h-full w-full object-contain" />
               </div>
               <div className="min-w-0">
                 <p className="text-xs font-bold uppercase tracking-wide text-sky-100">Prefeitura Municipal de Jacarezinho</p>
                 <h1 className="mt-1 text-xl font-black leading-tight sm:text-2xl">Hotspot Institucional</h1>
+                <p className="mt-2 max-w-xl text-sm font-medium leading-5 text-sky-100/90">
+                  Acesso controlado para visitantes com autenticação pessoal, reconhecimento automático por dispositivo conhecido e navegação protegida pela política institucional da rede municipal.
+                </p>
               </div>
             </div>
           </div>
@@ -270,48 +294,7 @@ export default function HotspotPortal() {
             <TermsView onBack={() => setView('connect')} />
           ) : (
           <>
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-0.5 shrink-0 text-sky-800" size={22} />
-              <div>
-                <h2 className="text-base font-black">Identificação obrigatória de visitante</h2>
-                <p className="mt-1 text-sm leading-5 text-slate-600">
-                  O acesso é pessoal, intransferível e auditado. A navegação permanece sujeita às políticas institucionais de DNS, ACL e RPZ da rede municipal.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-            <div className="flex items-start gap-3">
-              <FileCheck2 className="mt-0.5 shrink-0 text-slate-700" size={22} />
-              <div>
-                <h2 className="text-base font-black">Termo de uso da rede</h2>
-                <p className="mt-1 text-sm leading-5 text-slate-600">
-                  Antes de se conectar, consulte as regras oficiais de uso, proteção de dados pessoais e registro institucional da navegação.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setView('terms')}
-                  className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-sm font-black text-white transition hover:bg-sky-950 focus:outline-none focus:ring-4 focus:ring-sky-800/20"
-                >
-                  <FileCheck2 size={16} />
-                  Ler termo completo
-                </button>
-              </div>
-            </div>
-          </div>
-
           {status.message ? <Notice tone={status.type}>{status.message}</Notice> : null}
-
-          {!isAuthenticated ? (
-            <div className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-emerald-950 shadow-sm">
-              <ShieldCheck className="mt-0.5 shrink-0 text-emerald-700" size={22} />
-              <p className="text-sm font-bold leading-5">
-                Ao se conectar você aceita os termos e concorda com a Lei Geral de Proteção de Dados 13.709/2018 - LGPD.
-              </p>
-            </div>
-          ) : null}
 
           {loading ? (
             <div className="flex min-h-[260px] items-center justify-center rounded-lg border border-slate-200 bg-white p-6 text-sky-900">
@@ -323,13 +306,19 @@ export default function HotspotPortal() {
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-1 shrink-0 text-emerald-700" size={28} />
                 <div className="min-w-0">
-                  <h2 className="text-xl font-black text-emerald-950">Bem-vindo, {context?.visitor?.full_name || 'visitante'}</h2>
+                  <h2 className="text-xl font-black uppercase tracking-wide text-emerald-950">Bem-vindo VISITANTE</h2>
                   <p className="mt-2 text-sm leading-5 text-slate-700">
-                    Seu dispositivo foi reconhecido. Confirme para iniciar uma nova sessão de navegação.
+                    Seu dispositivo foi reconhecido para {context?.visitor?.full_name || 'visitante'}. Confirme para iniciar uma nova sessão de navegação.
                   </p>
                   <div className="mt-4 grid gap-2 text-sm text-slate-700">
                     <div className="break-words rounded-lg bg-slate-50 px-3 py-2">{deviceText}</div>
                     <div className="rounded-lg bg-slate-50 px-3 py-2">VLAN observada: {context?.vlan_id || 'não identificada'}</div>
+                  </div>
+                  <div className="mt-4 flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-emerald-950">
+                    <ShieldCheck className="mt-0.5 shrink-0 text-emerald-700" size={20} />
+                    <p className="text-sm font-bold leading-5">
+                      Ao navegar na internet você reafirma a concordância com os termos de uso da rede e com a Lei Geral de Proteção de Dados 13.709/2018 - LGPD.
+                    </p>
                   </div>
                   <button
                     type="button"
@@ -337,8 +326,8 @@ export default function HotspotPortal() {
                     onClick={submitContinue}
                     className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-base font-black text-white transition hover:bg-emerald-800 disabled:opacity-60"
                   >
-                    {submitting ? <Loader2 className="animate-spin" size={18} /> : <Wifi size={18} />}
-                    Entrar na Internet
+                    {submitting ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
+                    Navegar na Internet
                   </button>
                 </div>
               </div>
@@ -348,7 +337,9 @@ export default function HotspotPortal() {
               <div className="flex items-start gap-3">
                 <CheckCircle2 className="mt-1 shrink-0 text-emerald-700" size={28} />
                 <div className="min-w-0">
-                  <h2 className="text-xl font-black text-emerald-950">Acesso institucional identificado</h2>
+                  <h2 className="text-xl font-black text-emerald-950">
+                    {context?.welcome_back ? 'Bem-vindo de volta, visitante' : 'Acesso institucional identificado'}
+                  </h2>
                   <p className="mt-2 text-sm leading-5 text-slate-700">
                     {context?.visitor?.full_name}, sua sessão foi registrada para este dispositivo.
                   </p>
@@ -361,48 +352,94 @@ export default function HotspotPortal() {
               </div>
             </div>
           ) : (
-            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-              <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
+            <>
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 shrink-0 text-sky-800" size={22} />
+                  <div>
+                    <h2 className="text-base font-black">{mode === 'login' ? 'Fazer Login' : 'Cadastrar visitante'}</h2>
+                    <p className="mt-1 text-sm leading-5 text-slate-600">
+                      {mode === 'login'
+                        ? 'Informe CPF e senha para liberar a navegação neste dispositivo já identificado pela rede.'
+                        : 'Preencha seus dados pessoais para criar o cadastro institucional do visitante antes de fazer login.'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">{deviceText}</div>
+
+                {mode === 'login' ? (
+                  <form className="mt-5 grid gap-4" onSubmit={submitLogin}>
+                    <Field label="CPF" value={loginForm.cpf} onChange={(value) => setLoginForm((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" autoFocus />
+                    <Field label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((f) => ({ ...f, password: value }))} autoComplete="current-password" />
+                    <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
+                      {submitting ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
+                      Navegar na Internet
+                    </button>
+                  </form>
+                ) : (
+                  <form className="mt-5 grid gap-4" onSubmit={submitRegister}>
+                    <Field label="Nome completo" value={registerForm.full_name} onChange={(value) => setRegisterForm((f) => ({ ...f, full_name: value }))} autoComplete="name" />
+                    <Field label="CPF" value={registerForm.cpf} onChange={(value) => setRegisterForm((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" inputMode="numeric" />
+                    <Field label="Data de nascimento" type="date" value={registerForm.birth_date} onChange={(value) => setRegisterForm((f) => ({ ...f, birth_date: value }))} />
+                    <Field label="Senha" type="password" value={registerForm.password} onChange={(value) => setRegisterForm((f) => ({ ...f, password: value }))} autoComplete="new-password" />
+                    <label className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
+                      <input
+                        type="checkbox"
+                        checked={registerForm.lgpd_accepted}
+                        onChange={(event) => setRegisterForm((current) => ({ ...current, lgpd_accepted: event.target.checked }))}
+                        className="mt-1 h-4 w-4 rounded border-emerald-400 text-emerald-700 focus:ring-emerald-700/30"
+                      />
+                      <span className="font-bold leading-5">
+                        Ao se cadastrar você aceita os termos de uso da rede e concorda com a Lei Geral de Proteção de Dados 13.709/2018 - LGPD.
+                      </span>
+                    </label>
+                    <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
+                      {submitting ? <Loader2 className="animate-spin" size={18} /> : <UserPlus size={18} />}
+                      Realizar cadastro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode('login')}
+                      className="inline-flex h-11 items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition hover:border-sky-200 hover:text-sky-900"
+                    >
+                      Voltar para o login
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              {mode === 'login' ? (
                 <button
                   type="button"
                   onClick={() => setMode('register')}
-                  className={`h-11 rounded-md text-sm font-black ${mode === 'register' ? 'bg-white text-sky-950 shadow-sm' : 'text-slate-600'}`}
+                  className="inline-flex h-12 items-center justify-center gap-2 rounded-lg border border-red-800 bg-red-700 px-4 text-sm font-black text-white shadow-sm transition hover:bg-red-800"
                 >
-                  Primeiro acesso
+                  <UserPlus size={18} />
+                  Ainda não sou cadastrado
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('login')}
-                  className={`h-11 rounded-md text-sm font-black transition ${mode === 'login' ? 'bg-sky-900 text-white shadow-sm' : 'bg-sky-700 text-white shadow-sm hover:bg-sky-800'}`}
-                >
-                  Já tenho cadastro
-                </button>
+              ) : null}
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <FileCheck2 className="mt-0.5 shrink-0 text-slate-700" size={22} />
+                  <div>
+                    <h2 className="text-base font-black">Termo de uso da rede</h2>
+                    <p className="mt-1 text-sm leading-5 text-slate-600">
+                      Antes de se conectar, consulte as regras oficiais de uso, proteção de dados pessoais e registro institucional da navegação.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setView('terms')}
+                      className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-sm font-black text-white transition hover:bg-sky-950 focus:outline-none focus:ring-4 focus:ring-sky-800/20"
+                    >
+                      <FileCheck2 size={16} />
+                      Ler termo completo
+                    </button>
+                  </div>
+                </div>
               </div>
-
-              <div className="mt-4 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">{deviceText}</div>
-
-              {mode === 'register' ? (
-                <form className="mt-5 grid gap-4" onSubmit={submitRegister}>
-                  <Field label="Nome completo" value={registerForm.full_name} onChange={(value) => setRegisterForm((f) => ({ ...f, full_name: value }))} autoComplete="name" />
-                  <Field label="CPF" value={registerForm.cpf} onChange={(value) => setRegisterForm((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" inputMode="numeric" />
-                  <Field label="Data de nascimento" type="date" value={registerForm.birth_date} onChange={(value) => setRegisterForm((f) => ({ ...f, birth_date: value }))} />
-                  <Field label="Senha" type="password" value={registerForm.password} onChange={(value) => setRegisterForm((f) => ({ ...f, password: value }))} autoComplete="new-password" />
-                  <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
-                    {submitting ? <Loader2 className="animate-spin" size={18} /> : <UserPlus size={18} />}
-                    Cadastrar acesso
-                  </button>
-                </form>
-              ) : (
-                <form className="mt-5 grid gap-4" onSubmit={submitLogin}>
-                  <Field label="CPF" value={loginForm.cpf} onChange={(value) => setLoginForm((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" />
-                  <Field label="Senha" type="password" value={loginForm.password} onChange={(value) => setLoginForm((f) => ({ ...f, password: value }))} autoComplete="current-password" />
-                  <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
-                    {submitting ? <Loader2 className="animate-spin" size={18} /> : <LockKeyhole size={18} />}
-                    Identificar dispositivo
-                  </button>
-                </form>
-              )}
-            </div>
+            </>
           )}
           </>
           )}

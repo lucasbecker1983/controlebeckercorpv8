@@ -28,6 +28,7 @@ import reportsRoutes from './modules/reports/reports-routes';
 import identityRoutes from './modules/identity/identity-routes';
 import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-routes';
 import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/collaborators/collaborators-routes';
+import supportRoutes, { supportSchemaService } from './modules/support/support-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
 import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
@@ -119,6 +120,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/identity', identityRoutes);
 app.use('/api/hotspot', hotspotRoutes);
 app.use('/api/collaborators', collaboratorsRoutes);
+app.use('/api/support', supportRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -145,6 +147,9 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     collaboratorsSchemaService.ensureCollabEnforcement().catch((error) => {
         console.error('[COLLAB] Falha ao reconciliar enforcement da VLAN 30:', error);
+    });
+    supportSchemaService.ensureSchema().catch((error) => {
+        console.error('[SUPPORT] Falha ao garantir schema da central de chamados:', error);
     });
     const hotspotSessionSweeper = setInterval(() => {
         hotspotSchemaService.expireExpiredSessions().catch((error) => {

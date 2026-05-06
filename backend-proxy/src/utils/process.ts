@@ -19,9 +19,16 @@ const elevatedCommandPaths: Record<string, string> = {
 
 const withPrivilege = (command: string, args: string[], elevated?: boolean) => {
     if (!elevated) return { command, args };
+    const resolvedCommand = elevatedCommandPaths[command] || command;
+    if (typeof process.getuid === 'function' && process.getuid() === 0) {
+        return {
+            command: resolvedCommand,
+            args,
+        };
+    }
     return {
         command: 'sudo',
-        args: ['-n', elevatedCommandPaths[command] || command, ...args],
+        args: ['-n', resolvedCommand, ...args],
     };
 };
 

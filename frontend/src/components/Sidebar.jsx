@@ -1,4 +1,4 @@
-import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, Smartphone, UserCog, Waypoints, Wifi } from 'lucide-react';
+import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Headphones, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, Smartphone, UserCog, Waypoints, Wifi } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -12,6 +12,7 @@ const menu = [
       { label: 'Governança de Dados', icon: ScrollText, path: '/governanca-dados' },
       { label: 'Aprovações & Exceções', icon: FileCheck2, path: '/aprovacoes-excecoes' },
       { label: 'Relatórios Forenses', icon: FileText, path: '/relatorios' },
+      { label: 'Central de Chamados', icon: Headphones, path: '/chamados' },
       { label: 'Identidades & Perfis', icon: UserCog, path: '/users' },
       { label: 'Configurações Institucionais', icon: Settings2, path: '/settings' },
     ],

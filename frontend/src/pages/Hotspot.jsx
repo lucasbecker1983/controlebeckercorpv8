@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Activity, BarChart2, Clock, Edit3, FileText, Filter, Network, Plus,
+  Activity, BarChart2, Clock, Edit3, Eye, EyeOff, FileText, Filter, Network, Plus,
   Printer, RefreshCw, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -46,17 +46,33 @@ function formatBytes(bytes) {
 // ── shared UI ─────────────────────────────────────────────────────────────────
 
 function Field({ label, value, onChange, type = 'text', required = false, ...props }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === 'password';
+
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required={required}
-        className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-        {...props}
-      />
+      <div className="relative">
+        <input
+          type={isPassword && showPassword ? 'text' : type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          required={required}
+          className={`h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20 ${isPassword ? 'pr-11' : ''}`}
+          {...props}
+        />
+        {isPassword ? (
+          <button
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl text-on-surface/50 transition hover:bg-primary/8 hover:text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
+            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+            title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          >
+            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        ) : null}
+      </div>
     </label>
   );
 }

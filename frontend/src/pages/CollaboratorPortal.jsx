@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowLeft, CheckCircle2, FileCheck2, Loader2, LockKeyhole,
+  ArrowLeft, CheckCircle2, Eye, EyeOff, FileCheck2, Loader2, LockKeyhole,
   ShieldCheck, UserPlus, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -36,23 +36,39 @@ function formatCpf(value) {
 }
 
 function Field({ label, value, onChange, type = 'text', autoComplete, placeholder, inputMode, required = false, minLength, maxLength }) {
+  const [showPassword, setShowPassword] = useState(false);
+  const isPassword = type === 'password';
+
   return (
     <label className="block">
       <span className="mb-1.5 block text-xs font-black uppercase text-slate-600">
         {label}{required ? <span className="text-red-700"> *</span> : null}
       </span>
-      <input
-        type={type}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        placeholder={placeholder}
-        inputMode={inputMode}
-        required={required}
-        minLength={minLength}
-        maxLength={maxLength}
-        className="h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-base font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-800 focus:ring-4 focus:ring-sky-800/12"
-      />
+      <div className="relative">
+        <input
+          type={isPassword && showPassword ? 'text' : type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+          placeholder={placeholder}
+          inputMode={inputMode}
+          required={required}
+          minLength={minLength}
+          maxLength={maxLength}
+          className={`h-12 w-full rounded-lg border border-slate-300 bg-white px-3 text-base font-semibold text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-sky-800 focus:ring-4 focus:ring-sky-800/12 ${isPassword ? 'pr-12' : ''}`}
+        />
+        {isPassword ? (
+          <button
+            type="button"
+            onClick={() => setShowPassword((current) => !current)}
+            className="absolute right-2 top-1/2 inline-flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-800/30"
+            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+            title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+          >
+            {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        ) : null}
+      </div>
     </label>
   );
 }
@@ -352,8 +368,8 @@ export default function CollaboratorPortal() {
                       onClick={() => setMode('login')}
                       className={`flex h-10 items-center justify-center gap-2 rounded-md text-sm font-black transition ${mode === 'login' ? 'bg-white text-sky-950 shadow-sm' : 'text-slate-500'}`}
                     >
-                      <LockKeyhole size={16} />
-                      Login
+                      <Wifi size={16} />
+                      <span className="font-black">Login</span>
                     </button>
                   </div>
 

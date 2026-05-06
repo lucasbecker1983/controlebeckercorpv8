@@ -72,6 +72,17 @@ WHATSAPP_DOMAINS = [
     "webtp.whatsapp.net",
     "whatsapp.com",
     "whatsapp.net",
+    # Dependências Meta usadas pelo WhatsApp Web/sessão. Sem esses hosts,
+    # o bloqueio amplo de facebook.com pode quebrar login, push e mídia.
+    "b-graph.facebook.com",
+    "dgw-mini.c10r.facebook.com",
+    "edge-mqtt.facebook.com",
+    "graph.facebook.com",
+    "graph-fallback.facebook.com",
+    "mqtt.c10r.facebook.com",
+    "star.c10r.facebook.com",
+    "star.fallback.c10r.facebook.com",
+    "z-m-gateway.facebook.com",
 ]
 
 WHATSAPP_DOMAINS.extend([f"e{i}.whatsapp.net" for i in range(1, 17)])

@@ -92,6 +92,10 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const isTransientDbError = (error: any) =>
     ['ECONNRESET', 'ETIMEDOUT'].includes(String(error?.code || '')) ||
     TRANSIENT_DB_ERROR_RE.test(String(error?.message || error || ''));
+const UNBOUND_PROBE_RECORDS = [
+    { server: '192.168.10.1', domain: 'google.com', type: 'A', expect: 'NOERROR' },
+    { server: '192.168.10.1', domain: 'console.interno.jacarezinho', type: 'A', expect: 'NOERROR' },
+] as const;
 
 const retryTransientDb = async <T>(operation: () => Promise<T>, attempts = 2): Promise<T> => {
     let lastError: any;
@@ -2854,6 +2858,39 @@ class BlockingReleaseService {
         return status;
     }
 
+    async probeUnboundResolution() {
+        const probes = [] as Array<{ server: string; domain: string; type: string; status: string; answer: string }>;
+
+        for (const record of UNBOUND_PROBE_RECORDS) {
+            const result = await runCommand('dig', [
+                '+time=2',
+                '+tries=1',
+                '+short',
+                `@${record.server}`,
+                record.domain,
+                record.type,
+            ], { elevated: true, allowFailure: true });
+            const statusCheck = await runCommand('dig', [
+                '+time=2',
+                '+tries=1',
+                `@${record.server}`,
+                record.domain,
+                record.type,
+            ], { elevated: true, allowFailure: true });
+            const statusMatch = /status:\s*([A-Z]+)/.exec(statusCheck.stdout || '');
+            const status = statusMatch?.[1] || 'UNKNOWN';
+            const answer = (result.stdout || '').trim();
+            probes.push({ server: record.server, domain: record.domain, type: record.type, status, answer });
+        }
+
+        const failures = probes.filter((probe) => probe.status !== 'NOERROR');
+        if (failures.length) {
+            throw new Error(`Unbound probe falhou após reload: ${failures.map((probe) => `${probe.domain}@${probe.server}=${probe.status}`).join(', ')}`);
+        }
+
+        return probes;
+    }
+
     async validateCompiledState(mode: EnforcementMode) {
         const engineState = await this.getEngineState();
         const emergencyBypass = Boolean(engineState.emergency_bypass);
@@ -2867,6 +2904,7 @@ class BlockingReleaseService {
         }
 
         const unboundStatus = await this.reloadUnbound();
+        const unboundProbes = await this.probeUnboundResolution();
 
         return {
             unbound_validation: {
@@ -2876,6 +2914,7 @@ class BlockingReleaseService {
             },
             proxy_status: sanitizeProxyStatusForPublicPayload(proxyStatus),
             unbound_status: unboundStatus.stdout || 'unknown',
+            unbound_probes: unboundProbes,
         };
     }
 

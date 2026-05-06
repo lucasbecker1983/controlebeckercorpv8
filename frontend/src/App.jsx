@@ -23,6 +23,8 @@ import Hotspot from './pages/Hotspot';
 import HotspotPortal from './pages/HotspotPortal';
 import Collaborators from './pages/Collaborators';
 import CollaboratorPortal from './pages/CollaboratorPortal';
+import SupportPortal from './pages/SupportPortal';
+import SupportTickets from './pages/SupportTickets';
 import Maintenance from './pages/Maintenance';
 import { api, resetAuthInvalidation } from './services/api';
 import { resetAuthFetchInvalidation } from './services/authFetch';
@@ -52,6 +54,7 @@ const resolveStoredUiStyle = (user) => readPreference('sgcg_ui_style', user, 'so
 
 function isCollaboratorPortalRequest() {
   const { hostname, pathname } = window.location;
+  if (pathname.startsWith('/suporte')) return false;
   return pathname.startsWith('/collab/portal')
     || hostname === '192.168.30.1'
     || hostname === 'connectivitycheck.gstatic.com'
@@ -61,9 +64,20 @@ function isCollaboratorPortalRequest() {
     || hostname === 'msftconnecttest.com';
 }
 
+function isSupportPortalRequest() {
+  const { pathname, hostname } = window.location;
+  return pathname.startsWith('/suporte')
+    || hostname === 'suporte.interno.jacarezinho'
+    || hostname === 'chamados.interno.jacarezinho'
+    || hostname === 'suporte.jacarezinho.interno'
+    || hostname === 'chamados.jacarezinho.interno';
+}
+
 function isHotspotPortalRequest() {
   const { hostname, pathname } = window.location;
-  return pathname.startsWith('/hotspot/portal') || hostname === '192.168.70.1';
+  return window.__SGCG_FORCE_PORTAL === 'hotspot'
+    || pathname.startsWith('/hotspot/portal')
+    || hostname === '192.168.70.1';
 }
 
 function readStoredUser() {
@@ -150,6 +164,10 @@ export default function App() {
     return <HotspotPortal />;
   }
 
+  if (isSupportPortalRequest()) {
+    return <SupportPortal />;
+  }
+
   if (isCollaboratorPortalRequest()) {
     return <CollaboratorPortal />;
   }
@@ -213,6 +231,7 @@ export default function App() {
           <Route path="/aprovacoes-excecoes" element={<ApprovalsExceptions />} />
           <Route path="/trilha-institucional" element={<Navigate to="/relatorios" />} />
           <Route path="/relatorios" element={<Reports />} />
+          <Route path="/chamados" element={<SupportTickets />} />
           <Route path="/control" element={<Control />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />

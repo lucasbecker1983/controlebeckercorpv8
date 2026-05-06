@@ -37,6 +37,657 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - impacto esperado
   - forma de validacao
 
+## Regra inegociavel — PontoRH e OpenDNS
+
+- o aplicativo institucional `PontoRH` usa `208.67.222.222` e `208.67.220.220` como DNS hardcoded
+- consultas DNS classicas `UDP/53` e `TCP/53` para esses dois IPs devem permanecer liberadas em todas as VLANs gerenciadas
+- essas consultas nao podem ser capturadas pelo `REDIRECT` global para o `Unbound`
+- a compatibilidade do `PontoRH` vale inclusive para usuarios `VIP`
+- nenhuma manutencao em `Unbound`, `UFW`, `iptables`, `backend-proxy` ou politicas do SGCG pode remover essa excecao
+- qualquer rodada que toque DNS institucional deve validar explicitamente o funcionamento do `PontoRH` antes do fechamento
+- bloquear ou quebrar o registro institucional de jornada por regressao nessa excecao e inadmissivel em producao
+- regra incontestavel: nao mexa mais nesse DNS quando mexer no `Unbound`, em regras, `RPZ` ou em qualquer outra camada relacionada
+- referencia operacional detalhada: `pontorh.md`
+
+## Regra inegociavel — VLAN 70
+
+- a `VLAN 70` e rede de saida para internet e nao pode ter entrada roteada para as demais VLANs internas da prefeitura
+- isso nao exime a `VLAN 70` das politicas de seguranca do SGCG
+- toda navegacao da `VLAN 70` continua sujeita a `DNS`, `ACL`, `enforcement`, `RPZ`, portal cativo, autenticacao, sanitizacao de `DoH/DoT/QUIC` e demais controles institucionais
+- em qualquer ajuste de firewall, `Unbound`, `RPZ`, `iptables`, `UFW` ou compilador de politicas, essa distincao deve ser preservada:
+  - sem entrada da `VLAN 70` para a rede interna
+  - com politicas de seguranca do SGCG plenamente ativas sobre a saida para internet
+
+## Hotspot portal - ajustes de rotulagem e foco - 2026-05-06
+
+- arquivo alterado: `frontend/src/pages/HotspotPortal.jsx`
+- ajustes aplicados no portal publico de visitantes:
+  - aba `Primeiro acesso` alterada para `Cadastrar`
+  - aba `Ja tenho cadastro` alterada para `Fazer Login`
+  - modo inicial do portal alterado para `login`
+  - `focus` inicial direcionado para o botao `Fazer Login`
+  - acao `Identificar dispositivo` alterada para `Navegar na Internet`
+  - icone do botao de login trocado de cadeado para icone de entrada
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-06`
+
+## Hotspot portal - login primeiro, cadastro secundario e LGPD no cadastro - 2026-05-06
+
+- arquivo alterado: `frontend/src/pages/HotspotPortal.jsx`
+- fluxo visual reorganizado:
+  - o portal abre com o `header` institucional em destaque e o card principal de `Fazer Login`
+  - o login dos usuarios ja cadastrados fica como primeira acao visivel do portal
+  - abaixo do card de login foi incluido um botao com icone para o usuario que ainda nao possui cadastro
+  - o card `Termo de uso da rede` foi reposicionado para aparecer abaixo da area de login/cadastro
+- cadastro:
+  - o aviso da `LGPD` saiu do bloco geral e foi transportado para dentro do card de cadastro
+  - o cadastro agora exige `checkbox` de aceite com o texto `Ao se cadastrar voce aceita os termos e concorda com a Lei Geral de Protecao de Dados 13.709/2018 - LGPD`
+  - ao concluir o cadastro, o portal retorna automaticamente para a tela de login em vez de navegar direto para fora
+- reconhecimento por MAC:
+  - o reconhecimento automatico por `MAC` conhecido foi preservado
+  - quando o gateway identificar um dispositivo conhecido que ainda depende de confirmacao, o portal exibe a tela `Bem-vindo VISITANTE`
+  - essa tela agora reforca novamente o aviso sobre a `LGPD` e oferece o botao `Navegar na Internet` com icone de entrar
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-06`
+
+## Hotspot portal - botao de cadastro em vermelho - 2026-05-06
+
+- arquivo alterado: `frontend/src/pages/HotspotPortal.jsx`
+- ajuste visual aplicado:
+  - o botao `Ainda nao sou cadastrado` passou a usar fundo vermelho com texto branco em negrito
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-06`
+
+## Mitigacao emergencial Unbound - navegacao parada em todas as VLANs - 2026-05-06
+
+- sintoma observado:
+  - a navegacao parou simultaneamente em todas as VLANs
+  - `ping 8.8.8.8` e `curl https://www.google.com` no gateway continuavam funcionando
+  - o `DNS` institucional em `127.0.0.1`, `192.168.10.1` e `192.168.70.1` respondia `SERVFAIL` ate para `google.com`
+- diagnostico confirmado:
+  - o problema nao era link externo, `nginx` ou `squid`
+  - a causa ficou concentrada no `Unbound`
+  - a camada compilada `RPZ`/VIP em `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` passou a produzir falha local de resolucao
+  - o comportamento era imediato, sem depender de upstream publico, indicando erro de processamento local da politica compilada
+- mitigacao aplicada para restaurar a navegacao:
+  - backup do compilado anterior em `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf.bak_20260506_1340`
+  - substituido temporariamente o conteudo do compilado por uma versao minima com:
+    - `module-config: "respip validator iterator"`
+    - `access-control` das VLANs gerenciadas
+  - as `RPZ` compiladas por VLAN e por `VIP` foram desligadas temporariamente nesta mitigacao
+  - `systemctl reload unbound` executado com sucesso
+- validacao apos a mitigacao:
+  - `dig @127.0.0.1 google.com A` -> `NOERROR`
+  - `dig @192.168.10.1 google.com A` -> `NOERROR`
+  - `dig @192.168.70.1 google.com A` -> `NOERROR`
+  - `journalctl -u unbound` voltou a registrar respostas `NOERROR` para dominios externos comuns
+- observacao operacional:
+  - a navegacao voltou porque a recursao geral foi restaurada
+  - a investigacao do item exato dentro da camada compilada `RPZ` que gerou o `SERVFAIL` global ainda precisa ser feita antes de religar esse bloco por completo
+
+## Correcao imediata do RPZ no Unbound - 2026-05-06
+
+- objetivo desta rodada:
+  - corrigir o `RPZ` sem voltar ao estado de `SERVFAIL` global que derrubou a navegacao em todas as VLANs
+- ajuste aplicado:
+  - `backend-proxy/src/services/policy-compiler-service.ts` passou a gerar `safe-mode` para o include do `Unbound`
+  - nesse `safe-mode`, o `RPZ` global permanece ativo
+  - as amarracoes `RPZ` por `tag` de VLAN e por `VIP` ficam suspensas ate que a causa raiz do `SERVFAIL` seja isolada
+- include runtime consolidado em:
+  - `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf`
+  - o arquivo agora mantem:
+    - `module-config: "respip validator iterator"`
+    - `access-control` das VLANs gerenciadas
+    - `rpz.allow.becker.local` com `/etc/unbound/becker/allowed.rpz`
+    - `rpz.block.becker.local` com `/etc/unbound/becker/blocked.rpz`
+  - e nao anexa temporariamente:
+    - `vip-bypass.conf`
+    - `allowlist-vlan-*.rpz`
+    - `blocklist-vlan-*.rpz`
+- validacao:
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `pm2 restart backend-proxy --update-env`
+  - `unbound-checkconf` sem erros
+  - `systemctl reload unbound` executado com sucesso
+  - `dig @192.168.10.1 google.com A` -> `NOERROR`
+  - `dig @192.168.10.1 console.interno.jacarezinho A` -> `NOERROR`
+- estado operacional resultante:
+  - navegacao geral restaurada
+  - nomes internos preservados
+  - compilador nao deve mais recriar automaticamente o bloco `RPZ` que derrubou a recursao global
+
+## Reforco de codigo contra novo SERVFAIL global - 2026-05-06
+
+- arquivos alterados:
+  - `backend-proxy/src/services/policy-compiler-service.ts`
+  - `backend-proxy/src/services/blocking-release-service.ts`
+- reforcos aplicados:
+  - o compilador passou a publicar o include do `Unbound` em `safe-mode`
+  - nesse `safe-mode`, o `RPZ` global continua ativo, mas `RPZ` por `tag` de VLAN e por `VIP` nao e anexado automaticamente ao `Unbound`
+  - o fluxo `validateCompiledState()` passou a executar probes reais de resolucao apos `reload` do `Unbound`
+  - probes atuais:
+    - `google.com A` em `192.168.10.1`
+    - `console.interno.jacarezinho A` em `192.168.10.1`
+  - se um apply futuro voltar a produzir `SERVFAIL`, o probe falha e o problema passa a ser detectado no proprio ciclo de aplicacao
+- validacao:
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `pm2 restart backend-proxy --update-env`
+  - `dig @192.168.10.1 google.com A` -> `NOERROR`
+  - `dig @192.168.10.1 console.interno.jacarezinho A` -> `NOERROR`
+
+## Compatibilidade SSL interna sem instalacao manual em clientes - 2026-05-06
+
+- objetivo operacional desta rodada: restaurar o comportamento historico em que `console.interno.jacarezinho` funcionava sem exigir nova instalacao manual de CA nas estacoes
+- diagnostico:
+  - o `nginx` e o `HTTPS` estavam tecnicamente corretos, mas a cadeia ativa estava presa a `SGCG Jacarezinho Internal Root CA 2026`
+  - isso mantinha validacao tecnica com `curl` e `openssl` usando a raiz `2026`, porem nao atendia o requisito operacional de compatibilidade sem nova acao nas maquinas
+  - a aplicacao nao estava gerando `mixed content`; o ponto residual era compatibilidade de confianca entre a raiz servida e a raiz ja existente nos clientes
+- backup completo antes da troca:
+  - `/etc/sgcg/backups/internal-console-legacy-compat-20260506-122127/pki/`
+  - `/etc/sgcg/backups/internal-console-legacy-compat-20260506-122127/www/`
+- artefatos `2026` preservados explicitamente:
+  - `/etc/sgcg/pki/sgcg-internal-root-ca-2026.crt`
+  - `/etc/sgcg/pki/sgcg-internal-root-ca-2026.key`
+  - `/etc/sgcg/pki/console-interno-jacarezinho-2026.crt`
+  - `/etc/sgcg/pki/console-interno-jacarezinho-2026.key`
+- compatibilidade legada aplicada nos caminhos canonicos:
+  - `/etc/sgcg/pki/sgcg-internal-root-ca.crt`
+  - `/etc/sgcg/pki/sgcg-internal-root-ca.key`
+  - `/etc/sgcg/pki/console-interno-jacarezinho.crt`
+  - `/etc/sgcg/pki/console-interno-jacarezinho.key`
+  - `/var/www/sgcg-pki/sgcg-root-ca.crt`
+  - `/var/www/sgcg-pki/sgcg-root-ca.cer`
+- raiz legada agora publicada:
+  - `CN=SGCG Jacarezinho Internal Root CA`
+  - fingerprint SHA-256: `1F:72:0A:30:44:0F:0B:8C:0C:BE:08:9F:22:51:53:D2:22:D1:17:98:06:F2:95:23:70:A4:61:9D:76:77:54:94`
+- certificado do site reemitido na mesma rodada com todos os SANs institucionais:
+  - `DNS:console.interno.jacarezinho`
+  - `DNS:console.jacarezinho.interno`
+  - `DNS:suporte.interno.jacarezinho`
+  - `DNS:suporte.jacarezinho.interno`
+  - `DNS:chamados.interno.jacarezinho`
+  - `DNS:chamados.jacarezinho.interno`
+  - `DNS:console.local.jacarezinho`
+  - `DNS:console.jacarezinho.local`
+  - `IP:192.168.10.1`
+- validacoes apos reinicio completo do `nginx`:
+  - `openssl s_client -connect 192.168.10.1:443 -servername console.interno.jacarezinho -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt` -> `Verify return code: 0 (ok)`
+  - `openssl s_client -connect 192.168.10.1:443 -servername suporte.jacarezinho.interno -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt` -> `Verify return code: 0 (ok)`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve console.interno.jacarezinho:443:192.168.10.1 -I https://console.interno.jacarezinho` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve suporte.jacarezinho.interno:443:192.168.10.1 -I https://suporte.jacarezinho.interno` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve chamados.jacarezinho.interno:443:192.168.10.1 -I https://chamados.jacarezinho.interno` -> `HTTP/2 200`
+- observacao operacional:
+  - esta rodada foi orientada a compatibilidade com clientes que provavelmente ja confiavam na raiz antiga `SGCG Jacarezinho Internal Root CA`
+  - se alguma estacao continuar exibindo `Nao seguro`, a discrepancia mais provavel passa a ser uma estacao sem essa raiz legada ou com outra raiz antiga conflitando no cache local
+  - a raiz `2026` foi preservada para rollback controlado, mas deixou de ser a cadeia canonica publicada pelos nomes internos nesta rodada
+
+## SSL interno SGCG validado em modo bruto - 2026-05-06
+
+- objetivo validado no servidor `controlebeckercorp-v8` para HTTPS interno dos dominios:
+  - `suporte.jacarezinho.interno`
+  - `chamados.jacarezinho.interno`
+  - `console.interno.jacarezinho`
+- diagnostico bruto executado antes de qualquer alteracao:
+  - `nginx`, `sgcg-vip-dns` e `unbound` estavam `active`
+  - `pm2 describe bcc-frontend` confirmou que o frontend real do SGCG roda em `0.0.0.0:6777`
+  - `ss -ltnp` confirmou `bcc-backend` em `6778`, `backend-proxy` em `6779` e `bcc-frontend` em `6777`
+  - a correcao nao usou `127.0.0.1:3000`; o upstream real validado para o frontend foi `127.0.0.1:6777`
+- backups formais criados antes da rodada em:
+  - `/etc/sgcg/backups/ssl-interno-20260506-121315`
+  - conteudo salvo:
+    - `/etc/nginx/sites-available/console.interno.jacarezinho`
+    - `/etc/nginx/snippets/sgcg-console-app-mirror.conf`
+    - `/etc/unbound/unbound.conf.d/10-console-interno-jacarezinho.conf`
+    - `/etc/unbound/sgcg-vip-clean.conf`
+    - `/etc/sgcg/pki`
+    - `CODEX.md`
+- DNS interno reaproveitado e validado, sem quebra de nomes existentes:
+  - `dig +short @192.168.10.1 suporte.jacarezinho.interno` -> `192.168.10.1`
+  - `dig +short @192.168.10.1 chamados.jacarezinho.interno` -> `192.168.10.1`
+  - `dig +short @192.168.10.1 console.interno.jacarezinho` -> `192.168.10.1`
+  - `nslookup` para os tres dominios no resolvedor interno `192.168.10.1` retornou `192.168.10.1`
+- CA interna reaproveitada:
+  - `/etc/sgcg/pki/sgcg-internal-root-ca.crt`
+  - `/etc/sgcg/pki/sgcg-internal-root-ca.key`
+- certificado interno reaproveitado e validado:
+  - `/etc/sgcg/pki/console-interno-jacarezinho.crt`
+  - `/etc/sgcg/pki/console-interno-jacarezinho.key`
+  - SANs confirmados no certificado servido:
+    - `console.interno.jacarezinho`
+    - `console.jacarezinho.interno`
+    - `suporte.interno.jacarezinho`
+    - `suporte.jacarezinho.interno`
+    - `chamados.interno.jacarezinho`
+    - `chamados.jacarezinho.interno`
+    - `console.local.jacarezinho`
+    - `console.jacarezinho.local`
+    - `IP:192.168.10.1`
+- configuracao Nginx validada e preservada:
+  - vhost: `/etc/nginx/sites-available/console.interno.jacarezinho`
+  - certificado:
+    - `ssl_certificate /etc/sgcg/pki/console-interno-jacarezinho.crt;`
+    - `ssl_certificate_key /etc/sgcg/pki/console-interno-jacarezinho.key;`
+  - roteamento de aplicacao compartilhado via `/etc/nginx/snippets/sgcg-console-app-mirror.conf`
+  - upstream real usado pelo frontend: `https://127.0.0.1:6777`
+  - upstreams de API preservados:
+    - `http://127.0.0.1:6778`
+    - `https://127.0.0.1:6779`
+- validacoes finais:
+  - `nginx -t` -> sintaxe OK e teste bem-sucedido
+  - `systemctl reload nginx` -> `Reloaded nginx.service`
+  - `openssl s_client -connect 192.168.10.1:443 -servername suporte.jacarezinho.interno -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt` -> `Verify return code: 0 (ok)`
+  - `openssl s_client -connect 192.168.10.1:443 -servername chamados.jacarezinho.interno -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt` -> `Verify return code: 0 (ok)`
+  - `openssl s_client -connect 192.168.10.1:443 -servername console.interno.jacarezinho -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt` -> `Verify return code: 0 (ok)`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve suporte.jacarezinho.interno:443:192.168.10.1 -I https://suporte.jacarezinho.interno` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve chamados.jacarezinho.interno:443:192.168.10.1 -I https://chamados.jacarezinho.interno` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve console.interno.jacarezinho:443:192.168.10.1 -I https://console.interno.jacarezinho` -> `HTTP/2 200`
+- renovacao/validacao futura:
+  - validar certificado atual:
+    - `openssl x509 -in /etc/sgcg/pki/console-interno-jacarezinho.crt -noout -subject -issuer -dates -ext subjectAltName`
+  - validar certificado servido:
+    - `openssl s_client -connect 192.168.10.1:443 -servername console.interno.jacarezinho -CAfile /etc/sgcg/pki/sgcg-internal-root-ca.crt </dev/null | openssl x509 -noout -subject -issuer -ext subjectAltName`
+  - validar resposta HTTP:
+    - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve console.interno.jacarezinho:443:192.168.10.1 -I https://console.interno.jacarezinho`
+  - se um novo certificado precisar ser emitido, reutilizar a CA interna SGCG em `/etc/sgcg/pki/sgcg-internal-root-ca.*` e manter exatamente os SANs acima
+- orientacao para remover o aviso `Nao seguro` nos clientes:
+  - instalar `/etc/sgcg/pki/sgcg-internal-root-ca.crt` nas estacoes como `Autoridade de Certificacao Raiz Confiavel`
+  - no Firefox:
+    - `about:config`
+    - `security.enterprise_roots.enabled = true`
+  - alternativa:
+    - importar a CA diretamente no Firefox em `Autoridades`
+
+## PontoRH e OpenDNS - 2026-05-06
+
+- problema recorrente confirmado novamente:
+  - o `PontoRH` voltou a falhar porque o app usa `208.67.222.222` e `208.67.220.220` hardcoded
+  - o `before.rules` ativo havia perdido a excecao de `RETURN` no `nat/PREROUTING` e mantinha apenas o `REDIRECT` global de DNS para o `Unbound`
+  - isso fazia a resolucao do `PontoRH` voltar a depender do `Unbound`, o que contraria a regra operacional do app
+  - o usuario reportou que ate mesmo `VIPs` nao estavam conseguindo registrar o ponto, elevando a severidade da correcao
+- correcoes aplicadas nesta rodada:
+  - `/etc/ufw/before.rules` voltou a materializar a excecao permanente `SGCG_PONTORH_OPENDNS` antes do `REDIRECT` global
+  - a excecao cobre `TCP/53` e `UDP/53` para `208.67.222.222` e `208.67.220.220` nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`
+  - `backend-proxy/src/services/dns-contingency-service.ts` passou a regravar essa excecao como bloco gerenciado, evitando que futuras reconciliacoes do firewall removam a compatibilidade do `PontoRH`
+  - `backend-proxy/src/utils/process.ts` deixou de depender de `sudo` quando o processo ja roda como `root`, removendo a falha estrutural que impedia o bootstrap do reconciliador de firewall neste host
+  - `frontend/src/pages/BlockingReleases.jsx` passou a exibir a regra do `PontoRH` dentro de `Politicas Institucionais` como referencia operacional permanente
+  - criado `pontorh.md` como documento dedicado da regra institucional e do criterio minimo de validacao
+- validacoes executadas:
+  - `ufw reload` concluido com `Firewall reloaded`
+  - `cd backend-proxy && npm run build` concluiu sem erros
+  - `cd frontend && npm run build` concluiu sem erros
+  - `pm2 restart backend-proxy --update-env` e `pm2 restart bcc-frontend --update-env` deixaram os processos online
+  - `iptables -t nat -S PREROUTING | nl -ba` confirmou os `RETURN` de `208.67.222.222` e `208.67.220.220` nas primeiras linhas da chain, antes do primeiro `REDIRECT` generico de DNS
+  - `iptables -S FORWARD` confirmou que os `VIPs` continuam com liberacao de saida para `TCP/53`, `UDP/53`, `TCP/443`, `UDP/443` e `TCP/853`
+- referencia de continuidade:
+  - ver `pontorh.md` para a regra operacional consolidada do app, validacao minima e criterio de nao regressao
+
+## Central de Chamados Institucional - 2026-05-06
+
+- criada a primeira versao da `Central de Chamados` como modulo de governanca operacional de rede:
+  - backend novo em `backend/src/modules/support/support-routes.ts`
+  - registro em `backend/src/server.ts` sob `/api/support`
+  - rotas publicas sob `/api/support/public/*`, liberadas no `globalJwtGuard` apenas para o portal do colaborador
+  - rotas administrativas protegidas por JWT para o SGCG
+- regra de arquitetura definida nesta rodada:
+  - o portal de chamados deve operar pela VLAN 10/intranet, usando `console.interno.jacarezinho/suporte` ou `https://192.168.10.1/suporte`
+  - a VLAN 30 nao deve hospedar o portal de chamados nem misturar chamado com portal cativo
+  - a VLAN 30 deve ser compartilhada somente como origem de identidade: o usuario e senha sao os mesmos do `Portal do Colaborador`, persistidos em `collab_users`
+  - o vhost cativo `sgcg-collab-captive` foi mantido sem rota `/api/support/public/*`
+- persistencia criada pelo modulo:
+  - `support_portal_sessions`
+  - `support_tickets`
+  - `support_ticket_comments`
+  - `support_ticket_events`
+  - protocolos no formato `SGCG-CH-AAAAMMDD-00000`
+  - classificacao automatica inicial por impacto e urgencia em prioridade `Baixa`, `Media`, `Alta` ou `Urgente`
+- portal publico React/Vite/Tailwind criado em `frontend/src/pages/SupportPortal.jsx`:
+  - rota `/suporte`
+  - linguagem sem termos tecnicos para o colaborador
+  - identidade visual com logotipo da Prefeitura Municipal de Jacarezinho
+  - referencia institucional a Secretaria Municipal de Comercio, Industria, Servicos e Inovacao
+  - login com usuario e senha do Portal do Colaborador
+  - abertura e acompanhamento de chamados
+  - categorias orientadas ao usuario: site ou sistema nao abre, pedir acesso, internet lenta, Wi-Fi, sistema de trabalho e outro atendimento
+- modulo administrativo React/Vite/Tailwind criado em `frontend/src/pages/SupportTickets.jsx`:
+  - rota `/chamados`
+  - item `Central de Chamados` adicionado ao bloco `Governanca` da sidebar
+  - lista por prioridade, status, solicitante, protocolo e categoria
+  - detalhe com conversa, classificacao, origem, linha do tempo e atualizacao de status/prioridade
+  - pedidos de acesso ficam marcados como solicitacao que exige autorizacao antes de virar liberacao tecnica
+- sino de chamados criado em `frontend/src/components/SupportBell.jsx`:
+  - aparece no topbar do SGCG e aponta para `/chamados`
+  - aparece no portal de chamados do colaborador
+  - consome contadores de `/api/support/notifications` e `/api/support/public/notifications`
+- validacoes executadas:
+  - `npm run build` do backend concluiu sem erros
+  - `npm run build` do frontend concluiu sem erros
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` deixaram os processos online
+  - `nginx -t` concluiu com sintaxe OK e teste bem-sucedido apos remover a rota de chamados do vhost cativo da VLAN 30
+  - `systemctl reload nginx` aplicado sem erro
+  - `GET https://console.interno.jacarezinho/suporte` validado localmente via `Host: console.interno.jacarezinho` retornou `200 text/html`
+  - `GET https://console.interno.jacarezinho/chamados` validado localmente via `Host: console.interno.jacarezinho` retornou `200 text/html`
+  - `GET https://192.168.10.1/suporte` retornou `200 text/html`
+  - `GET /api/support/public/me` sem token retornou `401` com mensagem para entrar com usuario e senha do Portal do Colaborador
+  - `GET /api/support/notifications` sem JWT retornou `401 Token ausente`, preservando separacao entre portal publico e administracao SGCG
+- correcao operacional de resolucao no Firefox:
+  - usuario relatou que `https://192.168.10.1/suporte` abria, mas `console.interno.jacarezinho` retornava `Servidor nao encontrado` no Firefox
+  - validado que o Unbound ja resolvia `console.interno.jacarezinho` para `192.168.10.1` em `127.0.0.1` e `192.168.10.1`
+  - logs do Unbound mostraram clientes da VLAN 10 consultando provedores de DNS seguro como `dns.google` e `chrome.cloudflare-dns.com`, confirmando tentativa de DoH/DNS seguro fora do resolvedor institucional
+  - criado `/etc/unbound/unbound.conf.d/11-sgcg-internal-support-and-firefox-doh.conf`
+  - adicionada zona canaria `use-application-dns.net.` como `always_nxdomain`, mecanismo reconhecido pelo Firefox para desativar DNS-over-HTTPS automatico em rede gerenciada
+  - aliases `suporte.interno.jacarezinho` e `chamados.interno.jacarezinho` chegaram a ser testados, mas foram removidos por nao estarem cobertos pelo certificado interno atual; o nome oficial permanece `console.interno.jacarezinho`
+  - `unbound-checkconf` concluiu sem erros
+  - `systemctl reload unbound` aplicado sem erro
+  - `unbound-control flush_zone .` removeu entradas em cache
+  - `nslookup console.interno.jacarezinho 192.168.10.1` retornou `192.168.10.1`
+  - `nslookup use-application-dns.net 192.168.10.1` retornou `NXDOMAIN`
+  - `GET https://console.interno.jacarezinho/suporte` validado localmente via header `Host` retornou `200 text/html`
+- reforco posterior apos Chrome/Windows ainda retornar `DNS_PROBE_FINISHED_NXDOMAIN`:
+  - nova validacao confirmou novamente que `console.interno.jacarezinho` resolve corretamente quando a consulta passa por `192.168.10.1`
+  - logs do Unbound no mesmo periodo nao mostraram consulta do cliente ao nome `console.interno.jacarezinho`, mas mostraram tentativas repetidas a `dns.google` e `chrome.cloudflare-dns.com`
+  - confirmado em runtime que a VLAN 10 possui redirect de DNS `TCP/UDP 53` para o Unbound e bloqueios de DoH/DoT/QUIC para resolvedores externos conhecidos
+  - adicionadas variantes de resolucao para Windows com sufixo de conexao local:
+    - `console.interno.jacarezinho.vlan10.local. 300 IN A 192.168.10.1`
+    - `console.interno.jacarezinho.local. 300 IN A 192.168.10.1`
+  - `unbound-checkconf` concluiu sem erros
+  - `systemctl reload unbound` aplicado sem erro
+  - `unbound-control flush_zone .` executado
+  - `nslookup console.interno.jacarezinho 192.168.10.1` retornou `192.168.10.1`
+  - `nslookup console.interno.jacarezinho.vlan10.local 192.168.10.1` retornou `192.168.10.1`
+  - `nslookup console.interno.jacarezinho.local 192.168.10.1` retornou `192.168.10.1`
+- reforco adicional apos persistencia do erro no Chrome mesmo com DNS Seguro desativado:
+  - consultas recentes do Unbound mostraram clientes nas VLANs 10 e 30 usando o resolvedor institucional normalmente para outros dominios, mas sem consulta do cliente ao nome `console.interno.jacarezinho` no momento do erro informado
+  - reescrito `/etc/unbound/unbound.conf.d/10-console-interno-jacarezinho.conf` para manter o nome oficial e cobrir sufixos locais comuns do Windows nas VLANs 10, 30, 40, 50 e 70
+  - nomes cobertos:
+    - `console.interno.jacarezinho`
+    - `console.local.jacarezinho`
+    - `console.jacarezinho.local`
+    - `console.interno.jacarezinho.vlan10.local`
+    - `console.interno.jacarezinho.vlan30.local`
+    - `console.interno.jacarezinho.vlan40.local`
+    - `console.interno.jacarezinho.vlan50.local`
+    - `console.interno.jacarezinho.vlan70.local`
+    - `console.interno.jacarezinho.local`
+  - tentativa de adicionar registro HTTPS/SVCB explicito foi rejeitada pela versao atual do Unbound; o arquivo foi imediatamente corrigido e o servico restaurado
+  - `unbound-checkconf` concluiu sem erros
+  - `systemctl restart unbound` deixou o servico `active`
+  - `nslookup console.interno.jacarezinho 192.168.10.1` retornou `192.168.10.1`
+  - `nslookup console.interno.jacarezinho 192.168.30.1` retornou `192.168.10.1`
+  - `nslookup console.interno.jacarezinho.vlan30.local 192.168.30.1` retornou `192.168.10.1`
+- correcao do nome operacional legado informado pelo usuario:
+  - usuario esclareceu que o nome usado na rede era `console.jacarezinho.interno`, nao apenas `console.interno.jacarezinho`
+  - escopo aplicado foi limitado a DNS local estatico do console, Nginx interno e certificado interno
+  - nao houve alteracao intencional em regras de bloqueio, politicas, RPZ, `blocked.rpz`, `allowed.rpz` ou `becker_policy_compiler.conf`
+  - backup criado em `/etc/sgcg/backups/internal-console-alias-20260506-100420`
+  - `/etc/unbound/unbound.conf.d/10-console-interno-jacarezinho.conf` recebeu zona local `jacarezinho.interno.` com `console.jacarezinho.interno. 300 IN A 192.168.10.1`
+  - vhost `/etc/nginx/sites-available/console.interno.jacarezinho` passou a aceitar `console.jacarezinho.interno` em `server_name`
+  - certificado interno `/etc/sgcg/pki/console-interno-jacarezinho.crt` foi reemitido pela CA interna SGCG incluindo `DNS:console.jacarezinho.interno` no SAN
+  - `unbound-checkconf` concluiu sem erros
+  - `systemctl restart unbound` deixou o servico ativo
+  - `nginx -t` concluiu com sintaxe OK e `systemctl reload nginx` foi aplicado
+  - `nslookup console.jacarezinho.interno 192.168.10.1` retornou `192.168.10.1`
+  - `nslookup console.jacarezinho.interno 192.168.30.1` retornou `192.168.10.1`
+  - `GET https://console.jacarezinho.interno/suporte` validado localmente com `--resolve` retornou `200 text/html`
+  - certificado validado com SANs: `console.interno.jacarezinho`, `console.jacarezinho.interno`, `console.local.jacarezinho`, `console.jacarezinho.local` e `IP:192.168.10.1`
+- correcao emergencial de NXDOMAIN para dominios internos do console e da Central de Chamados:
+  - usuario relatou falha geral de resolucao interna em Firefox e Chrome com `DNS_PROBE_FINISHED_NXDOMAIN`
+  - escopo mantido estritamente em resolucao local interna, vhost do console, certificado interno e reconhecimento do portal no frontend
+  - nenhuma regra de bloqueio, RPZ ou catalogo de politica foi alterada nesta correcao
+  - `/etc/unbound/unbound.conf.d/10-console-interno-jacarezinho.conf` deixou as zonas internas `interno.jacarezinho.`, `jacarezinho.interno.`, `local.jacarezinho.` e `jacarezinho.local.` como `transparent`, evitando NXDOMAIN local imediato para nomes internos ainda nao cadastrados
+  - adicionados aliases internos apontando para `192.168.10.1`:
+    - `suporte.interno.jacarezinho`
+    - `chamados.interno.jacarezinho`
+    - `suporte.jacarezinho.interno`
+    - `chamados.jacarezinho.interno`
+  - vhost `/etc/nginx/sites-available/console.interno.jacarezinho` passou a aceitar os aliases `suporte` e `chamados` em ambos os formatos internos
+  - certificado interno `/etc/sgcg/pki/console-interno-jacarezinho.crt` foi reemitido pela CA interna SGCG incluindo os novos SANs dos aliases
+  - `frontend/src/App.jsx` passou a reconhecer `suporte.jacarezinho.interno` e `chamados.jacarezinho.interno` como entrada direta do portal de chamados
+  - `npm run build` do frontend concluiu sem erros
+  - `systemctl restart unbound`, `systemctl reload nginx` e `pm2 restart bcc-frontend --update-env` aplicados com servicos online
+  - `nslookup` validou todos os nomes abaixo com resposta `192.168.10.1` consultando `192.168.10.1` e `192.168.30.1`:
+    - `console.jacarezinho.interno`
+    - `console.interno.jacarezinho`
+    - `suporte.jacarezinho.interno`
+    - `chamados.jacarezinho.interno`
+    - `suporte.interno.jacarezinho`
+    - `chamados.interno.jacarezinho`
+    - `console.local.jacarezinho`
+    - `console.jacarezinho.local`
+  - `curl --resolve` validou `200 text/html` em HTTPS para `console`, `suporte` e `chamados` nos dois formatos internos
+  - arquivos RPZ e de compilador de politicas foram conferidos por timestamp e permaneceram sem alteracao nesta rodada
+- investigacao e correcao do cliente `192.168.10.45` sem acesso aos dominios internos:
+  - `ip neigh` confirmou `192.168.10.45` ativo na VLAN 10 com MAC `04:ec:d8:bd:1e:e7`
+  - logs do Unbound principal nao mostravam consultas recentes desse IP aos dominios internos
+  - regras runtime `sgcg-vip-bypass` mostraram que o IP `192.168.10.45` e VIP e tem consultas DNS destinadas a `192.168.10.1:53` redirecionadas para o resolvedor limpo na porta `5355`
+  - validado que o Unbound principal na porta `53` resolvia `console`, `suporte` e `chamados`, mas o resolvedor VIP limpo na porta `5355` nao conhecia esses dominios internos e retornava vazio/NXDOMAIN
+  - corrigido `/etc/unbound/sgcg-vip-clean.conf` para tambem conter as zonas internas transparentes e os registros locais do console e da Central de Chamados
+  - `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` concluiu sem erros
+  - `systemctl restart sgcg-vip-dns.service` aplicado e o servico ficou `active`
+  - validado que a porta `5355` agora resolve:
+    - `console.jacarezinho.interno -> 192.168.10.1`
+    - `suporte.jacarezinho.interno -> 192.168.10.1`
+    - `chamados.jacarezinho.interno -> 192.168.10.1`
+    - `suporte.interno.jacarezinho -> 192.168.10.1`
+    - `chamados.interno.jacarezinho -> 192.168.10.1`
+  - escopo da correcao: apenas resolvedor VIP limpo da porta `5355`; nenhuma RPZ, regra de bloqueio ou catalogo de politica foi alterado
+- consolidacao do acesso HTTPS da Central de Chamados em todas as VLANs:
+  - usuario confirmou a grafia correta dos dominios institucionais como `suporte.jacarezinho.interno` e `chamados.jacarezinho.interno`
+  - qualquer alias temporario com grafia incorreta foi removido antes da publicacao final
+  - o DNS interno principal e o resolvedor VIP limpo da porta `5355` foram mantidos alinhados com os hostnames:
+    - `suporte.jacarezinho.interno`
+    - `chamados.jacarezinho.interno`
+    - `suporte.interno.jacarezinho`
+    - `chamados.interno.jacarezinho`
+  - o vhost `/etc/nginx/sites-available/console.interno.jacarezinho` permaneceu aceitando os hostnames corretos de `suporte` e `chamados`
+  - o certificado interno `/etc/sgcg/pki/console-interno-jacarezinho.crt` foi reemitido somente com os SANs corretos e sem nomes com erro de digitacao
+  - `frontend/src/App.jsx` permaneceu reconhecendo entrada direta pelos hostnames corretos do portal de chamados
+  - `npm run build` do frontend concluiu sem erros
+  - `systemctl restart unbound sgcg-vip-dns.service`, `systemctl reload nginx` e `pm2 restart bcc-frontend --update-env` aplicados com servicos online
+  - validacao DNS executada consultando os gateways das VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`
+  - em todas elas:
+    - `suporte.jacarezinho.interno -> 192.168.10.1`
+    - `chamados.jacarezinho.interno -> 192.168.10.1`
+  - validacao HTTPS executada a partir das interfaces `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1`
+  - em todas elas:
+    - `https://suporte.jacarezinho.interno/` respondeu `200` com verificacao SSL `0`
+    - `https://chamados.jacarezinho.interno/` respondeu `200` com verificacao SSL `0`
+  - escopo da rodada: acesso institucional ao portal de chamados em todas as VLANs internas, sem alterar RPZ, bloqueios ou catalogo de politicas
+
+## Portal cativo Hotspot VLAN 70 - 2026-05-05
+
+- correcao aplicada para clientes Android/WebView que chegavam ao Nginx mas nao abriam o portal:
+  - logs reais em `/var/log/nginx/sgcg-hotspot-captive.access.log` mostraram IPs da VLAN 70 repetindo `GET /generate_204` com `200`, sem avancar para `/hotspot/portal`
+  - a resposta curta anterior com `meta refresh` e JavaScript ainda podia ser ignorada pelo WebView de portal cativo
+  - o vhost `/etc/nginx/sites-available/sgcg-hotspot-captive` passou a servir o proprio bundle do portal nos endpoints de deteccao e em qualquer URL HTTP capturada, usando proxy interno para `/hotspot/portal`
+  - o HTML proxied recebe o sinal `window.__SGCG_FORCE_PORTAL="hotspot"` para forcar a renderizacao do portal Hotspot mesmo quando o navegador permanece na URL `connectivitycheck.gstatic.com/generate_204` ou em outro host capturado
+  - `frontend/src/App.jsx` passou a reconhecer esse sinal antes da heuristica de portal de colaboradores, evitando conflito entre hosts comuns de deteccao cativa
+- validacoes executadas:
+  - `nginx -t` concluiu com sintaxe OK e teste bem-sucedido
+  - `npm run build` do frontend concluiu sem erros
+  - `pm2 restart bcc-frontend` deixou o processo online
+  - `systemctl reload nginx` aplicado sem erro
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` retornou `200 OK text/html` contendo `window.__SGCG_FORCE_PORTAL="hotspot"` e os assets do bundle atual
+  - `GET http://192.168.70.1/qualquer` com host externo capturado retornou o mesmo app do portal Hotspot
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `Host: connectivitycheck.gstatic.com` e `X-Forwarded-For: 192.168.70.250` retornou `authenticated=false`, `requires_login=true`
+  - `GET /assets/index-DNn_MS7V.js` pelo host de conectividade retornou `200 OK text/javascript`
+- endurecimento adicional apos teste com o cliente real `192.168.70.96`:
+  - o IP `192.168.70.96` nao estava no `ipset` `sgcg_hotspot_v70_auth`, portanto nao havia liberacao indevida
+  - a tabela de vizinhanca confirmou o MAC `82:76:f5:5d:5e:3d` em `enp6s0.70`
+  - `GET /api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.96` retornou `authenticated=false`, `mac=82:76:f5:5d:5e:3d`, `requires_login=true`
+  - logs reais mostraram o Android do IP `192.168.70.96` repetindo `GET /generate_204` sem solicitar os assets do portal
+  - os endpoints classicos de deteccao passaram a responder `511 Network Authentication Required` com HTML minimo e link direto para `http://192.168.70.1/hotspot/portal`
+  - conexoes rastreadas do IP `192.168.70.96` foram limpas com `conntrack -D -s 192.168.70.96` e `conntrack -D -d 192.168.70.96`
+  - `nginx -t` concluiu com sintaxe OK e `systemctl reload nginx` foi aplicado
+  - validado que `GET http://192.168.70.1/generate_204` com `Host: 192.168.70.1` retorna `511` com botao `Abrir portal`
+  - validado que `GET http://connectivitycheck.gstatic.com/generate_204` resolvido para `192.168.70.1` tambem retorna `511` com botao `Abrir portal`
+- observacao em tempo real apos nova tentativa do cliente:
+  - o IP `192.168.70.96` continuou fora do `ipset` de autorizados e o MAC permaneceu visivel inicialmente na vizinhanca
+  - o cliente ainda gerou tentativas `POST /chat` de WhatsApp capturadas pelo portal
+  - o fallback de `location /` foi alterado para responder a mesma pagina cativa minima `511`, em vez de encaminhar requisicoes arbitrarias ao app React
+  - validado que `GET /chat` e `POST /chat` em `192.168.70.1` retornam `511` com `Portal Hotspot` e botao `Abrir portal`
+  - `nginx -t` concluiu com sintaxe OK e `systemctl reload nginx` foi aplicado
+  - durante a observacao, o IP `192.168.70.96` deixou de responder na vizinhanca e passou por estados `STALE`, `DELAY`, `FAILED` e `INCOMPLETE`, indicando perda de presenca L2/associacao na VLAN 70
+  - no mesmo intervalo, um cliente Android registrado como `192.168.10.103` carregou `/hotspot/portal`, assets do bundle e `/api/hotspot/public/context` com sucesso
+  - o usuario confirmou em tempo real que o portal apareceu e a conexao foi concluida
+  - o log do portal mostrou `POST /api/hotspot/public/login` retornando primeiro `401` em tentativa invalida e depois `200`, confirmando autenticacao bem-sucedida
+- regra funcional consolidada para retorno de visitante:
+  - se o MAC do dispositivo ja existir em `hotspot_devices`, `GET /api/hotspot/public/context` deve autenticar automaticamente, criar sessao `mac_auto`, autorizar o IP no `sgcg_hotspot_v70_auth` e retornar `authenticated=true`
+  - a tela publica passa a exibir `Bem-vindo de volta, visitante` para retorno automatico antes do redirecionamento
+  - removida a exigencia anterior de confirmacao manual `requires_confirm` para MAC reconhecido
+  - `npm run build` do backend concluiu sem erros
+  - `npm run build` do frontend concluiu sem erros
+  - `bcc-backend` e `bcc-frontend` foram reiniciados no PM2 e ficaram online
+  - sessoes ativas vinculadas ao teste foram revogadas antes da nova validacao, e o IP `192.168.70.96` foi removido do `ipset`
+  - durante o reteste, o DHCP mostrou o aparelho `NOTE-40-5G` alternando MACs aleatorios ao esquecer/reconectar a rede (`82:76:f5:5d:5e:3d`, `be:20:8b:93:5f:08`, `f8:6b:fa:9f:f6:99`)
+  - como esses MACs novos ainda nao existiam em `hotspot_devices`, o contexto retornou corretamente `context_unknown_mac`; a autenticacao automatica so se aplica ao mesmo MAC ja cadastrado
+
+- corrigido o vhost Nginx real `/etc/nginx/sites-available/sgcg-hotspot-captive` para reduzir falhas de abertura do portal cativo em Android/Windows que ficavam exibindo `data:text/html` ou repetindo apenas checks de conectividade
+- endpoints classicos de deteccao agora estao declarados explicitamente na VLAN 70 e entregam uma pagina curta `200 text/html` com `meta refresh`, JavaScript e link manual para `http://192.168.70.1/hotspot/portal`:
+  - `/generate_204`
+  - `/connecttest.txt`
+  - `/ncsi.txt`
+  - `/hotspot-detect.html`
+  - `/library/test/success.html`
+  - `/success.txt`
+  - `/kindle-wifi/wifistub.html`
+  - `/redirect`
+- motivo do endurecimento adicional:
+  - logs reais mostraram clientes Android presos em repeticoes de `/generate_204` sem seguir para `/hotspot/portal`
+  - a resposta anterior `302` ainda deixava alguns WebViews exibindo o corpo HTML padrao do redirect em vez de abrir o portal
+  - a pagina curta no proprio check evita depender apenas do comportamento de redirect do captive WebView
+- adicionados headers anti-cache no vhost do Hotspot:
+  - `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0`
+  - `Pragma: no-cache`
+  - `Expires: 0`
+  - headers de cache do upstream sao ocultados para evitar HTML/JS antigo em WebView de portal cativo
+- validacoes executadas:
+  - `nginx -t` concluiu com sintaxe OK e teste bem-sucedido
+  - `systemctl reload nginx` aplicado sem erro
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` retornou `200 OK text/html` com encaminhamento para `http://192.168.70.1/hotspot/portal`
+  - `GET http://192.168.70.1/qualquer` retornou `200 OK text/html` com encaminhamento para o portal
+  - `GET http://192.168.70.1/hotspot/portal` retornou `200 OK text/html`
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.250` retornou `authenticated=false`, `requires_login=true`
+  - `iptables -t nat -S PREROUTING` confirmou DNAT cativo da VLAN 70 antes do redirect de proxy `3128`
+  - `iptables -S FORWARD` confirmou o `REJECT` da VLAN 70 antes dos allows gerais e do bloqueio social
+- endurecimento CAPPORT aplicado apos o usuario relatar tela branca `data:text/html` e ausencia de botao no captive WebView:
+  - a tentativa intermediaria com `302` direto para `http://192.168.70.1/hotspot/portal` foi considerada insuficiente para Android/WebView, pois ainda podia resultar em tela branca local
+  - `/etc/nginx/sites-available/sgcg-hotspot-captive` passou a responder os endpoints de deteccao e o fallback raiz com `200 text/html`, pagina curta visivel, botao `Abrir portal`, `meta refresh` e JavaScript apontando para `http://192.168.70.1/hotspot/portal`
+  - a resposta cativa passou a incluir `Captive-Portal: http://192.168.70.1/api/hotspot/public/capport`
+  - a resposta cativa passou a incluir `Link: <http://192.168.70.1/api/hotspot/public/capport>; rel="captive-portal"`
+  - criado endpoint CAPPORT JSON em `backend/src/modules/hotspot/hotspot-routes.ts` para `/api/hotspot/public/capport`, retornando `application/captive+json` com `user-portal-url` para o portal Hotspot
+  - o mesmo endpoint tambem foi materializado no Nginx do portal cativo para garantir resposta imediata mesmo antes do proxy backend
+  - `/etc/dhcp/dhcpd.conf` recebeu `option captive-portal code 114 = text;`
+  - a subnet `192.168.70.0/24` passou a anunciar `option captive-portal "http://192.168.70.1/api/hotspot/public/capport";`
+  - leases da VLAN 70 foram encurtados para `default-lease-time 60` e `max-lease-time 300`, acelerando a renovacao da URL CAPPORT nos celulares
+- validacoes CAPPORT/DHCP executadas:
+  - `dhcpd -t -cf /etc/dhcp/dhcpd.conf` concluiu sem erro
+  - `systemctl restart isc-dhcp-server` aplicado e o servico ficou `active`
+  - logs do DHCP apos o restart confirmaram `DHCPACK` na VLAN 70 para `realme-Note-50` em `192.168.70.97` e `NOTE-40-5G` em `192.168.70.101`
+  - `nginx -t` concluiu com sintaxe OK e `systemctl reload nginx` foi aplicado
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` retornou `200 OK text/html`, `Content-Length: 912`, botao `Abrir portal`, header `Captive-Portal` e header `Link` do CAPPORT
+  - `GET http://192.168.70.1/api/hotspot/public/capport` retornou `200 OK application/captive+json` com `captive=true` e `user-portal-url=http://192.168.70.1/hotspot/portal`
+  - `bcc-backend`, `bcc-frontend`, `nginx` e `isc-dhcp-server` ficaram online/active apos as alteracoes
+- observacao operacional:
+  - clientes que receberam lease antes da opcao DHCP 114 podem precisar desligar e religar o Wi-Fi ou esquecer/conectar novamente para receber o CAPPORT novo
+  - se o WebView do Android ainda estiver preso em cache de `data:text/html`, acessar `http://192.168.70.1/` na propria rede deve exibir a mesma pagina curta com botao e encaminhar para o portal
+- ajuste final apos o usuario relatar que o botao `Abrir portal` apareceu, mas o clique nao navegou:
+  - confirmado por log que o clique nao chegava como `GET /hotspot/portal`, indicando bloqueio da navegacao pelo captive WebView
+  - removidos `listen 80`, `listen [::]:80` e nomes publicos de conectividade do `server_name` do vhost Hotspot, deixando a captura da VLAN 70 vinculada ao IP `192.168.70.1`
+  - mantida a interceptacao de `connectivitycheck.gstatic.com` apenas como comportamento natural do Android quando o trafego chega ao gateway da VLAN 70; o vhost nao usa mais esse dominio como identidade propria
+  - endpoints de deteccao e fallback raiz deixaram de entregar a pagina intermediaria com botao e passaram a entregar diretamente o app do portal Hotspot via `@hotspot_portal_app`
+  - o HTML do app continua recebendo `window.__SGCG_FORCE_PORTAL="hotspot"` para renderizar o portal correto mesmo quando a URL visivel do WebView ainda for `/generate_204`
+  - `nginx -t` concluiu com sintaxe OK e `systemctl reload nginx` foi aplicado
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` retornou `200 OK text/html`, headers CAPPORT e HTML do app com asset `/assets/index-XN-mZyPJ.js`
+  - `GET http://192.168.70.1/` retornou o mesmo app do portal Hotspot com `window.__SGCG_FORCE_PORTAL="hotspot"`
+  - `GET http://192.168.70.1/assets/index-XN-mZyPJ.js` retornou `200 OK text/javascript`
+  - `GET http://192.168.70.1/api/hotspot/public/context` para `192.168.70.101` retornou JSON valido com MAC `ee:95:01:1a:a9:a4`, `requires_login=true` e motivo `context_unknown_mac`
+- validacao final pelo usuario:
+  - o usuario confirmou que, apos o ajuste final do vhost da VLAN 70, o portal Hotspot foi validado em cliente real
+  - a validacao confirma que o fluxo saiu do estado anterior em que o captive WebView mostrava botao sem navegar e passou a carregar o app do portal diretamente
+  - estado consolidado: Hotspot VLAN 70 usa o gateway `192.168.70.1` como identidade operacional do portal, com checks Android tratados apenas como trafego de deteccao capturado pela propria VLAN
+- ajuste visual no portal Hotspot:
+  - `frontend/src/pages/HotspotPortal.jsx` teve o estado ativo da aba `Primeiro acesso` alterado de fundo branco para `bg-emerald-50`, igual ao verde claro usado no aviso LGPD do proprio portal
+  - a cor do texto ativo da aba passou para `text-emerald-950`, mantendo contraste com o novo fundo claro
+  - `npm run build` do frontend concluiu sem erros
+  - `pm2 restart bcc-frontend --update-env` aplicado e `bcc-frontend` ficou online
+  - validado pelo caminho real da VLAN 70 que `GET http://192.168.70.1/generate_204` retorna o app com o bundle novo `/assets/index-BKWdmnXw.js`
+- ajuste visual no portal de Colaboradores:
+  - `frontend/src/pages/CollaboratorPortal.jsx` teve a aba `Login` ajustada para deixar o texto explicitamente em negrito com `font-black`
+  - o icone da aba `Login` foi alterado de cadeado para sinal de Wi-Fi (`Wifi` do `lucide-react`)
+  - o botao de envio `Entrar e liberar navegacao` manteve o icone de cadeado, pois representa a acao de autenticacao
+  - `npm run build` do frontend concluiu sem erros
+  - `pm2 restart bcc-frontend --update-env` aplicado e `bcc-frontend` ficou online
+  - validado pelo caminho real da VLAN 30 que `GET http://192.168.30.1/generate_204` retorna o app com o bundle novo `/assets/index-PSMIxyZj.js`
+
+## Registro operacional de firewall - 2026-05-05
+
+- auditoria operacional do UFW confirmou que o firewall oficial do SGCG permanece instalado, habilitado e ativo, com politica padrao `deny incoming`, `allow outgoing` e `allow routed`
+- corrigida divergencia entre VIPs ativos do sistema e regras efetivas de firewall:
+  - `backend-proxy/src/services/dns-contingency-service.ts` passou a reconciliar VIPs ativos tanto de `policy_exceptions` quanto da tabela legada `dns_vip`
+  - o VIP ativo `192.168.10.171` voltou a ser materializado em `/etc/ufw/before.rules` e no bypass runtime `sgcg-vip-bypass`
+- corrigido risco de explosao de fila de processos `iptables`:
+  - `applyRuntimeVipBypassRules()` passou a ser serializado por trava em memoria
+  - `ensureOrderedIptablesRule()` passou a ser idempotente, sem apagar e reinserir regras ja existentes
+  - a aplicacao runtime passou a carregar snapshot das regras existentes para evitar chamadas repetidas de `iptables -C`
+- corrigida precedencia dos bloqueios mobile da VLAN 70:
+  - portas TCP `5222`, `5223` e `5228` agora entram no bloco antecipado `ufw-before-forward`
+  - essas regras precedem o allow geral de roteamento do UFW para impedir que o allow amplo neutralize os bloqueios
+- saneamento operacional aplicado em runtime:
+  - backups gerados de `/etc/ufw/before.rules`, `/etc/ufw/user.rules` e do `iptables-save` antes da correcao
+  - regras NAT duplicadas exatas foram deduplicadas via `iptables-save -t nat` validado com `iptables-restore --test` e reaplicado com `iptables-restore`
+- validacoes executadas:
+  - `npm run build` em `backend-proxy`
+  - `iptables-restore --test < /etc/ufw/before.rules`
+  - `ufw status verbose`
+  - `iptables -S` e `iptables -t nat -S` para confirmar VIP, bloqueios VLAN 70 e ausencia de duplicatas exatas
+  - `pm2 restart backend-proxy` com processo online apos a correcao
+- limpeza posterior do modulo VIP:
+  - removidas entradas de teste/QA associadas ao Codex em `policy_exceptions`: `192.168.10.250/32`, `192.168.10.251/32` e `192.168.10.252/32`
+  - removidas entradas legadas de teste/temporarias associadas ao Codex em `dns_vip`: `192.168.10.254`, `192.168.10.250`, `192.168.10.124`, `192.168.10.251` e `192.168.10.252`
+  - consulta de verificacao confirmou ausencia de registros restantes com assinatura simultanea de Codex e teste/temporario no modulo VIP
+  - VIPs reais ativos foram preservados
+- refinamento visual do modulo VIP:
+  - aba `Excecoes VIP` em `frontend/src/pages/BlockingReleases.jsx` foi reduzida para leitura operacional compacta
+  - removido painel narrativo grande de impacto tecnico que poluia a primeira dobra da tela
+  - badges repetidos foram consolidados em tres sinais: `Firewall livre`, `DNS sem RPZ` e `Sem proxy`
+  - lista de VIPs passou a renderizar linhas compactas com IP, status, descricao, motivo, responsavel, VLAN, revisao e acoes
+  - editor de VIP manteve o alerta tecnico, mas com texto e peso visual reduzidos
+  - `npm run build` do frontend concluiu sem erros e `bcc-frontend` foi reiniciado no PM2
+- refinamento visual de `Politicas Institucionais`:
+  - hero interno da aba foi substituido por cabecalho compacto de catalogo operacional
+  - removido texto promocional/longo sobre fluxo de governanca
+  - contadores foram reduzidos para `Total`, `Ativas` e `Inativas` em linha
+  - titulo da secao passou para `Politicas Institucionais` com subtitulo direto sobre regras de bloqueio/liberacao por dominio
+  - `npm run build` do frontend concluiu sem erros e `bcc-frontend` foi reiniciado no PM2
+- refinamento profundo de `Acoes rapidas`:
+  - painel lateral do hero deixou de ser uma lista plana vertical de botoes
+  - `Acoes rapidas` passou para uma faixa horizontal propria abaixo do hero principal
+  - acoes passaram a ser agrupadas por intencao: `Governanca`, `Operacao` e `Contingencia`
+  - estado atual do modulo passou a aparecer no topo como `Normal`, `Contingencia` ou `Emergencia`
+  - indicadores de `Motor`, `VIPs` e `Escopo` foram compactados em linha para leitura de comando
+  - acao emergencial foi isolada no grupo de contingencia e recebeu hierarquia visual de risco
+  - `npm run build` do frontend concluiu sem erros e `bcc-frontend` foi reiniciado no PM2
+- correcao de indisponibilidade da aba `Observabilidade`:
+  - a refatoracao de `Acoes rapidas` removeu indevidamente o import de `QuickActionBar`
+  - outras secoes da pagina, incluindo `Observabilidade`, ainda dependiam desse componente
+  - a falha causava queda no `RootErrorBoundary` com a mensagem `Portal indisponivel no navegador`
+  - import restaurado em `frontend/src/pages/BlockingReleases.jsx`
+  - `npm run build` do frontend concluiu sem erros, `bcc-frontend` foi reiniciado no PM2 e a URL publica passou a servir o bundle corrigido
+- correcao do atalho `Auditoria` em `Acoes rapidas`:
+  - o botao apenas abria a aba `Observabilidade`, deixando o operador no topo do `Radar operacional`
+  - adicionada acao dedicada para abrir `Observabilidade` e rolar automaticamente ate `Relatorio de Dados`
+  - bloco de auditoria recebeu ancora `observability-audit`
+  - `npm run build` do frontend concluiu sem erros, `bcc-frontend` foi reiniciado no PM2 e a URL publica passou a servir o bundle corrigido
+- correcao operacional do VIP `192.168.10.45`:
+  - cadastro estava ativo em `policy_exceptions`, `dns_vip` e `proxy_vips`
+  - regras `FORWARD` do runtime `sgcg-vip-bypass` estavam antes dos bloqueios sociais e aceitavam trafego WAN
+  - causa encontrada no NAT: regras antigas de `RETURN` para DNS do VIP apareciam antes do redirecionamento para o DNS limpo `5355`
+  - isso fazia consultas para `192.168.10.1:53` escaparem para o Unbound normal, onde dominios como `cloudflare-dns.com` e `chrome.cloudflare-dns.com` ainda eram bloqueados
+  - runtime do IP foi normalizado: REDIRECT do DNS local para `5355` passou a preceder os `RETURN`
+  - `backend-proxy/src/services/dns-contingency-service.ts` passou a detectar VIPs ativos com NAT legado fora de ordem e recriar apenas essas regras, evitando churn global de iptables
+  - validado que `cloudflare-dns.com` e `chrome.cloudflare-dns.com` resolvem no DNS limpo `5355`
+  - `npm run build` do `backend-proxy` concluiu sem erros e `backend-proxy` foi reiniciado no PM2
+
 ## Regra inegociavel do console interno
 
 - `console.interno.jacarezinho` deve ser espelho operacional de `console.jacarezinho.cloud`
@@ -3969,3 +4620,184 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - Google Meet com áudio, vídeo e compartilhamento de tela
   - Zoom com áudio, vídeo e compartilhamento de tela
   - Microsoft Teams com áudio, vídeo e compartilhamento de tela
+
+## 2026-05-05 — Diagnóstico DHCP da VLAN 50
+
+- investigada a queixa de que a VLAN 50 não estaria recebendo DHCP automático
+- estado verificado do serviço:
+  - `isc-dhcp-server` está instalado, habilitado e ativo
+  - o processo `dhcpd` está escutando em `enp6s0.50`, junto das demais VLANs
+  - a interface `enp6s0.50` está `UP` com `192.168.50.1/24`
+  - `/etc/dhcp/dhcpd.conf` possui subnet da VLAN 50 com range `192.168.50.10 192.168.50.140`
+  - `dhcpd -t -cf /etc/dhcp/dhcpd.conf` validou a sintaxe da configuração
+  - o `UFW` possui regra `ALLOW IN 67/udp on enp6s0.50`
+- evidência observada nos logs:
+  - o `dhcpd` recebeu tráfego em `enp6s0.50`
+  - houve `DHCPDISCOVER`, `DHCPOFFER`, `DHCPREQUEST` e `DHCPACK` recentes para clientes da VLAN 50
+  - portanto não foi identificado bloqueio total do serviço DHCP nem falha geral da interface VLAN 50
+- problema identificado:
+  - existe uma automação local fora do código principal do SGCG: `dhcp-autobind.service`
+  - o serviço executa `/usr/local/sbin/dhcp_autobind_reservations.sh`
+  - a lógica desse script define `ALWAYS=("10" "50")`, ou seja, a VLAN 50 sempre é convertida em reserva estática
+  - o script gerou `/etc/dhcp/static_hosts.conf` com reservas da VLAN 50 em `192.168.50.10` até `192.168.50.19`
+  - essas reservas estão dentro do mesmo range dinâmico `192.168.50.10-192.168.50.140`
+  - o próprio `dhcpd` passou a registrar avisos repetidos como `Dynamic and static leases present` e `uid lease ... is duplicate on 192.168.50.0/24`
+- estado anômalo adicional:
+  - `dhcp-autobind.service` está em `activating (start)` desde `2026-05-01 20:52:34 -03`
+  - o processo ficou preso em `apt-get update -y`
+  - como é `Type=oneshot` acionado por timer, o timer fica impedido de concluir novas rodadas enquanto a execução antiga permanece presa
+- conclusão operacional:
+  - o SGCG aplicação não foi identificado como causa direta da falha
+  - o serviço principal de entrega DHCP está ativo e respondendo na VLAN 50
+  - o risco real está na automação auxiliar `dhcp-autobind`, que transforma leases da VLAN 50 em reservas fixas dentro do pool automático e permanece travada
+- validação adicional:
+  - captura curta com `tcpdump` em `enp6s0.50` não recebeu novos pacotes DHCP durante a janela observada
+  - se um cliente específico falhar e nenhum `DHCPDISCOVER` aparecer no servidor, a causa provável passa a ser entrega de VLAN/switch/AP/cabo até o servidor, não o `dhcpd`
+
+## Próximo passo recomendado
+
+- corrigir a arquitetura do `dhcp-autobind` antes de reiniciar ou reexecutar a automação:
+  - remover `50` de `ALWAYS` se a VLAN 50 deve ser dinâmica
+  - ou mover reservas estáticas da VLAN 50 para fora do pool automático, preferencialmente acima de `.141`
+  - remover `apt-get update` e `apt-get install` do caminho quente do oneshot
+  - definir timeout no service para impedir execução presa por dias
+- depois da correção, reiniciar `isc-dhcp-server` e validar com um cliente real da VLAN 50 enquanto se observa:
+  - `journalctl -u isc-dhcp-server -f`
+  - `tcpdump -ni enp6s0.50 'udp and (port 67 or port 68)'`
+
+## 2026-05-05 — Correção DHCP Automático da VLAN 50
+
+- correção aplicada na automação local `dhcp-autobind`
+- backups criados antes da alteração em:
+  - `/etc/sgcg/backups/dhcp-fix-20260505-084725`
+- `dhcp-autobind.timer` e `dhcp-autobind.service` foram parados antes da edição para impedir reexecução concorrente
+- `dhcp-autobind.service` estava preso em `apt-get update -y`; a execução antiga foi encerrada de forma controlada
+- `/usr/local/sbin/dhcp_autobind_reservations.sh` foi ajustado:
+  - `ALWAYS=("10" "50")` passou para `ALWAYS=("10")`
+  - `NEVER=("70")` passou para `NEVER=("50" "70")`
+  - a VLAN 50 deixou de gerar reservas fixas automáticas
+  - removidas chamadas a `apt-get update` e `apt-get install` do caminho quente do timer
+  - removida verificação lenta por `arping` em cada IP durante a geração das reservas
+  - cabeçalho gerado em `static_hosts.conf` atualizado para `VLAN10 sempre; VLAN30 condicional; VLAN50/70 nunca`
+- `/etc/systemd/system/dhcp-autobind.service` foi ajustado:
+  - adicionado `TimeoutStartSec=90`
+  - permissões do service/timer normalizadas para `0644`
+  - executado `systemctl daemon-reload`
+- aplicação executada:
+  - `systemctl start dhcp-autobind.service`
+  - a execução concluiu com sucesso em aproximadamente `1.2s`
+  - o script regenerou `/etc/dhcp/static_hosts.conf`
+  - `isc-dhcp-server` foi reiniciado pelo fluxo existente do script
+  - `dhcp-autobind.timer` foi reativado
+- validação:
+  - `static_hosts.conf` não contém mais entradas `v50_`
+  - `static_hosts.conf` não contém mais reservas `192.168.50.*`
+  - `dhcpd -t -cf /etc/dhcp/dhcpd.conf` concluiu sem erro
+  - `isc-dhcp-server` voltou `active`
+  - `dhcp-autobind.timer` voltou `active`
+  - `ufw` permaneceu `active`
+  - regra `67/udp on enp6s0.50 ALLOW` permaneceu presente
+  - logs pós-restart confirmaram `dhcpd` escutando e enviando em `enp6s0.50`
+- observação:
+  - ainda existem avisos de lease dinâmico versus reserva estática na VLAN 10, pois essa VLAN continua configurada como reserva automática permanente
+  - a correção desta rodada foi restrita à falha operacional da VLAN 50
+
+## Próximo passo recomendado
+
+- testar em um cliente real da VLAN 50:
+  - renovar o DHCP
+  - confirmar recebimento de IP dentro de `192.168.50.10-192.168.50.140`
+  - observar `journalctl -u isc-dhcp-server -f`
+  - se não aparecer `DHCPDISCOVER` no servidor durante o teste, revisar tagueamento VLAN 50 no switch/AP/caminho físico
+- em rodada futura, revisar se a VLAN 10 também deve sair do modelo de reservas dentro do pool dinâmico para eliminar os avisos remanescentes do `dhcpd`
+
+## 2026-05-05 — Estabilização complementar do DHCP da VLAN 50
+
+- após a correção inicial, a VLAN 50 voltou a apresentar instabilidade percebida
+- nova investigação confirmou:
+  - `isc-dhcp-server` permaneceu `active`
+  - `enp6s0.50` permaneceu `UP` com `192.168.50.1/24`
+  - `/etc/dhcp/static_hosts.conf` continuou sem entradas `v50_` e sem reservas `192.168.50.*`
+  - logs recentes mostraram a VLAN 50 recebendo DHCP normalmente, com `DHCPDISCOVER`, `DHCPOFFER`, `DHCPREQUEST` e `DHCPACK`
+  - exemplos observados:
+    - `192.168.50.24`
+    - `192.168.50.25`
+    - `192.168.50.20`
+    - renovações de `192.168.50.11`, `.12`, `.15`, `.16` e `.19`
+- causa adicional identificada:
+  - `dhcp-autobind.timer` executa a cada 5 minutos
+  - o script ainda reiniciava `isc-dhcp-server` toda vez que rodava, mesmo quando as reservas não tinham mudança semântica
+  - além disso, a geração de `static_hosts.conf` usava ordem não determinística de array associativo, fazendo o arquivo parecer diferente entre execuções
+  - esse comportamento criava reinícios desnecessários do serviço DHCP em ciclos curtos
+- correção aplicada em `/usr/local/sbin/dhcp_autobind_reservations.sh`:
+  - geração de `mac_ip_db.csv` passou a ordenar chaves antes de gravar
+  - geração de `static_hosts.conf` passou a ordenar chaves antes de gravar
+  - o script passou a comparar o novo arquivo com o existente usando `cmp`
+  - se não houver alteração real em `static_hosts.conf`, o script remove o temporário e preserva o DHCP ativo
+  - `isc-dhcp-server` agora só é reiniciado quando `static_hosts.conf` realmente mudar
+- validação:
+  - primeira execução após normalizar a ordem ainda atualizou o arquivo e reiniciou o DHCP uma última vez
+  - segunda execução consecutiva retornou `Reservas sem alteração; DHCP preservado`
+  - `isc-dhcp-server` permaneceu `active`
+  - a VLAN 50 continuou sem reservas estáticas conflitantes
+- conclusão operacional:
+  - o DHCP da VLAN 50 está funcional no servidor
+  - a fonte local de oscilação por reinício periódico foi removida
+  - se o problema persistir em um ponto específico, a próxima investigação deve separar:
+    - ausência de `DHCPDISCOVER` no servidor: caminho físico/switch/AP/tagueamento da VLAN 50
+    - DHCP concluído com IP válido, mas sem navegação: DNS, firewall, RPZ, QoS ou enforcement de saída
+
+## Próximo passo recomendado
+
+- testar no ponto afetado da VLAN 50 com captura simultânea:
+  - `journalctl -u isc-dhcp-server -f`
+  - `tcpdump -ni enp6s0.50 'udp and (port 67 or port 68)'`
+- anotar MAC, porta/switch/AP e horário do cliente afetado para distinguir problema de entrega VLAN de problema posterior ao DHCP
+
+## 2026-05-06 - Ajuste de exposicao Telnet 23/18123
+
+- solicitacao operacional:
+  - verificar se a porta `23/tcp` estava aberta para o mundo
+  - fechar `23/tcp` para WAN se necessario
+  - manter `23/tcp` somente na rede interna
+  - usar `18123/tcp` como porta externa
+- verificacao inicial:
+  - `ss -ltnp '( sport = :23 or sport = :18123 )'` nao mostrou processo escutando em `23` nem em `18123`
+  - `ufw status verbose` nao tinha liberacao explicita de `23/tcp` na WAN
+  - `iptables-save` e `iptables-legacy-save` nao tinham regras especificas para `23` ou `18123`
+  - WAN identificada como `enp8s0`
+  - redes internas identificadas nas VLANs `enp6s0.10`, `.30`, `.40`, `.50`, `.70`, `.80`, `.99` e VPN `wg0`
+- regras aplicadas via UFW:
+  - `23/tcp` liberada em `enp6s0.10`, `enp6s0.30`, `enp6s0.40`, `enp6s0.50`, `enp6s0.70`, `enp6s0.80`, `enp6s0.99` e `wg0`
+  - `23/tcp` negada em `enp8s0`
+  - `18123/tcp` liberada em `enp8s0`
+- validacao:
+  - `ufw status numbered` confirmou as regras persistentes de Telnet interno, bloqueio WAN da `23/tcp` e liberacao WAN da `18123/tcp`
+  - `iptables-save` confirmou as regras efetivas em `ufw-user-input`
+  - `iptables-legacy-save` continuou sem regras para essas portas
+  - nova checagem com `ss` confirmou que ainda nao havia processo escutando em `23` ou `18123`
+- observacao:
+  - a politica de firewall ficou pronta para o acesso externo em `18123/tcp`, mas o servico precisa estar configurado para escutar nessa porta para responder conexoes
+
+## 2026-05-06 - Restricao SNMP 161 para rede interna
+
+- decisao operacional:
+  - `161/udp` e SNMP e nao deve ficar exposta para o mundo
+  - manter acesso somente por rede interna/VPN
+  - bloquear explicitamente na WAN
+- verificacao inicial:
+  - `ufw status numbered` nao mostrou regra especifica de SNMP/`161/udp`
+  - `iptables-save` e `iptables-legacy-save` nao mostraram regras especificas para `161/udp`
+  - `ss -lunp '( sport = :161 )'` nao mostrou processo escutando em `161/udp`
+  - WAN identificada como `enp8s0`
+  - redes internas/VPN consideradas: `enp6s0.10`, `enp6s0.30`, `enp6s0.40`, `enp6s0.50`, `enp6s0.70`, `enp6s0.80`, `enp6s0.99` e `wg0`
+- regras aplicadas via UFW:
+  - `161/udp` liberada em `enp6s0.10`, `enp6s0.30`, `enp6s0.40`, `enp6s0.50`, `enp6s0.70`, `enp6s0.80`, `enp6s0.99` e `wg0`
+  - `161/udp` negada em `enp8s0`
+- validacao:
+  - `ufw status numbered` confirmou as regras persistentes de SNMP interno e bloqueio WAN da `161/udp`
+  - `iptables-save` confirmou as regras efetivas em `ufw-user-input`
+  - `iptables-legacy-save` continuou sem regras para `161/udp`
+  - nova checagem com `ss` confirmou que ainda nao havia processo escutando em `161/udp`
+- observacao:
+  - a politica de firewall ficou preparada para SNMP interno/VPN; se houver monitor externo, liberar apenas o IP publico especifico do coletor, nao `Anywhere` na WAN

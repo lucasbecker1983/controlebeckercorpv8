@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, Clock3, Menu, Moon, Network as NetworkIcon, ShieldCheck, Sun } from 'lucide-react';
 import { api } from '../../services/api';
+import SupportBell from '../SupportBell';
 
 function HeaderChip({ icon: Icon, label, value, tone = 'default' }) {
   const toneClass = tone === 'success'
@@ -88,6 +89,7 @@ export default function Topbar({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          <SupportBell onClick={() => { window.location.href = '/chamados'; }} />
           <button
             type="button"
             onClick={onToggleTheme}
