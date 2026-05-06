@@ -1,0 +1,32 @@
+module.exports = {
+  apps: [
+    {
+      name: "bcc-backend",
+      cwd: "{{ config.stack.backend_dir }}",
+      script: "dist/server.js",
+      interpreter: "node",
+      env: {
+        NODE_ENV: "production",
+      },
+    },
+    {
+      name: "backend-proxy",
+      cwd: "{{ config.stack.backend_proxy_dir }}",
+      script: "dist/server.js",
+      interpreter: "node",
+      env: {
+        NODE_ENV: "production",
+      },
+    },
+    {
+      name: "bcc-frontend",
+      cwd: "{{ config.stack.frontend_dir }}",
+      script: "npx",
+      args: "vite preview --host 127.0.0.1 --port 4173",
+      interpreter: "none",
+      env: {
+        NODE_ENV: "production",
+      },
+    },
+  ],
+};

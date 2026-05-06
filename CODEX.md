@@ -218,6 +218,34 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve chamados.jacarezinho.interno:443:192.168.10.1 -I https://chamados.jacarezinho.interno` -> `HTTP/2 200`
 - observacao operacional:
   - esta rodada foi orientada a compatibilidade com clientes que provavelmente ja confiavam na raiz antiga `SGCG Jacarezinho Internal Root CA`
+
+## Superinstalador SGCG JMB TECNOLOGIA - 2026-05-06
+
+- novo diretorio versionado: `instalador/`
+- objetivo desta rodada:
+  - iniciar uma base oficial de instalacao repetivel do SGCG para `Ubuntu Server 24.04+`
+  - cobrir explicitamente a stack `Node.js`, `TypeScript`, `Vite`, `React`, `Tailwind CSS`, `Python`, `PostgreSQL`, `Nginx`, `Unbound`, `Squid`, `UFW` e `PM2`
+- estrutura criada:
+  - `instalador/bootstrap.sh`
+  - `instalador/sgcg-installer.py`
+  - `instalador/core/`
+  - `instalador/profiles/`
+  - `instalador/templates/`
+  - `instalador/docs/ARQUITETURA.md`
+  - `instalador/MANUAL.md`
+  - `instalador/README.md`
+- capacidades entregues nesta primeira versao:
+  - bootstrap do host com preparacao de dependencias de sistema e `venv`
+  - wizard interativo para dominio, hostname, `WAN`, `LAN`, `TRUNK` e `VLANs`
+  - configuracao declarativa salva em `/etc/sgcg/installer/sgcg-config.yaml`
+  - geracao de artefatos base de `netplan`, `nginx`, `env`, `PM2`, `UFW` e `Unbound`
+  - perfis declarativos `simple-console`, `gateway-vlans` e `full-appliance`
+  - manual operacional completo do superinstalador dentro de `instalador/MANUAL.md`
+- validacao desta rodada:
+  - `python3 -m compileall instalador` concluido com sucesso
+  - `bash -n instalador/bootstrap.sh` concluido com sucesso
+- observacao operacional:
+  - esta entrega estabelece a fundacao do instalador robusto solicitado, mas ainda deve evoluir em rodadas futuras para `rollback`, `deploy` transacional completo, emissao automatica de certificados e validadores ativos fim a fim
   - se alguma estacao continuar exibindo `Nao seguro`, a discrepancia mais provavel passa a ser uma estacao sem essa raiz legada ou com outra raiz antiga conflitando no cache local
   - a raiz `2026` foi preservada para rollback controlado, mas deixou de ser a cadeia canonica publicada pelos nomes internos nesta rodada
 

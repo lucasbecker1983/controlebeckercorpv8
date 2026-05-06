@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw default deny routed
+
+ufw allow {{ config.firewall.ssh_port }}/tcp comment 'SGCG SSH'
+
+{% if config.firewall.allow_http %}
+ufw allow 80/tcp comment 'SGCG HTTP'
+{% endif %}
+{% if config.firewall.allow_https %}
+ufw allow 443/tcp comment 'SGCG HTTPS'
+{% endif %}
+{% if config.firewall.allow_dns %}
+ufw allow 53/tcp comment 'SGCG DNS TCP'
+ufw allow 53/udp comment 'SGCG DNS UDP'
+{% endif %}
+
+ufw --force enable

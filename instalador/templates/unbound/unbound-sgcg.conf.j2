@@ -1,0 +1,17 @@
+server:
+    interface: 127.0.0.1
+    access-control: 127.0.0.0/8 allow
+{% for vlan in config.vlans %}
+    access-control: {{ vlan.subnet_cidr }} allow
+{% endfor %}
+    do-ip4: yes
+    do-udp: yes
+    do-tcp: yes
+    hide-identity: yes
+    hide-version: yes
+    qname-minimisation: yes
+
+forward-zone:
+    name: "."
+    forward-addr: 1.1.1.1
+    forward-addr: 8.8.8.8

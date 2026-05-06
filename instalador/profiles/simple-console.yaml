@@ -1,0 +1,16 @@
+profile: simple-console
+hostname: sgcg-console
+timezone: America/Sao_Paulo
+domains:
+  public_domain: console.interno.local
+  internal_domains:
+    - console.interno.local
+  enable_https: true
+  certificate_mode: internal_ca
+  admin_email: suporte@interno.local
+interfaces:
+  - name: enp1s0
+    role: wan
+  - name: enp2s0
+    role: lan
+vlans: []

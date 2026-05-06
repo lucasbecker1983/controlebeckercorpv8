@@ -1,0 +1,45 @@
+profile: full-appliance
+hostname: sgcg-appliance
+timezone: America/Sao_Paulo
+domains:
+  public_domain: console.interno.local
+  internal_domains:
+    - console.interno.local
+    - suporte.interno.local
+    - chamados.interno.local
+    - console.local.interno
+  enable_https: true
+  certificate_mode: internal_ca
+  admin_email: suporte@interno.local
+interfaces:
+  - name: enp1s0
+    role: wan
+  - name: enp2s0
+    role: lan
+  - name: enp3s0
+    role: trunk
+vlans:
+  - vlan_id: 10
+    name: administrativo
+    parent: enp3s0
+    subnet_cidr: 192.168.10.0/24
+    gateway: 192.168.10.1
+    dhcp_enabled: false
+    captive_portal: false
+    policy_profile: standard
+  - vlan_id: 30
+    name: colaboradores
+    parent: enp3s0
+    subnet_cidr: 192.168.30.0/24
+    gateway: 192.168.30.1
+    dhcp_enabled: false
+    captive_portal: true
+    policy_profile: collaborators
+  - vlan_id: 70
+    name: visitantes
+    parent: enp3s0
+    subnet_cidr: 192.168.70.0/24
+    gateway: 192.168.70.1
+    dhcp_enabled: true
+    captive_portal: true
+    policy_profile: hotspot

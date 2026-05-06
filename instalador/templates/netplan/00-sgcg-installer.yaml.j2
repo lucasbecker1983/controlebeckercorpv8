@@ -1,0 +1,37 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+{% for iface in config.interfaces %}
+    {{ iface.name }}:
+{% if iface.addressing == "static" and iface.address_cidr %}
+      dhcp4: false
+      addresses:
+        - {{ iface.address_cidr }}
+{% if iface.gateway %}
+      routes:
+        - to: default
+          via: {{ iface.gateway }}
+{% endif %}
+{% if iface.dns_servers %}
+      nameservers:
+        addresses:
+{% for dns in iface.dns_servers %}
+          - {{ dns }}
+{% endfor %}
+{% endif %}
+{% else %}
+      dhcp4: true
+{% endif %}
+{% endfor %}
+{% if config.vlans %}
+  vlans:
+{% for vlan in config.vlans %}
+    {{ vlan.parent }}.{{ vlan.vlan_id }}:
+      id: {{ vlan.vlan_id }}
+      link: {{ vlan.parent }}
+      dhcp4: false
+      addresses:
+        - {{ vlan.gateway }}/24
+{% endfor %}
+{% endif %}
