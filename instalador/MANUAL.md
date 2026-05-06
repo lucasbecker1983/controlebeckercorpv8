@@ -372,11 +372,13 @@ O que esse comando faz:
 - aplica hostname e timezone
 - publica o vhost do `nginx`
 - publica o include do `unbound`
+- gera certificado interno utilitario do `backend-proxy`, quando necessario
 - aplica o baseline de `UFW`
 - inicializa `PostgreSQL`
 - aplica `netplan`, quando nao desabilitado
 - executa build do `backend`, `backend-proxy` e `frontend`
 - publica os processos reais via `PM2`
+- espera as portas internas dos runtimes responderem antes de concluir
 - executa validacao local no final
 
 Flags uteis:

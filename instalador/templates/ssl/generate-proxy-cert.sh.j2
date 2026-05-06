@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CERT_PATH="{{ config.runtime.proxy_tls_cert_path }}"
+KEY_PATH="{{ config.runtime.proxy_tls_key_path }}"
+CERT_DIR="$(dirname "${CERT_PATH}")"
+COMMON_NAME="{{ config.domains.public_domain }}"
+
+mkdir -p "${CERT_DIR}"
+
+if [[ -s "${CERT_PATH}" && -s "${KEY_PATH}" ]]; then
+  echo "Certificado interno do backend-proxy ja existe"
+  exit 0
+fi
+
+openssl req \
+  -x509 \
+  -nodes \
+  -newkey rsa:2048 \
+  -keyout "${KEY_PATH}" \
+  -out "${CERT_PATH}" \
+  -days 825 \
+  -subj "/CN=${COMMON_NAME}" \
+  -addext "subjectAltName=DNS:${COMMON_NAME},DNS:localhost,IP:127.0.0.1"
+
+chmod 600 "${KEY_PATH}"
+chmod 644 "${CERT_PATH}"
+
+echo "Certificado interno do backend-proxy gerado em ${CERT_PATH}"

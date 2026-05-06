@@ -299,15 +299,19 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - aplica `hostname` e `timezone`
   - publica `nginx`
   - publica include do `Unbound`
+  - gera certificado interno utilitario para o `backend-proxy` quando necessario
   - pode aplicar `UFW`
   - inicializa `PostgreSQL`
   - pode aplicar `netplan`
   - executa build do projeto e publica processos reais via `PM2`
+  - aguarda o runtime responder nas portas internas antes da validacao final
   - executa validacao local no fechamento
 - endurecimento adicional para suportar instalacao em servidores novos:
   - `frontend/vite.config.js` deixou de depender obrigatoriamente de certificados fixos em tempo de `build`
   - o `build` agora continua funcional mesmo em hosts que ainda nao possuem os caminhos antigos de `Let's Encrypt`
   - o frontend de producao do instalador passa a ser servido estaticamente pelo `nginx`, em vez de depender de `vite preview`
+  - o `backend-proxy` preserva seu `HTTPS` interno sem exigir certificado publico preexistente
+  - o `nginx` do instalador passou a fazer `proxy_pass` seguro para o `backend-proxy` em `https://127.0.0.1:<porta>` com `proxy_ssl_verify off` apenas nessa camada interna
 - validacoes desta rodada:
   - `cd frontend && npm run build`
   - `python3 -m compileall instalador`

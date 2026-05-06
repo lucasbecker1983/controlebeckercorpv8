@@ -59,6 +59,7 @@ class Provisioner:
             "  - script de inicializacao do PostgreSQL\n"
             "  - script de deploy base do SGCG\n"
             "  - script de validacao local\n"
+            "  - script de certificado interno do backend-proxy\n"
             "  - relatorio final da instalacao\n"
         )
 
@@ -115,6 +116,10 @@ class Provisioner:
                 "validate/validate-sgcg.sh.j2",
                 config=self.config,
             ),
+            output_root / "generate-proxy-cert.sh": self.renderer.render(
+                "ssl/generate-proxy-cert.sh.j2",
+                config=self.config,
+            ),
             output_root / "install-stack.sh": self._render_install_script(),
         }
 
@@ -145,6 +150,7 @@ class Provisioner:
         try:
             self._persist_canonical_config(backup_dir, rollback_actions)
             self._run_script(self.generated_root / "install-stack.sh")
+            self._run_script(self.generated_root / "generate-proxy-cert.sh")
             self._apply_project_envs(backup_dir, rollback_actions)
             self._apply_hostname_timezone()
             self._apply_nginx(backup_dir, rollback_actions)
@@ -155,6 +161,7 @@ class Provisioner:
             if apply_network:
                 self._apply_netplan(backup_dir, rollback_actions)
             self._run_script(self.generated_root / "deploy-sgcg.sh")
+            self._wait_for_runtime()
             self._run_script(self.generated_root / "validate-sgcg.sh")
         except Exception:
             self._rollback(rollback_actions)
@@ -295,6 +302,37 @@ echo "SGCG stack base preparada para {self.config.domains.public_domain}"
 
     def _run_script(self, path: Path) -> None:
         self._run(["bash", str(path)])
+
+    def _wait_for_runtime(self) -> None:
+        import socket
+        import time
+
+        checks = [
+            ("127.0.0.1", self.config.stack.backend_port),
+            ("127.0.0.1", self.config.stack.backend_proxy_port),
+        ]
+        deadline = time.time() + 60
+        pending = set(checks)
+
+        while pending and time.time() < deadline:
+            ready = set()
+            for host, port in pending:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(2)
+                try:
+                    sock.connect((host, port))
+                    ready.add((host, port))
+                except OSError:
+                    pass
+                finally:
+                    sock.close()
+            pending -= ready
+            if pending:
+                time.sleep(2)
+
+        if pending:
+            missing = ", ".join(f"{host}:{port}" for host, port in sorted(pending))
+            raise RuntimeError(f"runtime nao ficou pronto a tempo: {missing}")
 
     def _run(self, command: list[str]) -> None:
         subprocess.run(command, check=True)

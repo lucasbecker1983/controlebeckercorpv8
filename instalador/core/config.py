@@ -102,6 +102,8 @@ class RuntimeConfig:
     proxy_intercept_http_port: int = 3128
     proxy_intercept_https_port: int = 3130
     proxy_visible_hostname: str = "proxy.interno.local"
+    proxy_tls_key_path: str = "/etc/sgcg/pki/backend-proxy.key"
+    proxy_tls_cert_path: str = "/etc/sgcg/pki/backend-proxy.crt"
 
 
 @dataclass
