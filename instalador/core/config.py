@@ -42,6 +42,9 @@ class DomainConfig:
     enable_https: bool = True
     certificate_mode: str = "internal_ca"
     admin_email: str = ""
+    ssl_certificate_path: str = ""
+    ssl_certificate_key_path: str = ""
+    https_redirect_http: bool = True
 
 
 @dataclass
@@ -58,9 +61,9 @@ class StackConfig:
     node_major: str = "22"
     python_binary: str = "python3"
     project_root: str = "/opt/controlebeckercorp-v8"
-    frontend_dir: str = "/opt/sgcg/frontend"
-    backend_dir: str = "/opt/sgcg/backend"
-    backend_proxy_dir: str = "/opt/sgcg/backend-proxy"
+    frontend_dir: str = "/opt/controlebeckercorp-v8/frontend"
+    backend_dir: str = "/opt/controlebeckercorp-v8/backend"
+    backend_proxy_dir: str = "/opt/controlebeckercorp-v8/backend-proxy"
     enable_pm2: bool = True
     enable_nginx: bool = True
     enable_unbound: bool = True
@@ -68,6 +71,9 @@ class StackConfig:
     enable_postgresql: bool = True
     enable_tailwind_build: bool = True
     enable_typescript_build: bool = True
+    frontend_port: int = 4173
+    backend_port: int = 6778
+    backend_proxy_port: int = 6779
 
 
 @dataclass
@@ -80,6 +86,22 @@ class FirewallConfig:
     allow_http: bool = True
     allow_https: bool = True
     allow_postgresql_local_only: bool = True
+
+
+@dataclass
+class RuntimeConfig:
+    jwt_secret: str = "change_me"
+    jwt_expires_in: str = "12h"
+    gateway_ip: str = "192.168.10.1"
+    public_ips: list[str] = field(default_factory=list)
+    lan_interface: str = "enp2s0"
+    wan_interface: str = "enp1s0"
+    ssh_lan_allow_port: int = 22
+    ssh_external_port: int = 18122
+    proxy_forward_port: int = 3129
+    proxy_intercept_http_port: int = 3128
+    proxy_intercept_https_port: int = 3130
+    proxy_visible_hostname: str = "proxy.interno.local"
 
 
 @dataclass
@@ -101,6 +123,7 @@ class InstallerConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     stack: StackConfig = field(default_factory=StackConfig)
     firewall: FirewallConfig = field(default_factory=FirewallConfig)
+    runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     branding: BrandingConfig = field(default_factory=BrandingConfig)
     modules: dict[str, bool] = field(
         default_factory=lambda: {
@@ -127,6 +150,7 @@ def _from_dict(data: dict[str, Any]) -> InstallerConfig:
         database=DatabaseConfig(**data.get("database", {})),
         stack=StackConfig(**data.get("stack", {})),
         firewall=FirewallConfig(**data.get("firewall", {})),
+        runtime=RuntimeConfig(**data.get("runtime", {})),
         branding=BrandingConfig(**data.get("branding", {})),
         modules=data.get("modules", {}),
     )

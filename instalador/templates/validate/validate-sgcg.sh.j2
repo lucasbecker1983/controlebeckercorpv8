@@ -20,5 +20,5 @@ echo "== Teste HTTP local =="
 curl -I --max-time 10 "http://127.0.0.1" || true
 
 echo
-echo "== Teste HTTPS do dominio configurado =="
-curl -k -I --max-time 10 "https://{{ config.domains.public_domain }}" || true
+echo "== Teste do dominio configurado =="
+curl {% if config.domains.enable_https %}-k {% endif %}-I --max-time 10 "{% if config.domains.enable_https %}https{% else %}http{% endif %}://{{ config.domains.public_domain }}" || true

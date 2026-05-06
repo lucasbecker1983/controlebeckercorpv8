@@ -16,7 +16,8 @@ npm install
 npm run build
 
 if command -v pm2 >/dev/null 2>&1; then
-  pm2 start /etc/sgcg/installer/generated/ecosystem.config.cjs || pm2 restart /etc/sgcg/installer/generated/ecosystem.config.cjs --update-env
+  pm2 startOrReload /etc/sgcg/installer/generated/ecosystem.config.cjs --update-env
+  pm2 save
 fi
 
 echo "Deploy base do SGCG concluido"

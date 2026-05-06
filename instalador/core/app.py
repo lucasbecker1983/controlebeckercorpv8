@@ -28,6 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("plan", help="gera o plano de instalacao")
     sub.add_parser("apply", help="gera artefatos e scripts do ambiente")
     sub.add_parser("validate", help="executa validacoes locais do servidor")
+    install = sub.add_parser("install", help="executa a instalacao real no host")
+    install.add_argument("--dry-run", action="store_true", help="nao altera o host; apenas mostra as etapas")
+    install.add_argument("--skip-network-apply", action="store_true", help="gera o netplan, mas nao executa netplan apply")
+    install.add_argument("--skip-firewall-apply", action="store_true", help="nao executa o baseline de UFW")
     return parser
 
 
@@ -71,6 +75,15 @@ def main() -> int:
     if args.command == "validate":
         report = validate_installer_state(config)
         print(report)
+        return 0
+
+    if args.command == "install":
+        report_path = provisioner.install(
+            dry_run=args.dry_run,
+            apply_network=not args.skip_network_apply,
+            apply_firewall=not args.skip_firewall_apply,
+        )
+        print(f"instalacao concluida. relatorio: {report_path}")
         return 0
 
     parser.error("comando invalido")

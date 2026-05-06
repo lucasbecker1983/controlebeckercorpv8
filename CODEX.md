@@ -272,6 +272,50 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml apply`
 - observacao operacional:
   - o instalador agora ja sai da fase apenas estrutural e entra em fase de provisionamento guiado com `wizard` TUI, inicializacao de `PostgreSQL`, deploy base do SGCG e validacao local reutilizavel
+
+## Superinstalador SGCG - instalacao real ponta a ponta - 2026-05-06
+
+- evolucao central desta rodada:
+  - o `instalador/` deixou de ser apenas gerador de artefatos e passou a oferecer o comando `install` para provisionamento real do host
+- arquivos principais evoluidos:
+  - `instalador/core/app.py`
+  - `instalador/core/config.py`
+  - `instalador/core/provisioner.py`
+  - `instalador/core/wizard.py`
+  - `instalador/templates/nginx/sgcg-nginx.conf.j2`
+  - `instalador/templates/pm2/ecosystem.config.cjs.j2`
+  - `instalador/templates/deploy/deploy-sgcg.sh.j2`
+  - `instalador/templates/validate/validate-sgcg.sh.j2`
+  - `instalador/templates/env/backend.env.j2`
+  - `instalador/templates/env/backend-proxy.env.j2`
+  - `instalador/README.md`
+  - `instalador/MANUAL.md`
+  - `instalador/docs/ARQUITETURA.md`
+- comportamento novo do `install`:
+  - persiste o `sgcg-config.yaml` em `/etc/sgcg/installer/sgcg-config.yaml`
+  - cria backup em `/etc/sgcg/installer/backups/<timestamp>/`
+  - instala dependencias base
+  - materializa `.env` do `backend`, `backend-proxy` e `frontend`
+  - aplica `hostname` e `timezone`
+  - publica `nginx`
+  - publica include do `Unbound`
+  - pode aplicar `UFW`
+  - inicializa `PostgreSQL`
+  - pode aplicar `netplan`
+  - executa build do projeto e publica processos reais via `PM2`
+  - executa validacao local no fechamento
+- endurecimento adicional para suportar instalacao em servidores novos:
+  - `frontend/vite.config.js` deixou de depender obrigatoriamente de certificados fixos em tempo de `build`
+  - o `build` agora continua funcional mesmo em hosts que ainda nao possuem os caminhos antigos de `Let's Encrypt`
+  - o frontend de producao do instalador passa a ser servido estaticamente pelo `nginx`, em vez de depender de `vite preview`
+- validacoes desta rodada:
+  - `cd frontend && npm run build`
+  - `python3 -m compileall instalador`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml apply`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml install --dry-run`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml validate`
+- observacao operacional:
+  - ainda ha espaco para evoluir `rollback` transacional completo e emissao automatica de certificados, mas o instalador ja passou a cobrir o fluxo real de preparacao do host, publicacao da stack e validacao final
   - se alguma estacao continuar exibindo `Nao seguro`, a discrepancia mais provavel passa a ser uma estacao sem essa raiz legada ou com outra raiz antiga conflitando no cache local
   - a raiz `2026` foi preservada para rollback controlado, mas deixou de ser a cadeia canonica publicada pelos nomes internos nesta rodada
 

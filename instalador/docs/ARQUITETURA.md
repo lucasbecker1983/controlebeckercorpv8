@@ -19,7 +19,8 @@ Fornecer um instalador robusto, reexecutavel e orientado a perfis para provision
 2. `wizard`
 3. `plan`
 4. `apply`
-5. validacoes de runtime
+5. `install`
+6. validacoes de runtime
 
 ## Entregas desta primeira versao
 
@@ -31,6 +32,7 @@ Fornecer um instalador robusto, reexecutavel e orientado a perfis para provision
 - script de inicializacao de `PostgreSQL`
 - script de deploy base do SGCG
 - validacao local de binarios e servicos
+- instalacao real com backup, materializacao de `.env`, publicacao `nginx` e deploy `PM2`
 - relatorio de instalacao
 
 ## Evolucoes recomendadas

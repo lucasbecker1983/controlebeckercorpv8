@@ -19,11 +19,10 @@ module.exports = {
       },
     },
     {
-      name: "bcc-frontend",
-      cwd: "{{ config.stack.frontend_dir }}",
-      script: "npx",
-      args: "vite preview --host 127.0.0.1 --port 4173",
-      interpreter: "none",
+      name: "backend-proxy-ingester",
+      cwd: "{{ config.stack.backend_proxy_dir }}",
+      script: "dist/ingester.js",
+      interpreter: "node",
       env: {
         NODE_ENV: "production",
       },

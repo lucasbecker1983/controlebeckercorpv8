@@ -115,7 +115,7 @@ O fluxo operacional recomendado e este:
 4. revisar a configuracao declarativa
 5. gerar o plano
 6. aplicar os artefatos
-7. inicializar banco e deploy, quando aplicavel
+7. executar a instalacao real
 8. validar os servicos
 9. publicar o ambiente
 
@@ -274,6 +274,8 @@ Arquivos previstos:
 - `install-stack.sh`
 - `install-report.txt`
 
+Esta etapa nao publica nada sozinha; ela prepara o material que sera usado na instalacao real.
+
 ## 15. O que cada artefato faz
 
 ### `00-sgcg-installer.yaml`
@@ -353,7 +355,37 @@ Script local de validacao operacional do servidor apos a instalacao.
 
 Relatorio resumido do provisionamento.
 
-## 16. Rede: boas praticas de parametrizacao
+## 16. Etapa 8: executar a instalacao real
+
+O modo que deixa o servidor pronto para uso e:
+
+```bash
+sudo python3 sgcg-installer.py install
+```
+
+O que esse comando faz:
+
+- persiste o `sgcg-config.yaml` no caminho canonico
+- gera backup em `/etc/sgcg/installer/backups/<timestamp>/`
+- instala dependencias do sistema e ferramentas globais
+- materializa `.env` em `backend/`, `backend-proxy/` e `frontend/`
+- aplica hostname e timezone
+- publica o vhost do `nginx`
+- publica o include do `unbound`
+- aplica o baseline de `UFW`
+- inicializa `PostgreSQL`
+- aplica `netplan`, quando nao desabilitado
+- executa build do `backend`, `backend-proxy` e `frontend`
+- publica os processos reais via `PM2`
+- executa validacao local no final
+
+Flags uteis:
+
+- `--dry-run`
+- `--skip-network-apply`
+- `--skip-firewall-apply`
+
+## 17. Rede: boas praticas de parametrizacao
 
 Ao configurar rede no wizard:
 
@@ -363,7 +395,7 @@ Ao configurar rede no wizard:
 - mantenha um padrao de nomes previsivel para VLANs
 - trate `VLAN 70`, `Hotspot`, `Colaboradores` e redes administrativas como perfis separados quando fizer sentido
 
-## 17. Firewall: regra operacional
+## 18. Firewall: regra operacional
 
 O instalador segue a regra institucional do projeto:
 
@@ -381,7 +413,7 @@ O baseline gerado:
 
 Depois disso, o operador pode evoluir o ambiente com regras especificas por modulo.
 
-## 18. Banco de dados
+## 19. Banco de dados
 
 O instalador foi preparado para cenarios com `PostgreSQL`.
 
@@ -399,14 +431,15 @@ Boas praticas:
 - restringir o acesso ao banco a `localhost` quando possivel
 - versionar a estrutura do schema do SGCG separadamente
 
-## 19. Frontend e backend
+## 20. Frontend e backend
 
 A stack real contemplada e:
 
 - frontend em `React + Vite + Tailwind`
 - backend principal em `Node.js + TypeScript`
 - backend-proxy em `Node.js + TypeScript`
-- orquestracao em `PM2`
+- frontend servido estaticamente pelo `nginx`
+- orquestracao em `PM2` para os processos Node.js
 
 O instalador gera os arquivos base, mas o fluxo de publicacao continua exigindo:
 
@@ -424,7 +457,7 @@ pm2 restart backend-proxy
 pm2 restart bcc-frontend
 ```
 
-## 20. Certificados e HTTPS
+## 21. Certificados e HTTPS
 
 O modelo inicial suporta o conceito de:
 
@@ -438,7 +471,7 @@ Recomendacoes:
 - para domínios publicos, preferir emissao automatizavel
 - registrar no ambiente qual estrategia foi adotada
 
-## 21. Validacoes obrigatorias apos a implantacao
+## 22. Validacoes obrigatorias apos a implantacao
 
 Depois de aplicar e antes de entregar ao cliente, validar:
 
@@ -461,7 +494,7 @@ Em seguida, testar:
 - conectividade com o banco
 - comportamento de firewall
 
-## 22. Validacoes de rede recomendadas
+## 23. Validacoes de rede recomendadas
 
 ```bash
 ip addr
@@ -479,7 +512,7 @@ Se houver VLANs:
 - validar DNS por rede
 - validar NAT e forward quando o host for gateway
 
-## 23. Modo de reexecucao
+## 24. Modo de reexecucao
 
 Uma das vantagens do superinstalador e a reexecucao controlada.
 
@@ -491,30 +524,28 @@ Fluxo recomendado para ajustar um ambiente ja existente:
 4. rodar `apply`
 5. validar novamente os servicos
 
-## 24. Fluxo recomendado apos `apply`
+## 25. Fluxo recomendado apos `apply`
 
 Em uma implantacao nova, a sequencia mais segura e:
 
 ```bash
-cd /etc/sgcg/installer/generated
-sudo ./install-stack.sh
-sudo ./setup-postgresql.sh
-sudo ./deploy-sgcg.sh
-sudo ./validate-sgcg.sh
+sudo python3 sgcg-installer.py install
 ```
 
-## 25. O que este instalador ainda nao deve prometer sozinho
+Se o operador quiser separar as fases manualmente, os scripts gerados continuam disponiveis em `/etc/sgcg/installer/generated/`.
+
+## 26. O que este instalador ainda nao deve prometer sozinho
 
 Esta primeira versao entrega a estrutura profissional e os artefatos base, mas ainda deve evoluir em pontos como:
 
 - rollback automatizado por etapa
 - aplicacao direta de `netplan` em modo transacional
-- criacao automatica de banco e extensoes com validacao fim a fim
+- criacao automatica de banco e extensoes com validacao profunda de schema
 - emissao automatica de certificados conforme cenario
-- deploy transacional completo dos tres runtimes do SGCG
+- rollback transacional completo dos tres runtimes do SGCG
 - importacao/exportacao de perfis de cliente
 
-## 26. Procedimento recomendado de entrega
+## 27. Procedimento recomendado de entrega
 
 Ao concluir uma implantacao:
 
@@ -525,7 +556,7 @@ Ao concluir uma implantacao:
 5. registrar credenciais iniciais em cofre seguro
 6. documentar quaisquer regras adicionais fora do baseline
 
-## 27. Identidade da solucao
+## 28. Identidade da solucao
 
 Nome recomendado para uso comercial e operacional:
 
@@ -535,7 +566,7 @@ Descricao curta recomendada:
 
 `Instalador declarativo, auditavel e reexecutavel para implantacao completa do SGCG em ambientes Ubuntu Server com console, proxy, DNS, firewall, politicas, VLANs e servicos institucionais.`
 
-## 28. Proximos passos recomendados
+## 29. Proximos passos recomendados
 
 As evolucoes mais valiosas para a proxima rodada sao:
 
@@ -545,7 +576,7 @@ As evolucoes mais valiosas para a proxima rodada sao:
 4. criar templates de `systemd` e `postgresql` mais detalhados
 5. adicionar validadores ativos de SSL, DNS, banco e portas
 
-## 29. Conclusao
+## 30. Conclusao
 
 O diretorio `instalador/` agora serve como base oficial para transformar o SGCG em uma plataforma instalavel com padrao profissional.
 

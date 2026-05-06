@@ -3,7 +3,14 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from .config import DomainConfig, InstallerConfig, InterfaceConfig, VlanConfig
+from .config import (
+    DomainConfig,
+    InstallerConfig,
+    InterfaceConfig,
+    RuntimeConfig,
+    StackConfig,
+    VlanConfig,
+)
 from .detect import RuntimeInventory
 
 
@@ -123,8 +130,34 @@ def _run_dialog_wizard(inventory: RuntimeInventory) -> InstallerConfig:
         "Dominios internos separados por virgula",
         "console.interno.local,suporte.interno.local,chamados.interno.local",
     )
+    certificate_mode = _dialog_menu(
+        "JMB TECNOLOGIA",
+        "Modo de certificado",
+        [
+            ("internal_ca", "CA interna"),
+            ("letsencrypt", "Let's Encrypt"),
+            ("client_cert", "Certificado fornecido pelo cliente"),
+            ("none", "Somente HTTP"),
+        ],
+        "internal_ca",
+    )
+    ssl_certificate_path = ""
+    ssl_certificate_key_path = ""
+    enable_https = certificate_mode != "none"
+    if enable_https:
+        ssl_certificate_path = _dialog_input(
+            "JMB TECNOLOGIA",
+            "Caminho do certificado SSL",
+            "/etc/letsencrypt/live/console.exemplo/fullchain.pem",
+        )
+        ssl_certificate_key_path = _dialog_input(
+            "JMB TECNOLOGIA",
+            "Caminho da chave SSL",
+            "/etc/letsencrypt/live/console.exemplo/privkey.pem",
+        )
     wan_name = _dialog_input("JMB TECNOLOGIA", "Interface WAN", inventory.recommended_wan)
     lan_name = _dialog_input("JMB TECNOLOGIA", "Interface LAN", inventory.recommended_lan)
+    gateway_ip = _dialog_input("JMB TECNOLOGIA", "IP principal do gateway SGCG", "192.168.10.1")
     trunk_enabled = _dialog_yesno(
         "JMB TECNOLOGIA",
         "Havera interface TRUNK/VLAN neste servidor?",
@@ -187,9 +220,25 @@ def _run_dialog_wizard(inventory: RuntimeInventory) -> InstallerConfig:
             internal_domains=[
                 item.strip() for item in internal_domains_raw.split(",") if item.strip()
             ],
+            enable_https=enable_https,
+            certificate_mode=certificate_mode,
+            ssl_certificate_path=ssl_certificate_path,
+            ssl_certificate_key_path=ssl_certificate_key_path,
         ),
         interfaces=interfaces,
         vlans=vlans,
+        stack=StackConfig(
+            project_root="/opt/controlebeckercorp-v8",
+            frontend_dir="/opt/controlebeckercorp-v8/frontend",
+            backend_dir="/opt/controlebeckercorp-v8/backend",
+            backend_proxy_dir="/opt/controlebeckercorp-v8/backend-proxy",
+        ),
+        runtime=RuntimeConfig(
+            gateway_ip=gateway_ip,
+            lan_interface=lan_name,
+            wan_interface=wan_name,
+            proxy_visible_hostname=f"proxy.{public_domain}",
+        ),
     )
 
 
@@ -219,8 +268,25 @@ def run_wizard(inventory: RuntimeInventory) -> InstallerConfig:
         "Dominios internos separados por virgula",
         "console.interno.local,suporte.interno.local,chamados.interno.local",
     )
+    certificate_mode = _prompt(
+        "Modo de certificado (internal_ca/letsencrypt/client_cert/none)",
+        "internal_ca",
+    )
+    enable_https = certificate_mode != "none"
+    ssl_certificate_path = ""
+    ssl_certificate_key_path = ""
+    if enable_https:
+        ssl_certificate_path = _prompt(
+            "Caminho do certificado SSL",
+            "/etc/letsencrypt/live/console.exemplo/fullchain.pem",
+        )
+        ssl_certificate_key_path = _prompt(
+            "Caminho da chave SSL",
+            "/etc/letsencrypt/live/console.exemplo/privkey.pem",
+        )
     wan_name = _prompt("Interface WAN", inventory.recommended_wan)
     lan_name = _prompt("Interface LAN", inventory.recommended_lan)
+    gateway_ip = _prompt("IP principal do gateway SGCG", "192.168.10.1")
     trunk_enabled = _prompt_bool("Havera interface TRUNK/VLAN?", True)
 
     interfaces = [
@@ -267,7 +333,23 @@ def run_wizard(inventory: RuntimeInventory) -> InstallerConfig:
             internal_domains=[
                 item.strip() for item in internal_domains_raw.split(",") if item.strip()
             ],
+            enable_https=enable_https,
+            certificate_mode=certificate_mode,
+            ssl_certificate_path=ssl_certificate_path,
+            ssl_certificate_key_path=ssl_certificate_key_path,
         ),
         interfaces=interfaces,
         vlans=vlans,
+        stack=StackConfig(
+            project_root="/opt/controlebeckercorp-v8",
+            frontend_dir="/opt/controlebeckercorp-v8/frontend",
+            backend_dir="/opt/controlebeckercorp-v8/backend",
+            backend_proxy_dir="/opt/controlebeckercorp-v8/backend-proxy",
+        ),
+        runtime=RuntimeConfig(
+            gateway_ip=gateway_ip,
+            lan_interface=lan_name,
+            wan_interface=wan_name,
+            proxy_visible_hostname=f"proxy.{public_domain}",
+        ),
     )

@@ -35,13 +35,15 @@ O objetivo desta pasta e permitir provisionar o SGCG em cenarios diferentes sem 
 3. Revisar o arquivo gerado em `/etc/sgcg/installer/sgcg-config.yaml`.
 4. Gerar o plano com `python3 sgcg-installer.py plan`.
 5. Aplicar com `python3 sgcg-installer.py apply`.
-6. Validar `nginx`, `postgresql`, `pm2`, `unbound`, `ufw` e o dominio configurado com `python3 sgcg-installer.py validate`.
+6. Instalar de verdade com `python3 sgcg-installer.py install`.
+7. Validar `nginx`, `postgresql`, `pm2`, `unbound`, `ufw` e o dominio configurado com `python3 sgcg-installer.py validate`.
 
 ## Modos do instalador
 
 - `wizard`: coleta interativa de dados do cliente e gera a configuracao declarativa.
 - `plan`: mostra o que sera instalado e quais artefatos serao gerados.
 - `apply`: escreve artefatos, scripts auxiliares e relatorio de implantacao.
+- `install`: executa a instalacao real no host, com backup e aplicacao de configuracoes.
 - `detect`: imprime o inventario do servidor para diagnostico rapido.
 - `validate`: executa validacoes locais de binarios, servicos, `nginx`, `unbound` e `PM2`.
 
@@ -51,3 +53,4 @@ O objetivo desta pasta e permitir provisionar o SGCG em cenarios diferentes sem 
 - A configuracao fica separada do codigo.
 - Templates e perfis podem ser estendidos sem alterar o wizard principal.
 - O firewall oficial continua sendo o `UFW`; qualquer complemento runtime deve continuar paralelo a ele.
+- O frontend de producao e servido como build estatico pelo `nginx`; `PM2` fica responsavel pelo `backend`, `backend-proxy` e `backend-proxy-ingester`.
