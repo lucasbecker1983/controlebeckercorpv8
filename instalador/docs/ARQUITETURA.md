@@ -23,17 +23,20 @@ Fornecer um instalador robusto, reexecutavel e orientado a perfis para provision
 
 ## Entregas desta primeira versao
 
-- estrutura oficial `Instalador/`
+- estrutura oficial `instalador/`
 - bootstrap com dependencias de sistema
 - engine em Python
 - perfis de exemplo
 - templates de `nginx`, `netplan`, `env`, `pm2`, `ufw` e `unbound`
+- script de inicializacao de `PostgreSQL`
+- script de deploy base do SGCG
+- validacao local de binarios e servicos
 - relatorio de instalacao
 
 ## Evolucoes recomendadas
 
 - modo `rollback`
 - importacao/exportacao de perfis por cliente
-- instalador TUI com `dialog`
+- assistente TUI mais rico com `dialog` e selecao multipla de modulos
 - assistente web local de primeira inicializacao
 - validadores ativos para `postgresql`, `nginx`, `unbound`, `pm2` e `certificados`

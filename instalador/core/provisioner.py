@@ -51,6 +51,9 @@ class Provisioner:
             "  - ecosystem PM2\n"
             "  - baseline de UFW\n"
             "  - include inicial do Unbound\n"
+            "  - script de inicializacao do PostgreSQL\n"
+            "  - script de deploy base do SGCG\n"
+            "  - script de validacao local\n"
             "  - relatorio final da instalacao\n"
         )
 
@@ -87,11 +90,29 @@ class Provisioner:
                 "unbound/unbound-sgcg.conf.j2",
                 config=self.config,
             ),
+            output_root / "postgres-init.sql": self.renderer.render(
+                "postgres/postgres-init.sql.j2",
+                config=self.config,
+            ),
+            output_root / "setup-postgresql.sh": self.renderer.render(
+                "postgres/setup-postgresql.sh.j2",
+                config=self.config,
+            ),
+            output_root / "deploy-sgcg.sh": self.renderer.render(
+                "deploy/deploy-sgcg.sh.j2",
+                config=self.config,
+            ),
+            output_root / "validate-sgcg.sh": self.renderer.render(
+                "validate/validate-sgcg.sh.j2",
+                config=self.config,
+            ),
             output_root / "install-stack.sh": self._render_install_script(),
         }
 
         for path, content in files.items():
             path.write_text(content.rstrip() + "\n", encoding="utf-8")
+            if path.suffix == ".sh":
+                path.chmod(0o755)
 
         report_path = output_root / "install-report.txt"
         report_path.write_text(self._render_report(output_root), encoding="utf-8")

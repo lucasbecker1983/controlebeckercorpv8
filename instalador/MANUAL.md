@@ -115,8 +115,9 @@ O fluxo operacional recomendado e este:
 4. revisar a configuracao declarativa
 5. gerar o plano
 6. aplicar os artefatos
-7. validar os servicos
-8. publicar o ambiente
+7. inicializar banco e deploy, quando aplicavel
+8. validar os servicos
+9. publicar o ambiente
 
 ## 7. Etapa 1: preparar o servidor
 
@@ -266,6 +267,10 @@ Arquivos previstos:
 - `ecosystem.config.cjs`
 - `ufw-baseline.sh`
 - `unbound-sgcg.conf`
+- `postgres-init.sql`
+- `setup-postgresql.sh`
+- `deploy-sgcg.sh`
+- `validate-sgcg.sh`
 - `install-stack.sh`
 - `install-report.txt`
 
@@ -323,6 +328,26 @@ Include inicial para `Unbound`, com `access-control` por sub-rede e encaminhamen
 ### `install-stack.sh`
 
 Script utilitario que materializa a instalacao base de pacotes previstos no plano.
+
+### `postgres-init.sql`
+
+Script SQL idempotente para criacao de role e banco do SGCG.
+
+### `setup-postgresql.sh`
+
+Script de inicializacao do `PostgreSQL`, com criacao idempotente de role e banco.
+
+### `deploy-sgcg.sh`
+
+Script base de deploy do projeto, com:
+
+- `npm install`
+- `npm run build`
+- inicializacao ou restart do `PM2`
+
+### `validate-sgcg.sh`
+
+Script local de validacao operacional do servidor apos a instalacao.
 
 ### `install-report.txt`
 
@@ -424,6 +449,7 @@ systemctl status postgresql
 systemctl status unbound
 systemctl status squid
 pm2 list
+python3 sgcg-installer.py validate
 ```
 
 Em seguida, testar:
@@ -465,7 +491,19 @@ Fluxo recomendado para ajustar um ambiente ja existente:
 4. rodar `apply`
 5. validar novamente os servicos
 
-## 24. O que este instalador ainda nao deve prometer sozinho
+## 24. Fluxo recomendado apos `apply`
+
+Em uma implantacao nova, a sequencia mais segura e:
+
+```bash
+cd /etc/sgcg/installer/generated
+sudo ./install-stack.sh
+sudo ./setup-postgresql.sh
+sudo ./deploy-sgcg.sh
+sudo ./validate-sgcg.sh
+```
+
+## 25. O que este instalador ainda nao deve prometer sozinho
 
 Esta primeira versao entrega a estrutura profissional e os artefatos base, mas ainda deve evoluir em pontos como:
 
@@ -473,10 +511,10 @@ Esta primeira versao entrega a estrutura profissional e os artefatos base, mas a
 - aplicacao direta de `netplan` em modo transacional
 - criacao automatica de banco e extensoes com validacao fim a fim
 - emissao automatica de certificados conforme cenario
-- deploy transacional dos tres runtimes do SGCG
+- deploy transacional completo dos tres runtimes do SGCG
 - importacao/exportacao de perfis de cliente
 
-## 25. Procedimento recomendado de entrega
+## 26. Procedimento recomendado de entrega
 
 Ao concluir uma implantacao:
 
@@ -487,7 +525,7 @@ Ao concluir uma implantacao:
 5. registrar credenciais iniciais em cofre seguro
 6. documentar quaisquer regras adicionais fora do baseline
 
-## 26. Identidade da solucao
+## 27. Identidade da solucao
 
 Nome recomendado para uso comercial e operacional:
 
@@ -497,17 +535,17 @@ Descricao curta recomendada:
 
 `Instalador declarativo, auditavel e reexecutavel para implantacao completa do SGCG em ambientes Ubuntu Server com console, proxy, DNS, firewall, politicas, VLANs e servicos institucionais.`
 
-## 27. Proximos passos recomendados
+## 28. Proximos passos recomendados
 
 As evolucoes mais valiosas para a proxima rodada sao:
 
 1. criar modo `rollback`
-2. criar modo `deploy` com build real do SGCG
-3. adicionar wizard `dialog/whiptail`
+2. criar modo `deploy` totalmente transacional
+3. ampliar o wizard `dialog/whiptail` para selecao modular e revisao final
 4. criar templates de `systemd` e `postgresql` mais detalhados
 5. adicionar validadores ativos de SSL, DNS, banco e portas
 
-## 28. Conclusao
+## 29. Conclusao
 
 O diretorio `instalador/` agora serve como base oficial para transformar o SGCG em uma plataforma instalavel com padrao profissional.
 

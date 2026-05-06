@@ -57,6 +57,7 @@ class DatabaseConfig:
 class StackConfig:
     node_major: str = "22"
     python_binary: str = "python3"
+    project_root: str = "/opt/controlebeckercorp-v8"
     frontend_dir: str = "/opt/sgcg/frontend"
     backend_dir: str = "/opt/sgcg/backend"
     backend_proxy_dir: str = "/opt/sgcg/backend-proxy"

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTALLER_PY="{{ config.stack.project_root }}/instalador/sgcg-installer.py"
+INSTALLER_VENV="{{ config.stack.project_root }}/instalador/.venv/bin/python3"
+
+echo "== Validacao local do SGCG =="
+if [[ -x "${INSTALLER_VENV}" ]]; then
+  "${INSTALLER_VENV}" "${INSTALLER_PY}" --config /etc/sgcg/installer/sgcg-config.yaml validate
+else
+  python3 "${INSTALLER_PY}" --config /etc/sgcg/installer/sgcg-config.yaml validate
+fi
+
+echo
+echo "== Portas em escuta =="
+ss -ltnp
+
+echo
+echo "== Teste HTTP local =="
+curl -I --max-time 10 "http://127.0.0.1" || true
+
+echo
+echo "== Teste HTTPS do dominio configurado =="
+curl -k -I --max-time 10 "https://{{ config.domains.public_domain }}" || true

@@ -246,6 +246,32 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `bash -n instalador/bootstrap.sh` concluido com sucesso
 - observacao operacional:
   - esta entrega estabelece a fundacao do instalador robusto solicitado, mas ainda deve evoluir em rodadas futuras para `rollback`, `deploy` transacional completo, emissao automatica de certificados e validadores ativos fim a fim
+
+## Evolucao operacional do superinstalador SGCG JMB TECNOLOGIA - 2026-05-06
+
+- diretorio consolidado: `instalador/`
+- evolucoes implementadas nesta rodada:
+  - `instalador/core/wizard.py` passou a suportar `whiptail` ou `dialog` quando disponiveis, com fallback para prompt textual
+  - `instalador/core/app.py` ganhou o comando `validate`
+  - `instalador/core/validate.py` foi criado para validar binarios, servicos, `nginx`, `unbound` e `pm2`
+  - `instalador/core/provisioner.py` passou a gerar scripts adicionais de operacao
+- novos artefatos gerados pelo `apply`:
+  - `postgres-init.sql`
+  - `setup-postgresql.sh`
+  - `deploy-sgcg.sh`
+  - `validate-sgcg.sh`
+- documentacao atualizada:
+  - `instalador/README.md`
+  - `instalador/MANUAL.md`
+  - `instalador/docs/ARQUITETURA.md`
+- validacoes executadas nesta rodada:
+  - `python3 -m compileall instalador`
+  - `bash -n instalador/bootstrap.sh`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml plan`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml validate`
+  - `python3 instalador/sgcg-installer.py --config instalador/profiles/full-appliance.yaml apply`
+- observacao operacional:
+  - o instalador agora ja sai da fase apenas estrutural e entra em fase de provisionamento guiado com `wizard` TUI, inicializacao de `PostgreSQL`, deploy base do SGCG e validacao local reutilizavel
   - se alguma estacao continuar exibindo `Nao seguro`, a discrepancia mais provavel passa a ser uma estacao sem essa raiz legada ou com outra raiz antiga conflitando no cache local
   - a raiz `2026` foi preservada para rollback controlado, mas deixou de ser a cadeia canonica publicada pelos nomes internos nesta rodada
 

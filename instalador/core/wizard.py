@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
+
 from .config import DomainConfig, InstallerConfig, InterfaceConfig, VlanConfig
 from .detect import RuntimeInventory
 
@@ -18,7 +21,185 @@ def _prompt_bool(label: str, default: bool = True) -> bool:
     return raw in {"y", "yes", "s", "sim"}
 
 
+def _run_dialog(args: list[str]) -> str:
+    command = shutil.which("whiptail") or shutil.which("dialog")
+    if not command:
+        raise RuntimeError("dialog indisponivel")
+
+    if command.endswith("dialog"):
+        cmd = [command, "--stdout", *args]
+    else:
+        cmd = [command, *args]
+
+    result = subprocess.run(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("dialog cancelado")
+    output = result.stdout.strip() or result.stderr.strip()
+    return output
+
+
+def _dialog_input(title: str, label: str, default: str = "") -> str:
+    return _run_dialog(
+        [
+            "--title",
+            title,
+            "--inputbox",
+            label,
+            "14",
+            "78",
+            default,
+        ]
+    )
+
+
+def _dialog_yesno(title: str, label: str, default: bool = True) -> bool:
+    command = shutil.which("whiptail") or shutil.which("dialog")
+    if not command:
+        raise RuntimeError("dialog indisponivel")
+
+    cmd = [command]
+    if command.endswith("dialog"):
+        cmd.append("--stdout")
+    if default:
+        cmd.append("--defaultno")
+        cmd.pop()
+    cmd.extend(["--title", title, "--yesno", label, "12", "78"])
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    return result.returncode == 0 if default else result.returncode == 0
+
+
+def _dialog_menu(title: str, label: str, options: list[tuple[str, str]], default: str) -> str:
+    menu_args: list[str] = []
+    for key, desc in options:
+        menu_args.extend([key, desc])
+    return _run_dialog(
+        [
+            "--title",
+            title,
+            "--menu",
+            label,
+            "18",
+            "90",
+            "8",
+            *menu_args,
+        ]
+    ) or default
+
+
+def _supports_dialog() -> bool:
+    return shutil.which("whiptail") is not None or shutil.which("dialog") is not None
+
+
+def _run_dialog_wizard(inventory: RuntimeInventory) -> InstallerConfig:
+    profile = _dialog_menu(
+        "JMB TECNOLOGIA",
+        "Selecione o perfil inicial do SGCG",
+        [
+            ("simple-console", "Console simples"),
+            ("gateway-vlans", "Gateway com VLANs"),
+            ("full-appliance", "Appliance completo"),
+        ],
+        "full-appliance",
+    )
+    hostname = _dialog_input("JMB TECNOLOGIA", "Hostname do SGCG", inventory.hostname or "sgcg")
+    timezone = _dialog_input(
+        "JMB TECNOLOGIA",
+        "Timezone do servidor",
+        inventory.default_timezone or "America/Sao_Paulo",
+    )
+    public_domain = _dialog_input(
+        "JMB TECNOLOGIA",
+        "Dominio principal do console SGCG",
+        "console.interno.local",
+    )
+    internal_domains_raw = _dialog_input(
+        "JMB TECNOLOGIA",
+        "Dominios internos separados por virgula",
+        "console.interno.local,suporte.interno.local,chamados.interno.local",
+    )
+    wan_name = _dialog_input("JMB TECNOLOGIA", "Interface WAN", inventory.recommended_wan)
+    lan_name = _dialog_input("JMB TECNOLOGIA", "Interface LAN", inventory.recommended_lan)
+    trunk_enabled = _dialog_yesno(
+        "JMB TECNOLOGIA",
+        "Havera interface TRUNK/VLAN neste servidor?",
+        True,
+    )
+
+    interfaces = [
+        InterfaceConfig(name=wan_name, role="wan"),
+        InterfaceConfig(name=lan_name, role="lan"),
+    ]
+
+    if trunk_enabled:
+        trunk_name = _dialog_input("JMB TECNOLOGIA", "Interface TRUNK", lan_name)
+        interfaces.append(InterfaceConfig(name=trunk_name, role="trunk"))
+
+    vlans: list[VlanConfig] = []
+    if trunk_enabled and _dialog_yesno(
+        "JMB TECNOLOGIA",
+        "Deseja cadastrar VLANs agora?",
+        True,
+    ):
+        while True:
+            vlan_id = int(_dialog_input("JMB TECNOLOGIA", "VLAN ID", "70"))
+            subnet = _dialog_input("JMB TECNOLOGIA", "Sub-rede CIDR", "192.168.70.0/24")
+            gateway = _dialog_input("JMB TECNOLOGIA", "Gateway da VLAN", "192.168.70.1")
+            parent = _dialog_input("JMB TECNOLOGIA", "Interface pai da VLAN", interfaces[-1].name)
+            name = _dialog_input("JMB TECNOLOGIA", "Nome da VLAN", f"vlan-{vlan_id}")
+            dhcp_enabled = _dialog_yesno("JMB TECNOLOGIA", "Ativar DHCP nesta VLAN?", False)
+            captive_portal = _dialog_yesno(
+                "JMB TECNOLOGIA",
+                "Ativar portal cativo nesta VLAN?",
+                False,
+            )
+            profile_name = _dialog_input(
+                "JMB TECNOLOGIA",
+                "Perfil de politica da VLAN",
+                "standard",
+            )
+            vlans.append(
+                VlanConfig(
+                    vlan_id=vlan_id,
+                    name=name,
+                    parent=parent,
+                    subnet_cidr=subnet,
+                    gateway=gateway,
+                    dhcp_enabled=dhcp_enabled,
+                    captive_portal=captive_portal,
+                    policy_profile=profile_name,
+                )
+            )
+            if not _dialog_yesno("JMB TECNOLOGIA", "Cadastrar outra VLAN?", False):
+                break
+
+    return InstallerConfig(
+        profile=profile,
+        hostname=hostname,
+        timezone=timezone,
+        domains=DomainConfig(
+            public_domain=public_domain,
+            internal_domains=[
+                item.strip() for item in internal_domains_raw.split(",") if item.strip()
+            ],
+        ),
+        interfaces=interfaces,
+        vlans=vlans,
+    )
+
+
 def run_wizard(inventory: RuntimeInventory) -> InstallerConfig:
+    if _supports_dialog():
+        try:
+            return _run_dialog_wizard(inventory)
+        except RuntimeError:
+            pass
+
     print("=== JMB TECNOLOGIA | Superinstalador SGCG ===")
     print(f"Host detectado: {inventory.hostname} | {inventory.os_name}")
     print("Interfaces detectadas:")

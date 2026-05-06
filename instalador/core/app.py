@@ -7,6 +7,7 @@ from pathlib import Path
 from .config import InstallerConfig, load_config, save_config
 from .detect import detect_runtime_inventory
 from .provisioner import Provisioner
+from .validate import validate_installer_state
 from .wizard import run_wizard
 
 
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("detect", help="exibe inventario do servidor")
     sub.add_parser("plan", help="gera o plano de instalacao")
     sub.add_parser("apply", help="gera artefatos e scripts do ambiente")
+    sub.add_parser("validate", help="executa validacoes locais do servidor")
     return parser
 
 
@@ -64,6 +66,11 @@ def main() -> int:
     if args.command == "apply":
         report_path = provisioner.apply()
         print(f"artefatos gerados. relatorio: {report_path}")
+        return 0
+
+    if args.command == "validate":
+        report = validate_installer_state(config)
+        print(report)
         return 0
 
     parser.error("comando invalido")

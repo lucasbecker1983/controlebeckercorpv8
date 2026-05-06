@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="{{ config.stack.project_root }}"
+
+cd "${PROJECT_ROOT}/backend"
+npm install
+npm run build
+
+cd "${PROJECT_ROOT}/backend-proxy"
+npm install
+npm run build
+
+cd "${PROJECT_ROOT}/frontend"
+npm install
+npm run build
+
+if command -v pm2 >/dev/null 2>&1; then
+  pm2 start /etc/sgcg/installer/generated/ecosystem.config.cjs || pm2 restart /etc/sgcg/installer/generated/ecosystem.config.cjs --update-env
+fi
+
+echo "Deploy base do SGCG concluido"

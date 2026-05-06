@@ -1,0 +1,7 @@
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{{ config.database.user }}') THEN
+        CREATE ROLE {{ config.database.user }} LOGIN PASSWORD '{{ config.database.password }}';
+    END IF;
+END
+$$;

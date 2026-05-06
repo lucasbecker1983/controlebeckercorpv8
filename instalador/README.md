@@ -35,7 +35,7 @@ O objetivo desta pasta e permitir provisionar o SGCG em cenarios diferentes sem 
 3. Revisar o arquivo gerado em `/etc/sgcg/installer/sgcg-config.yaml`.
 4. Gerar o plano com `python3 sgcg-installer.py plan`.
 5. Aplicar com `python3 sgcg-installer.py apply`.
-6. Validar `nginx`, `postgresql`, `pm2`, `unbound`, `ufw` e o dominio configurado.
+6. Validar `nginx`, `postgresql`, `pm2`, `unbound`, `ufw` e o dominio configurado com `python3 sgcg-installer.py validate`.
 
 ## Modos do instalador
 
@@ -43,6 +43,7 @@ O objetivo desta pasta e permitir provisionar o SGCG em cenarios diferentes sem 
 - `plan`: mostra o que sera instalado e quais artefatos serao gerados.
 - `apply`: escreve artefatos, scripts auxiliares e relatorio de implantacao.
 - `detect`: imprime o inventario do servidor para diagnostico rapido.
+- `validate`: executa validacoes locais de binarios, servicos, `nginx`, `unbound` e `PM2`.
 
 ## Observacoes
 
