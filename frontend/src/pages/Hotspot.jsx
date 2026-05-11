@@ -852,11 +852,11 @@ export default function Hotspot() {
   };
 
   const cleanupStaleSessions = async () => {
-    if (!confirm('Remover do módulo as sessões já expiradas e revogadas?')) return;
+    if (!confirm('Ocultar da grade administrativa as sessões já expiradas e revogadas, preservando o Relatório e a trilha de auditoria?')) return;
     setCleaningSessions(true);
     try {
       const res = await api.post('/api/hotspot/sessions/cleanup-stale');
-      alert(`Limpeza concluída: ${res.data?.deleted_total || 0} sessão(ões) removida(s).`);
+      alert(`Limpeza concluída: ${res.data?.hidden_total || 0} sessão(ões) ocultada(s) apenas da grade administrativa.`);
       await load();
     } catch (err) {
       alert(err?.response?.data?.error || 'Falha ao limpar sessões antigas.');
@@ -972,7 +972,7 @@ export default function Hotspot() {
             empty="Nenhuma sessão registrada."
             actions={(
               <ActionButton tone="ghost" icon={cleaningSessions ? Activity : Trash2} onClick={cleanupStaleSessions} disabled={cleaningSessions}>
-                {cleaningSessions ? 'Limpando...' : 'Limpar expiradas e revogadas'}
+                {cleaningSessions ? 'Limpando...' : 'Ocultar expiradas e revogadas'}
               </ActionButton>
             )}
             columns={[

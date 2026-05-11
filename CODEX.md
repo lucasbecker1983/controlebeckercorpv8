@@ -131,6 +131,22 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `cd backend && npm run build` concluido com sucesso em `2026-05-11`
   - `pm2 restart bcc-backend --update-env` executado com sucesso em `2026-05-11`
 
+## Hotspot - limpeza administrativa sem apagar historico de auditoria - 2026-05-11
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/Hotspot.jsx`
+- ajuste de regra de negocio aplicado:
+  - a acao de `cleanup-stale` deixou de apagar registros de `hotspot_sessions`
+  - agora as sessoes `expiradas` ou `revogadas` sao apenas ocultadas da grade `Sessoes recentes` por meio da coluna `admin_hidden_at`
+  - o endpoint administrativo continua revogando `runtime IPs` residuais quando existirem, mas preserva o historico para `Relatorio`, `Auditoria` e contexto `LGPD`
+  - as consultas do modulo administrativo que alimentam `Visao Geral` e `Sessoes recentes` passaram a ignorar apenas os registros ocultados
+- ajuste de UX aplicado:
+  - o botao e as mensagens do frontend passaram a deixar explicito que a acao apenas oculta da grade administrativa, sem apagar o historico institucional
+- objetivo operacional:
+  - manter a tabela administrativa enxuta para operacao diaria
+  - preservar integralmente a trilha institucional usada em `Relatorio`, `Auditoria` e conformidade `LGPD`
+
 ## Hotspot portal - ajustes de rotulagem e foco - 2026-05-06
 
 - arquivo alterado: `frontend/src/pages/HotspotPortal.jsx`

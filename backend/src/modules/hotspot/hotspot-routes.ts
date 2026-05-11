@@ -212,7 +212,8 @@ async function ensureSchema() {
             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '4 hours'),
-            revoked_at TIMESTAMPTZ
+            revoked_at TIMESTAMPTZ,
+            admin_hidden_at TIMESTAMPTZ
         );
 
         CREATE TABLE IF NOT EXISTS hotspot_password_resets (
@@ -239,7 +240,9 @@ async function ensureSchema() {
             ON hotspot_password_resets (visitor_id, created_at DESC);
         REVOKE ALL ON hotspot_visitors, hotspot_devices, hotspot_sessions, hotspot_password_resets FROM PUBLIC;
     `);
+    await pool.query(`ALTER TABLE hotspot_sessions ADD COLUMN IF NOT EXISTS admin_hidden_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE hotspot_sessions ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '4 hours')`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_hotspot_sessions_admin_hidden ON hotspot_sessions (admin_hidden_at, started_at DESC)`);
 }
 
 async function inferMac(ip: string | null) {
@@ -994,6 +997,7 @@ router.get('/overview', requireJwt, async (_req: AuthenticatedRequest, res) => {
                    v.full_name, v.cpf
               FROM hotspot_sessions s
               LEFT JOIN hotspot_visitors v ON v.id = s.visitor_id
+             WHERE s.admin_hidden_at IS NULL
              ORDER BY s.started_at DESC
              LIMIT 12
         `),
@@ -1200,6 +1204,7 @@ router.get('/sessions', requireJwt, async (_req: AuthenticatedRequest, res) => {
                v.full_name, v.cpf
           FROM hotspot_sessions s
           LEFT JOIN hotspot_visitors v ON v.id = s.visitor_id
+         WHERE s.admin_hidden_at IS NULL
          ORDER BY s.started_at DESC
          LIMIT 300
     `);
@@ -1211,18 +1216,36 @@ router.post('/sessions/cleanup-stale', requireJwt, async (req: AuthenticatedRequ
     const staleSessions = await pool.query(
         `SELECT id, status, host(client_ip) AS client_ip
            FROM hotspot_sessions
-          WHERE status = 'revoked'
-             OR expires_at <= NOW()
+          WHERE admin_hidden_at IS NULL
+            AND (
+                status = 'revoked'
+                OR expires_at <= NOW()
+            )
           ORDER BY started_at DESC`,
     );
     if (!staleSessions.rowCount) {
-        return res.json({ success: true, deleted_total: 0, deleted_expired: 0, deleted_revoked: 0, runtime_revoked: 0 });
+        return res.json({
+            success: true,
+            hidden_total: 0,
+            hidden_expired: 0,
+            hidden_revoked: 0,
+            deleted_total: 0,
+            deleted_expired: 0,
+            deleted_revoked: 0,
+            runtime_revoked: 0,
+        });
     }
 
-    const deletedExpired = staleSessions.rows.filter((row) => row.status !== 'revoked').length;
-    const deletedRevoked = staleSessions.rows.filter((row) => row.status === 'revoked').length;
+    const hiddenExpired = staleSessions.rows.filter((row) => row.status !== 'revoked').length;
+    const hiddenRevoked = staleSessions.rows.filter((row) => row.status === 'revoked').length;
     const runtimeRevoked = await revokeRuntimeIps(staleSessions.rows);
-    await pool.query(`DELETE FROM hotspot_sessions WHERE id = ANY($1::bigint[])`, [staleSessions.rows.map((row) => row.id)]);
+    await pool.query(
+        `UPDATE hotspot_sessions
+            SET admin_hidden_at = NOW(),
+                last_seen_at = COALESCE(last_seen_at, NOW())
+          WHERE id = ANY($1::bigint[])`,
+        [staleSessions.rows.map((row) => row.id)],
+    );
 
     await institutionalAuditService.log({
         action: 'hotspot_sessions_cleanup_stale',
@@ -1232,13 +1255,13 @@ router.post('/sessions/cleanup-stale', requireJwt, async (req: AuthenticatedRequ
         actorUserAgent: req.headers['user-agent'] || null,
         payload: { vlan_id: HOTSPOT_VLAN_ID },
         result: {
-            deleted_total: staleSessions.rowCount,
-            deleted_expired: deletedExpired,
-            deleted_revoked: deletedRevoked,
+            hidden_total: staleSessions.rowCount,
+            hidden_expired: hiddenExpired,
+            hidden_revoked: hiddenRevoked,
             runtime_ips_revoked: runtimeRevoked,
         },
         success: true,
-        message: 'Sessoes expiradas ou revogadas do Hotspot foram removidas do modulo administrativo.',
+        message: 'Sessoes expiradas ou revogadas do Hotspot foram ocultadas da grade administrativa sem apagar o historico institucional.',
         route: req.originalUrl,
         method: req.method,
         statusCode: 200,
@@ -1246,9 +1269,12 @@ router.post('/sessions/cleanup-stale', requireJwt, async (req: AuthenticatedRequ
 
     res.json({
         success: true,
+        hidden_total: staleSessions.rowCount,
+        hidden_expired: hiddenExpired,
+        hidden_revoked: hiddenRevoked,
         deleted_total: staleSessions.rowCount,
-        deleted_expired: deletedExpired,
-        deleted_revoked: deletedRevoked,
+        deleted_expired: hiddenExpired,
+        deleted_revoked: hiddenRevoked,
         runtime_revoked: runtimeRevoked,
     });
 });
