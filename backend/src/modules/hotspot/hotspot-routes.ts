@@ -1,7 +1,10 @@
 import { Router, Request } from 'express';
 import argon2 from 'argon2';
+import { createHmac, randomInt } from 'crypto';
+import jwt from 'jsonwebtoken';
 import { execCmd, execCmdStrict } from '../../utils/sys';
 import { pool } from '../../config/db';
+import { env } from '../../config/env';
 import { institutionalAuditService } from '../institutional/institutional-audit-service';
 import { AuthenticatedRequest, requireJwt } from '../../middleware/auth';
 
@@ -31,7 +34,7 @@ async function loadDnsIgnoreFilter(col: string): Promise<string> {
     }
 }
 
-const HOTSPOT_SESSION_HOURS = 12;
+const HOTSPOT_SESSION_HOURS = 4;
 const HOTSPOT_VLAN_ID = 70;
 const HOTSPOT_VLAN_IFACE = 'enp6s0.70';
 const HOTSPOT_WAN_IFACE = 'enp8s0';
@@ -39,14 +42,28 @@ const HOTSPOT_GATEWAY_IP = '192.168.70.1';
 const HOTSPOT_AUTH_SET = 'sgcg_hotspot_v70_auth';
 const HOTSPOT_SESSION_SECONDS = HOTSPOT_SESSION_HOURS * 60 * 60;
 const HOTSPOT_SUCCESS_REDIRECT_URL = 'https://www.jacarezinho.pr.gov.br/';
+const HOTSPOT_OTP_MINUTES = Math.max(1, env.hotspotOtpMinutes || 5);
+const NAME_PARTICLES = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
 
 const onlyDigits = (value: unknown) => String(value || '').replace(/\D/g, '');
 const normalizeMac = (value: unknown) => String(value || '').trim().toLowerCase();
 const MAC_ADDRESS_REGEX = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
+const PHONE_MOBILE_LOCAL_REGEX = /^(?:55)?\d{10,11}$/;
+const PHONE_MOBILE_WITH_NINTH_DIGIT_REGEX = /^[1-9]{2}9\d{8}$/;
+const PHONE_MOBILE_MISSING_NINTH_DIGIT_REGEX = /^[1-9]{2}[6-9]\d{7}$/;
 const normalizeOptionalMac = (value: unknown) => {
     const normalized = normalizeMac(value);
     return MAC_ADDRESS_REGEX.test(normalized) ? normalized : null;
 };
+const normalizePhoneLocal = (value: unknown) => {
+    const rawDigits = onlyDigits(value);
+    if (!PHONE_MOBILE_LOCAL_REGEX.test(rawDigits)) return null;
+    const digits = rawDigits.startsWith('55') && rawDigits.length === 13 ? rawDigits.slice(2) : rawDigits;
+    if (PHONE_MOBILE_WITH_NINTH_DIGIT_REGEX.test(digits)) return digits;
+    if (PHONE_MOBILE_MISSING_NINTH_DIGIT_REGEX.test(digits)) return `${digits.slice(0, 2)}9${digits.slice(2)}`;
+    return null;
+};
+const phoneToE164 = (phone: string) => `+55${phone}`;
 
 const normalizeIp = (value: unknown) => {
     const raw = String(value || '').split(',')[0].trim();
@@ -62,7 +79,56 @@ const inferVlanId = (ip: string | null) => {
 };
 
 const maskCpf = (cpf: string) => cpf.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.***.***-$4');
-const isValidBirthDate = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+const maskPhone = (phone: string | null | undefined) => {
+    const digits = onlyDigits(phone);
+    if (digits.length === 11) return digits.replace(/^(\d{2})(\d{5})(\d{4})$/, '($1) $2-$3');
+    if (digits.length === 10) return digits.replace(/^(\d{2})(\d{4})(\d{4})$/, '($1) $2-$3');
+    return phone || null;
+};
+const normalizeFullName = (value: unknown) => String(value || '')
+    .normalize('NFC')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((token, index, tokens) => {
+        const lower = token.toLocaleLowerCase('pt-BR');
+        if (index > 0 && index < tokens.length - 1 && NAME_PARTICLES.has(lower)) return lower;
+        return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
+    })
+    .join(' ');
+
+function isValidCpf(cpf: string) {
+    const digits = onlyDigits(cpf);
+    if (digits.length !== 11 || /^(\d)\1{10}$/.test(digits)) return false;
+    const calcDigit = (base: string, factor: number) => {
+        let total = 0;
+        for (const digit of base) {
+            total += Number(digit) * factor;
+            factor -= 1;
+        }
+        const mod = (total * 10) % 11;
+        return mod === 10 ? 0 : mod;
+    };
+    const first = calcDigit(digits.slice(0, 9), 10);
+    const second = calcDigit(digits.slice(0, 10), 11);
+    return first === Number(digits[9]) && second === Number(digits[10]);
+}
+
+function validateFullName(value: string) {
+    const normalized = normalizeFullName(value);
+    const tokens = normalized.split(' ').filter(Boolean);
+    const meaningfulTokens = tokens.filter((token) => token.replace(/[^A-Za-zÀ-ÿ]/g, '').length >= 2);
+
+    if (normalized.length < 6) return { ok: false, normalized, error: 'Informe nome e sobrenome reais.' };
+    if (tokens.length < 2 || meaningfulTokens.length < 2) return { ok: false, normalized, error: 'Informe nome e sobrenome reais.' };
+    if (!tokens.every((token) => /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’-]*$/.test(token))) {
+        return { ok: false, normalized, error: 'Use apenas letras no nome completo.' };
+    }
+    const distinctMeaningful = new Set(meaningfulTokens.map((token) => token.toLocaleLowerCase('pt-BR')));
+    if (distinctMeaningful.size < 2) return { ok: false, normalized, error: 'Informe nome e sobrenome reais.' };
+    return { ok: true, normalized, error: '' };
+}
 
 const getClientIp = (req: Request) => normalizeIp(req.headers['x-forwarded-for'] || req.ip || req.socket.remoteAddress);
 
@@ -104,7 +170,7 @@ async function ensureSchema() {
             id BIGSERIAL PRIMARY KEY,
             full_name TEXT NOT NULL,
             cpf VARCHAR(11) NOT NULL UNIQUE,
-            birth_date DATE NOT NULL,
+            phone VARCHAR(11),
             mac_address VARCHAR(17),
             password_hash TEXT NOT NULL,
             active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -113,7 +179,13 @@ async function ensureSchema() {
         );
 
         ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS mother_name;
+        ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS birth_date;
         ALTER TABLE hotspot_visitors ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17);
+        ALTER TABLE hotspot_visitors ADD COLUMN IF NOT EXISTS phone VARCHAR(11);
+        UPDATE hotspot_visitors
+           SET phone = substring(phone FROM 1 FOR 2) || '9' || substring(phone FROM 3)
+         WHERE phone ~ '^[0-9]{10}$'
+           AND substring(phone FROM 3 FOR 1) ~ '^[6-9]$';
 
         CREATE TABLE IF NOT EXISTS hotspot_devices (
             id BIGSERIAL PRIMARY KEY,
@@ -139,18 +211,35 @@ async function ensureSchema() {
             user_agent TEXT,
             started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '12 hours'),
+            expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '4 hours'),
             revoked_at TIMESTAMPTZ
+        );
+
+        CREATE TABLE IF NOT EXISTS hotspot_password_resets (
+            id BIGSERIAL PRIMARY KEY,
+            visitor_id BIGINT NOT NULL REFERENCES hotspot_visitors(id) ON DELETE CASCADE,
+            cpf VARCHAR(11) NOT NULL,
+            phone VARCHAR(11) NOT NULL,
+            code_hash TEXT NOT NULL,
+            requested_ip INET,
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ NOT NULL,
+            used_at TIMESTAMPTZ
         );
 
         CREATE INDEX IF NOT EXISTS idx_hotspot_devices_mac ON hotspot_devices (mac_address);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_hotspot_visitors_mac
             ON hotspot_visitors (mac_address)
             WHERE mac_address IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_hotspot_visitors_phone ON hotspot_visitors (phone);
         CREATE INDEX IF NOT EXISTS idx_hotspot_sessions_status ON hotspot_sessions (status, expires_at DESC);
         CREATE INDEX IF NOT EXISTS idx_hotspot_sessions_vlan ON hotspot_sessions (vlan_id, started_at DESC);
-        REVOKE ALL ON hotspot_visitors, hotspot_devices, hotspot_sessions FROM PUBLIC;
+        CREATE INDEX IF NOT EXISTS idx_hotspot_password_resets_visitor
+            ON hotspot_password_resets (visitor_id, created_at DESC);
+        REVOKE ALL ON hotspot_visitors, hotspot_devices, hotspot_sessions, hotspot_password_resets FROM PUBLIC;
     `);
+    await pool.query(`ALTER TABLE hotspot_sessions ALTER COLUMN expires_at SET DEFAULT (NOW() + INTERVAL '4 hours')`);
 }
 
 async function inferMac(ip: string | null) {
@@ -205,6 +294,18 @@ async function listAuthorizedHotspotIps() {
     return Array.from(new Set(ipsetOutput.match(/192\.168\.70\.\d{1,3}/g) || [])).sort();
 }
 
+async function ensureHotspotAuthSetExists() {
+    const existingSet = await execCmd(`ipset list ${HOTSPOT_AUTH_SET}`);
+    if (existingSet) return;
+    try {
+        await execCmdStrict(`ipset create ${HOTSPOT_AUTH_SET} hash:ip timeout ${HOTSPOT_SESSION_SECONDS} -exist`);
+    } catch {
+        const recheck = await execCmd(`ipset list ${HOTSPOT_AUTH_SET}`);
+        if (recheck) return;
+        throw new Error(`Nao foi possivel garantir o ipset ${HOTSPOT_AUTH_SET}.`);
+    }
+}
+
 async function revokeLegacyAutoSessions() {
     const result = await pool.query(
         `UPDATE hotspot_sessions
@@ -251,7 +352,7 @@ async function expireExpiredSessions() {
 }
 
 async function ensureHotspotEnforcement() {
-    await execCmdStrict(`ipset create ${HOTSPOT_AUTH_SET} hash:ip timeout ${HOTSPOT_SESSION_SECONDS} -exist`);
+    await ensureHotspotAuthSetExists();
     await revokeLegacyAutoSessions();
     await expireExpiredSessions();
     await ensureOrderedPortalRule(
@@ -454,7 +555,76 @@ function adminVisitor(row: any, includeRawCpf = false) {
         ...row,
         cpf: maskCpf(row.cpf),
         cpf_raw: includeRawCpf ? row.cpf : undefined,
+        phone: maskPhone(row.phone),
+        phone_raw: includeRawCpf ? row.phone : undefined,
     };
+}
+
+function hashResetCode(code: string) {
+    return createHmac('sha256', env.jwtSecret).update(code).digest('hex');
+}
+
+function generateResetCode() {
+    return String(randomInt(100000, 1000000));
+}
+
+async function sendHotspotSms(phone: string, message: string) {
+    const provider = String(env.hotspotSmsProvider || '').trim().toLowerCase();
+    if (!env.hotspotSmsBaseUrl) {
+        throw new Error('Gateway SMS ainda não configurado no ambiente.');
+    }
+
+    if (provider === 'smsgate') {
+        const baseUrl = env.hotspotSmsBaseUrl.replace(/\/$/, '');
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+
+        if (env.hotspotSmsJwtSecret && env.hotspotSmsUserId) {
+            const token = jwt.sign(
+                {
+                    user_id: env.hotspotSmsUserId,
+                    scopes: ['messages:send'],
+                },
+                env.hotspotSmsJwtSecret,
+                {
+                    algorithm: 'HS256',
+                    issuer: env.hotspotSmsJwtIssuer || 'sgcg-smsgate',
+                    subject: env.hotspotSmsUserId,
+                    jwtid: `hotspot-${Date.now()}-${randomInt(1000, 9999)}`,
+                    expiresIn: 300,
+                    mutatePayload: false,
+                },
+            );
+            headers.Authorization = `Bearer ${token}`;
+        } else {
+            if (!env.hotspotSmsUsername || !env.hotspotSmsPassword) {
+                throw new Error('Credenciais do SMSGate não configuradas.');
+            }
+            headers.Authorization = `Basic ${Buffer.from(`${env.hotspotSmsUsername}:${env.hotspotSmsPassword}`).toString('base64')}`;
+        }
+
+        const payload: Record<string, any> = {
+            textMessage: { text: message },
+            phoneNumbers: [phoneToE164(phone)],
+        };
+        if (env.hotspotSmsDeviceId) {
+            payload.deviceId = env.hotspotSmsDeviceId;
+        }
+
+        const response = await fetch(`${baseUrl}/3rdparty/v1/messages`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+        });
+        if (!response.ok) {
+            const bodyText = await response.text().catch(() => '');
+            throw new Error(bodyText ? `Falha no SMSGate (${response.status}): ${bodyText}` : `Falha no SMSGate (${response.status}).`);
+        }
+        return;
+    }
+
+    throw new Error(`Provedor SMS não suportado: ${provider}.`);
 }
 
 async function auditAdmin(req: AuthenticatedRequest, action: string, success: boolean, payload: any = {}, result: any = {}, message?: string, statusCode = 200) {
@@ -581,17 +751,18 @@ router.post('/public/continue', async (req, res) => {
 
 router.post('/public/register', async (req, res) => {
     await ensureSchema();
-    const fullName = String(req.body.full_name || '').trim();
+    const nameValidation = validateFullName(req.body.full_name);
+    const fullName = nameValidation.normalized;
     const cpf = onlyDigits(req.body.cpf);
-    const birthDate = String(req.body.birth_date || '').trim();
+    const phone = normalizePhoneLocal(req.body.phone);
     const password = String(req.body.password || '');
     const ip = getClientIp(req);
     const vlanId = inferVlanId(ip);
     const mac = await inferMac(ip);
 
-    if (fullName.length < 6 || cpf.length !== 11 || !birthDate || password.length < 6) {
-        await audit(req, 'hotspot_register_failed', false, { cpf: cpf ? maskCpf(cpf) : null, ip, mac, vlan_id: vlanId }, {}, 'Dados obrigatorios invalidos.');
-        return res.status(400).json({ error: 'Preencha nome completo, CPF, data de nascimento e senha com ao menos 6 caracteres.' });
+    if (!nameValidation.ok || !isValidCpf(cpf) || !phone || password.length < 6) {
+        await audit(req, 'hotspot_register_failed', false, { cpf: cpf ? maskCpf(cpf) : null, phone: maskPhone(phone), ip, mac, vlan_id: vlanId }, {}, 'Dados obrigatorios invalidos.');
+        return res.status(400).json({ error: nameValidation.ok ? 'Preencha nome completo, CPF válido, celular com DDD e senha com ao menos 6 caracteres.' : nameValidation.error });
     }
 
     const exists = await pool.query('SELECT id, active FROM hotspot_visitors WHERE cpf = $1 LIMIT 1', [cpf]);
@@ -605,7 +776,7 @@ router.post('/public/register', async (req, res) => {
         const visitorResult = await pool.query(
             `UPDATE hotspot_visitors
                 SET full_name = $1,
-                    birth_date = $2::date,
+                    phone = $2,
                     password_hash = $3,
                     active = TRUE,
                     mac_address = CASE
@@ -619,8 +790,8 @@ router.post('/public/register', async (req, res) => {
                     END,
                     updated_at = NOW()
               WHERE id = $5
-              RETURNING id, full_name, cpf, mac_address`,
-            [fullName, birthDate, passwordHash, normalizeOptionalMac(mac), exists.rows[0].id],
+              RETURNING id, full_name, cpf, phone, mac_address`,
+            [fullName, phone, passwordHash, normalizeOptionalMac(mac), exists.rows[0].id],
         );
         const visitor = visitorResult.rows[0];
         const device = await upsertDevice(visitor.id, ip, mac, vlanId);
@@ -632,10 +803,10 @@ router.post('/public/register', async (req, res) => {
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     const visitorResult = await pool.query(
-        `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, mac_address, password_hash)
-         VALUES ($1,$2,$3::date,$4,$5)
-         RETURNING id, full_name, cpf, mac_address`,
-        [fullName, cpf, birthDate, normalizeOptionalMac(mac), passwordHash],
+        `INSERT INTO hotspot_visitors (full_name, cpf, phone, mac_address, password_hash)
+         VALUES ($1,$2,$3,$4,$5)
+         RETURNING id, full_name, cpf, phone, mac_address`,
+        [fullName, cpf, phone, normalizeOptionalMac(mac), passwordHash],
     );
     const visitor = visitorResult.rows[0];
     const device = await upsertDevice(visitor.id, ip, mac, vlanId);
@@ -652,6 +823,11 @@ router.post('/public/login', async (req, res) => {
     const ip = getClientIp(req);
     const vlanId = inferVlanId(ip);
     const mac = await inferMac(ip);
+    if (!isValidCpf(cpf)) {
+        await audit(req, 'hotspot_login_failed', false, { cpf: cpf ? maskCpf(cpf) : null, ip, mac, vlan_id: vlanId }, {}, 'CPF invalido.');
+        return res.status(400).json({ error: 'Informe um CPF válido.' });
+    }
+
     const result = await pool.query('SELECT * FROM hotspot_visitors WHERE cpf = $1 AND active = TRUE LIMIT 1', [cpf]);
 
     if (!result.rowCount || !(await argon2.verify(result.rows[0].password_hash, password).catch(() => false))) {
@@ -665,6 +841,145 @@ router.post('/public/login', async (req, res) => {
     const session = await createSession(req, visitor, device, 'cpf_password', ip, mac, vlanId);
     await audit(req, 'hotspot_login_success', true, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id, device_id: device?.id, session_id: session.id }, 'Login do hotspot por CPF e senha.');
     res.json({ authenticated: true, visitor: publicVisitor(visitor), ip, mac, vlan_id: vlanId, session, redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL });
+});
+
+router.post('/public/password-recovery/request', async (req, res) => {
+    await ensureSchema();
+    const cpf = onlyDigits(req.body.cpf);
+    const ip = getClientIp(req);
+    const mac = await inferMac(ip);
+    const vlanId = inferVlanId(ip);
+
+    if (!isValidCpf(cpf)) {
+        await audit(req, 'hotspot_password_recovery_request_failed', false, { cpf: cpf ? maskCpf(cpf) : null, ip, mac, vlan_id: vlanId }, {}, 'CPF invalido.');
+        return res.status(400).json({ error: 'Informe um CPF válido.' });
+    }
+
+    const visitorResult = await pool.query(
+        `SELECT id, full_name, cpf, phone
+           FROM hotspot_visitors
+          WHERE cpf = $1
+            AND active = TRUE
+          LIMIT 1`,
+        [cpf],
+    );
+
+    if (!visitorResult.rowCount) {
+        await audit(req, 'hotspot_password_recovery_request_unknown', true, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, {}, 'Solicitacao sem cadastro correspondente.');
+        return res.json({ success: true, message: 'Se os dados conferirem, o código será enviado por SMS.' });
+    }
+
+    const visitor = visitorResult.rows[0];
+    const phone = normalizePhoneLocal(visitor.phone);
+    if (!phone) {
+        await audit(req, 'hotspot_password_recovery_request_failed', false, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id }, 'Cadastro sem celular valido.');
+        return res.json({ success: true, message: 'Se os dados conferirem, o código será enviado por SMS.' });
+    }
+
+    const cooldown = await pool.query(
+        `SELECT id
+           FROM hotspot_password_resets
+          WHERE visitor_id = $1
+            AND used_at IS NULL
+            AND created_at > NOW() - INTERVAL '60 seconds'
+          LIMIT 1`,
+        [visitor.id],
+    );
+    if (cooldown.rowCount) {
+        await audit(req, 'hotspot_password_recovery_request_throttled', false, { cpf: maskCpf(cpf), phone: maskPhone(phone), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id }, 'Cooldown de SMS ativo.');
+        return res.status(429).json({ error: 'Aguarde 1 minuto antes de pedir um novo código.' });
+    }
+
+    const code = generateResetCode();
+    await pool.query(`UPDATE hotspot_password_resets SET used_at = NOW() WHERE visitor_id = $1 AND used_at IS NULL`, [visitor.id]);
+    await pool.query(
+        `INSERT INTO hotspot_password_resets (visitor_id, cpf, phone, code_hash, requested_ip, expires_at)
+         VALUES ($1,$2,$3,$4,$5::inet,NOW() + ($6 || ' minutes')::interval)`,
+        [visitor.id, cpf, phone, hashResetCode(code), ip || null, HOTSPOT_OTP_MINUTES],
+    );
+
+    try {
+        await sendHotspotSms(
+            phone,
+            `Prefeitura de Jacarezinho - Hotspot Institucional: sua senha provisoria e ${code}. Validade: ${HOTSPOT_OTP_MINUTES} minutos. Nao compartilhe este codigo.`,
+        );
+    } catch (error: any) {
+        await pool.query(`UPDATE hotspot_password_resets SET used_at = NOW() WHERE visitor_id = $1 AND used_at IS NULL`, [visitor.id]).catch(() => null);
+        await audit(req, 'hotspot_password_recovery_request_failed', false, { cpf: maskCpf(cpf), phone: maskPhone(phone), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id }, error?.message || 'Falha no envio do SMS.');
+        return res.status(503).json({ error: error?.message || 'Falha ao enviar SMS.' });
+    }
+
+    await audit(req, 'hotspot_password_recovery_requested', true, { cpf: maskCpf(cpf), phone: maskPhone(phone), ip, mac, vlan_id: vlanId }, { visitor_id: visitor.id }, 'Senha provisoria enviada por SMS.');
+    res.json({ success: true, message: 'Se os dados conferirem, o código será enviado por SMS.' });
+});
+
+router.post('/public/password-recovery/reset', async (req, res) => {
+    await ensureSchema();
+    const cpf = onlyDigits(req.body.cpf);
+    const code = onlyDigits(req.body.code).slice(0, 6);
+    const password = String(req.body.password || '');
+    const confirmPassword = String(req.body.confirm_password || '');
+    const ip = getClientIp(req);
+    const mac = await inferMac(ip);
+    const vlanId = inferVlanId(ip);
+
+    if (!isValidCpf(cpf) || code.length !== 6 || password.length < 6 || confirmPassword.length < 6) {
+        await audit(req, 'hotspot_password_recovery_reset_failed', false, { cpf: cpf ? maskCpf(cpf) : null, ip, mac, vlan_id: vlanId }, {}, 'Payload invalido para redefinicao por senha provisoria.');
+        return res.status(400).json({ error: 'Informe CPF, senha provisória, nova senha e confirmação da nova senha.' });
+    }
+
+    if (password !== confirmPassword) {
+        await audit(req, 'hotspot_password_recovery_reset_failed', false, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, {}, 'Nova senha e confirmacao divergentes.');
+        return res.status(400).json({ error: 'A nova senha e a confirmação precisam ser idênticas.' });
+    }
+
+    const tokenResult = await pool.query(
+        `SELECT r.id, r.visitor_id, r.code_hash, r.attempt_count, r.phone,
+                v.full_name, v.cpf, v.mac_address
+           FROM hotspot_password_resets r
+           JOIN hotspot_visitors v ON v.id = r.visitor_id
+          WHERE r.cpf = $1
+            AND r.used_at IS NULL
+            AND r.expires_at > NOW()
+            AND v.active = TRUE
+          ORDER BY r.created_at DESC
+          LIMIT 1`,
+        [cpf],
+    );
+
+    if (!tokenResult.rowCount) {
+        await audit(req, 'hotspot_password_recovery_reset_failed', false, { cpf: maskCpf(cpf), ip, mac, vlan_id: vlanId }, {}, 'Senha provisoria expirada ou inexistente.');
+        return res.status(400).json({ error: 'Senha provisória expirada, inválida ou já utilizada.' });
+    }
+
+    const resetRow = tokenResult.rows[0];
+    if (resetRow.attempt_count >= 5) {
+        await pool.query(`UPDATE hotspot_password_resets SET used_at = NOW() WHERE id = $1`, [resetRow.id]).catch(() => null);
+        await audit(req, 'hotspot_password_recovery_reset_locked', false, { cpf: maskCpf(cpf), phone: maskPhone(resetRow.phone), ip, mac, vlan_id: vlanId }, { visitor_id: resetRow.visitor_id }, 'Limite de tentativas excedido.');
+        return res.status(429).json({ error: 'Senha provisória bloqueada por excesso de tentativas. Solicite um novo SMS.' });
+    }
+
+    if (hashResetCode(code) !== resetRow.code_hash) {
+        await pool.query(`UPDATE hotspot_password_resets SET attempt_count = attempt_count + 1 WHERE id = $1`, [resetRow.id]).catch(() => null);
+        await audit(req, 'hotspot_password_recovery_reset_failed', false, { cpf: maskCpf(cpf), phone: maskPhone(resetRow.phone), ip, mac, vlan_id: vlanId }, { visitor_id: resetRow.visitor_id }, 'Senha provisoria incorreta.');
+        return res.status(400).json({ error: 'Senha provisória inválida.' });
+    }
+
+    const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+    await pool.query(
+        `UPDATE hotspot_visitors
+            SET password_hash = $2,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [resetRow.visitor_id, passwordHash],
+    );
+    await pool.query(`UPDATE hotspot_password_resets SET used_at = NOW() WHERE id = $1`, [resetRow.id]);
+    const visitor = { id: resetRow.visitor_id, full_name: resetRow.full_name, cpf: resetRow.cpf, mac_address: resetRow.mac_address };
+    await assignVisitorMac(visitor.id, mac);
+    const device = await upsertDevice(visitor.id, ip, mac, vlanId);
+    const session = await createSession(req, visitor, device, 'password_recovery', ip, mac, vlanId);
+    await audit(req, 'hotspot_password_recovery_reset_success', true, { cpf: maskCpf(cpf), phone: maskPhone(resetRow.phone), ip, mac, vlan_id: vlanId }, { visitor_id: resetRow.visitor_id, device_id: device?.id, session_id: session.id }, 'Senha do hotspot redefinida por senha provisoria SMS com sessao imediata.');
+    res.json({ authenticated: true, visitor: publicVisitor(visitor), ip, mac, vlan_id: vlanId, session, redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL, message: 'Senha atualizada com sucesso. Acesso liberado para este dispositivo.' });
 });
 
 router.get('/overview', requireJwt, async (_req: AuthenticatedRequest, res) => {
@@ -723,7 +1038,7 @@ router.get('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
     await ensureSchema();
     const includeInactive = String(req.query.include_inactive || req.query.includeInactive || '').toLowerCase() === 'true';
     const result = await pool.query(`
-        SELECT v.id, v.full_name, v.cpf, v.birth_date, v.mac_address, v.active, v.created_at,
+        SELECT v.id, v.full_name, v.cpf, v.phone, v.mac_address, v.active, v.created_at,
                COUNT(d.id)::int AS devices
           FROM hotspot_visitors v
           LEFT JOIN hotspot_devices d ON d.visitor_id = v.id
@@ -740,7 +1055,7 @@ router.get('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Visitante inválido.' });
     const result = await pool.query(
-        `SELECT v.id, v.full_name, v.cpf, v.birth_date, v.mac_address, v.active, v.created_at,
+        `SELECT v.id, v.full_name, v.cpf, v.phone, v.mac_address, v.active, v.created_at,
                 COUNT(d.id)::int AS devices
            FROM hotspot_visitors v
            LEFT JOIN hotspot_devices d ON d.visitor_id = v.id
@@ -755,9 +1070,10 @@ router.get('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
 
 router.post('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
     await ensureSchema();
-    const fullName = String(req.body.full_name || '').trim();
+    const nameValidation = validateFullName(req.body.full_name);
+    const fullName = nameValidation.normalized;
     const cpf = onlyDigits(req.body.cpf);
-    const birthDate = String(req.body.birth_date || '').trim();
+    const phone = normalizePhoneLocal(req.body.phone);
     const macAddress = normalizeOptionalMac(req.body.mac_address);
     const password = String(req.body.password || '');
     const active = req.body.active !== false;
@@ -767,18 +1083,18 @@ router.post('/visitors', requireJwt, async (req: AuthenticatedRequest, res) => {
         return res.status(400).json({ error: 'Informe o MAC no formato aa:bb:cc:dd:ee:ff.' });
     }
 
-    if (fullName.length < 6 || cpf.length !== 11 || !isValidBirthDate(birthDate) || password.length < 6) {
-        await auditAdmin(req, 'hotspot_visitor_create_failed', false, { cpf: cpf ? maskCpf(cpf) : null }, {}, 'Dados obrigatorios invalidos.', 400);
-        return res.status(400).json({ error: 'Preencha nome completo, CPF, data de nascimento e senha com ao menos 6 caracteres.' });
+    if (!nameValidation.ok || !isValidCpf(cpf) || !phone || password.length < 6) {
+        await auditAdmin(req, 'hotspot_visitor_create_failed', false, { cpf: cpf ? maskCpf(cpf) : null, phone: maskPhone(phone) }, {}, 'Dados obrigatorios invalidos.', 400);
+        return res.status(400).json({ error: nameValidation.ok ? 'Preencha nome completo, CPF válido, celular com DDD e senha com ao menos 6 caracteres.' : nameValidation.error });
     }
 
     const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
     try {
         const result = await pool.query(
-            `INSERT INTO hotspot_visitors (full_name, cpf, birth_date, mac_address, password_hash, active)
-             VALUES ($1,$2,$3::date,$4,$5,$6)
-             RETURNING id, full_name, cpf, birth_date, mac_address, active, created_at, 0::int AS devices`,
-            [fullName, cpf, birthDate, macAddress, passwordHash, active],
+            `INSERT INTO hotspot_visitors (full_name, cpf, phone, mac_address, password_hash, active)
+             VALUES ($1,$2,$3,$4,$5,$6)
+             RETURNING id, full_name, cpf, phone, mac_address, active, created_at, 0::int AS devices`,
+            [fullName, cpf, phone, macAddress, passwordHash, active],
         );
         if (macAddress) await upsertDevice(Number(result.rows[0].id), null, macAddress, HOTSPOT_VLAN_ID).catch(() => null);
         await auditAdmin(req, 'hotspot_visitor_created', true, { cpf: maskCpf(cpf), active }, { visitor_id: result.rows[0].id }, 'Visitante de hotspot criado pelo SGCG.');
@@ -796,9 +1112,10 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
     await ensureSchema();
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Visitante inválido.' });
-    const fullName = String(req.body.full_name || '').trim();
+    const nameValidation = validateFullName(req.body.full_name);
+    const fullName = nameValidation.normalized;
     const cpf = onlyDigits(req.body.cpf);
-    const birthDate = String(req.body.birth_date || '').trim();
+    const phone = normalizePhoneLocal(req.body.phone);
     const macAddress = normalizeOptionalMac(req.body.mac_address);
     const password = String(req.body.password || '');
     const active = req.body.active !== false;
@@ -808,9 +1125,9 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
         return res.status(400).json({ error: 'Informe o MAC no formato aa:bb:cc:dd:ee:ff.' });
     }
 
-    if (fullName.length < 6 || cpf.length !== 11 || !isValidBirthDate(birthDate) || (password && password.length < 6)) {
-        await auditAdmin(req, 'hotspot_visitor_update_failed', false, { visitor_id: id, cpf: cpf ? maskCpf(cpf) : null }, {}, 'Dados obrigatorios invalidos.', 400);
-        return res.status(400).json({ error: 'Revise nome completo, CPF, data de nascimento e senha opcional com ao menos 6 caracteres.' });
+    if (!nameValidation.ok || !isValidCpf(cpf) || !phone || (password && password.length < 6)) {
+        await auditAdmin(req, 'hotspot_visitor_update_failed', false, { visitor_id: id, cpf: cpf ? maskCpf(cpf) : null, phone: maskPhone(phone) }, {}, 'Dados obrigatorios invalidos.', 400);
+        return res.status(400).json({ error: nameValidation.ok ? 'Revise nome completo, CPF válido, celular com DDD e senha opcional com ao menos 6 caracteres.' : nameValidation.error });
     }
 
     const previous = await pool.query('SELECT id, cpf, active FROM hotspot_visitors WHERE id = $1 LIMIT 1', [id]);
@@ -822,15 +1139,15 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
             `UPDATE hotspot_visitors
                 SET full_name = $1,
                     cpf = $2,
-                    birth_date = $3::date,
+                    phone = $3,
                     mac_address = $4,
                     active = $5,
                     password_hash = COALESCE($6, password_hash),
                     updated_at = NOW()
               WHERE id = $7
-              RETURNING id, full_name, cpf, birth_date, mac_address, active, created_at,
+              RETURNING id, full_name, cpf, phone, mac_address, active, created_at,
                         (SELECT COUNT(*)::int FROM hotspot_devices d WHERE d.visitor_id = hotspot_visitors.id) AS devices`,
-            [fullName, cpf, birthDate, macAddress, active, passwordHash, id],
+            [fullName, cpf, phone, macAddress, active, passwordHash, id],
         );
         if (macAddress) await upsertDevice(id, null, macAddress, HOTSPOT_VLAN_ID).catch(() => null);
         if (!active && previous.rows[0].active) {
@@ -887,6 +1204,53 @@ router.get('/sessions', requireJwt, async (_req: AuthenticatedRequest, res) => {
          LIMIT 300
     `);
     res.json({ sessions: result.rows.map((row) => ({ ...row, cpf: row.cpf ? maskCpf(row.cpf) : null })) });
+});
+
+router.post('/sessions/cleanup-stale', requireJwt, async (req: AuthenticatedRequest, res) => {
+    await ensureSchema();
+    const staleSessions = await pool.query(
+        `SELECT id, status, host(client_ip) AS client_ip
+           FROM hotspot_sessions
+          WHERE status = 'revoked'
+             OR expires_at <= NOW()
+          ORDER BY started_at DESC`,
+    );
+    if (!staleSessions.rowCount) {
+        return res.json({ success: true, deleted_total: 0, deleted_expired: 0, deleted_revoked: 0, runtime_revoked: 0 });
+    }
+
+    const deletedExpired = staleSessions.rows.filter((row) => row.status !== 'revoked').length;
+    const deletedRevoked = staleSessions.rows.filter((row) => row.status === 'revoked').length;
+    const runtimeRevoked = await revokeRuntimeIps(staleSessions.rows);
+    await pool.query(`DELETE FROM hotspot_sessions WHERE id = ANY($1::bigint[])`, [staleSessions.rows.map((row) => row.id)]);
+
+    await institutionalAuditService.log({
+        action: 'hotspot_sessions_cleanup_stale',
+        requestedBy: req.auth?.username || 'sistema',
+        actorUserId: req.auth?.id || null,
+        actorIp: getClientIp(req),
+        actorUserAgent: req.headers['user-agent'] || null,
+        payload: { vlan_id: HOTSPOT_VLAN_ID },
+        result: {
+            deleted_total: staleSessions.rowCount,
+            deleted_expired: deletedExpired,
+            deleted_revoked: deletedRevoked,
+            runtime_ips_revoked: runtimeRevoked,
+        },
+        success: true,
+        message: 'Sessoes expiradas ou revogadas do Hotspot foram removidas do modulo administrativo.',
+        route: req.originalUrl,
+        method: req.method,
+        statusCode: 200,
+    });
+
+    res.json({
+        success: true,
+        deleted_total: staleSessions.rowCount,
+        deleted_expired: deletedExpired,
+        deleted_revoked: deletedRevoked,
+        runtime_revoked: runtimeRevoked,
+    });
 });
 
 router.post('/sessions/:id/revoke', requireJwt, async (req: AuthenticatedRequest, res) => {
@@ -1069,7 +1433,7 @@ router.post('/access-log/sync', requireJwt, async (req: AuthenticatedRequest, re
                 FROM dns_policy_events dpe
                 WHERE dpe.client_ip = hal.client_ip
                   AND dpe.occurred_at >= hal.session_started_at
-                  AND dpe.occurred_at <= COALESCE(hal.session_ended_at, hal.session_started_at + INTERVAL '12 hours')
+                  AND dpe.occurred_at <= COALESCE(hal.session_ended_at, hal.session_started_at + INTERVAL '4 hours')
                   AND dpe.action != 'blocked'
                   AND dpe.query_name IS NOT NULL
                   AND dpe.query_name != '-'

@@ -16,9 +16,15 @@ function formatCpf(value) {
     .replace(/\.(\d{3})(\d)/, '.$1-$2');
 }
 
-function dateValue(value) {
-  if (!value) return '';
-  return String(value).slice(0, 10);
+function formatPhone(value) {
+  const rawDigits = String(value || '').replace(/\D/g, '');
+  const digits = rawDigits.startsWith('55') && rawDigits.length > 11
+    ? rawDigits.slice(2, 13)
+    : rawDigits.slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return digits.replace(/^(\d{2})(\d+)/, '($1) $2');
+  if (digits.length <= 10) return digits.replace(/^(\d{2})(\d{4})(\d+)/, '($1) $2-$3');
+  return digits.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
 }
 
 function formatMac(value) {
@@ -41,6 +47,39 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function formatPersonName(value) {
+  const particles = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .map((token, index, tokens) => {
+      const lower = token.toLocaleLowerCase('pt-BR');
+      if (index > 0 && index < tokens.length - 1 && particles.has(lower)) return lower;
+      return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
+    })
+    .join(' ');
+}
+
+function translateSessionStatus(status, expiresAt) {
+  if (status === 'revoked') return 'Revogada';
+  if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return 'Expirada';
+  if (status === 'active') return 'Ativa';
+  return status || '-';
+}
+
+function translateAuthMethod(method) {
+  return ({
+    first_register: 'Primeiro cadastro',
+    reactivated_register: 'Recadastro',
+    cpf_password: 'CPF e senha',
+    mac_auto: 'Reconhecimento automático',
+    mac_confirm: 'Retorno confirmado',
+    password_recovery: 'Recuperação de senha',
+  }[method] || method || '-');
 }
 
 // ── shared UI ─────────────────────────────────────────────────────────────────
@@ -92,12 +131,15 @@ function Metric({ label, value, icon: Icon, sub }) {
   );
 }
 
-function TableShell({ title, rows, columns, empty }) {
+function TableShell({ title, rows, columns, empty, actions = null }) {
   return (
     <Surface className="p-5">
       <div className="mb-4 flex items-center justify-between gap-4">
         <h2 className="text-sm font-black uppercase text-on-surface">{title}</h2>
-        <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">{rows.length}</span>
+        <div className="flex items-center gap-2">
+          {actions}
+          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">{rows.length}</span>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-xs">
@@ -163,23 +205,23 @@ function SelectField({ label, value, onChange, children }) {
 // ── VisitorDialog ─────────────────────────────────────────────────────────────
 
 function VisitorDialog({ open, item, saving, onClose, onSubmit }) {
-  const [form, setForm] = useState({ full_name: '', cpf: '', birth_date: '', mac_address: '', password: '', active: true });
+  const [form, setForm] = useState({ full_name: '', cpf: '', phone: '', mac_address: '', password: '', active: true });
 
   useEffect(() => {
     if (!open) return;
     setForm(item ? {
       full_name: item.full_name || '',
       cpf: formatCpf(item.cpf_raw || item.cpf || ''),
-      birth_date: dateValue(item.birth_date),
+      phone: formatPhone(item.phone_raw || item.phone || ''),
       mac_address: item.mac_address || '',
       password: '',
       active: item.active !== false,
-    } : { full_name: '', cpf: '', birth_date: '', mac_address: '', password: '', active: true });
+    } : { full_name: '', cpf: '', phone: '', mac_address: '', password: '', active: true });
   }, [open, item]);
 
   const submit = (e) => {
     e.preventDefault();
-    onSubmit({ ...form, cpf: form.cpf.replace(/\D/g, '') });
+    onSubmit({ ...form, cpf: form.cpf.replace(/\D/g, ''), phone: form.phone.replace(/\D/g, '') });
   };
 
   const set = (key) => (v) => setForm((f) => ({ ...f, [key]: v }));
@@ -205,7 +247,7 @@ function VisitorDialog({ open, item, saving, onClose, onSubmit }) {
           <Field label="Nome completo" value={form.full_name} onChange={set('full_name')} required />
         </div>
         <Field label="CPF" value={form.cpf} onChange={(v) => setForm((f) => ({ ...f, cpf: formatCpf(v) }))} inputMode="numeric" required />
-        <Field label="Data de nascimento" type="date" value={form.birth_date} onChange={set('birth_date')} required />
+        <Field label="Celular" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: formatPhone(v) }))} inputMode="numeric" placeholder="DDD + celular com 9 dígitos" required />
         <Field label="MAC do dispositivo" value={form.mac_address} onChange={(v) => setForm((f) => ({ ...f, mac_address: formatMac(v) }))} placeholder="aa:bb:cc:dd:ee:ff" />
         <Field
           label={item ? 'Nova senha' : 'Senha'} type="password" value={form.password}
@@ -255,7 +297,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
   const maxUser = Number(top_users?.[0]?.sessions) || 1;
 
-  const methodLabel = { first_register: 'Novo cadastro', cpf_password: 'CPF + Senha', mac_auto: 'Auto (MAC)', mac_confirm: 'Retorno confirmado' };
+  const methodLabel = { first_register: 'Novo cadastro', reactivated_register: 'Recadastro', cpf_password: 'CPF + Senha', mac_auto: 'Auto (MAC)', mac_confirm: 'Retorno confirmado' };
   const methodColor = ['bg-primary', 'bg-info', 'bg-orange-500'];
 
   return (
@@ -765,6 +807,7 @@ export default function Hotspot() {
   const [metricsLoading, setMetricsLoading] = useState(false);
   const [visitorDialog, setVisitorDialog] = useState({ open: false, item: null });
   const [savingVisitor, setSavingVisitor] = useState(false);
+  const [cleaningSessions, setCleaningSessions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -806,6 +849,20 @@ export default function Hotspot() {
     if (!confirm(`Revogar sessão ${id}?`)) return;
     await api.post(`/api/hotspot/sessions/${id}/revoke`);
     load();
+  };
+
+  const cleanupStaleSessions = async () => {
+    if (!confirm('Remover do módulo as sessões já expiradas e revogadas?')) return;
+    setCleaningSessions(true);
+    try {
+      const res = await api.post('/api/hotspot/sessions/cleanup-stale');
+      alert(`Limpeza concluída: ${res.data?.deleted_total || 0} sessão(ões) removida(s).`);
+      await load();
+    } catch (err) {
+      alert(err?.response?.data?.error || 'Falha ao limpar sessões antigas.');
+    } finally {
+      setCleaningSessions(false);
+    }
   };
 
   const reconcile = async () => {
@@ -913,16 +970,27 @@ export default function Hotspot() {
             title="Sessões recentes"
             rows={sessions}
             empty="Nenhuma sessão registrada."
+            actions={(
+              <ActionButton tone="ghost" icon={cleaningSessions ? Activity : Trash2} onClick={cleanupStaleSessions} disabled={cleaningSessions}>
+                {cleaningSessions ? 'Limpando...' : 'Limpar expiradas e revogadas'}
+              </ActionButton>
+            )}
             columns={[
-              { key: 'full_name', label: 'Visitante', render: (row) => row.full_name || 'não identificado' },
+              { key: 'full_name', label: 'Visitante', render: (row) => formatPersonName(row.full_name || 'não identificado') },
               { key: 'cpf', label: 'CPF' },
               { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || 'não capturado' },
               { key: 'client_ip', label: 'IP' },
               { key: 'vlan_id', label: 'VLAN', render: (row) => row.vlan_id || '-' },
-              { key: 'auth_method', label: 'Método' },
-              { key: 'status', label: 'Estado' },
+              { key: 'auth_method', label: 'Método', render: (row) => translateAuthMethod(row.auth_method) },
+              { key: 'status', label: 'Estado', render: (row) => translateSessionStatus(row.status, row.expires_at) },
               { key: 'expires_at', label: 'Expira', render: (row) => row.expires_at ? new Date(row.expires_at).toLocaleString('pt-BR') : '-' },
-              { key: 'action', label: 'Ação', render: (row) => row.status === 'active' ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-black uppercase text-danger">Revogar</button> : '-' },
+              {
+                key: 'action',
+                label: 'Ação',
+                render: (row) => (row.status === 'active' && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()))
+                  ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-black uppercase text-danger">Revogar</button>
+                  : '-',
+              },
             ]}
           />
 
@@ -933,7 +1001,7 @@ export default function Hotspot() {
             columns={[
               { key: 'full_name', label: 'Nome', render: (row) => (
                 <div className="flex min-w-[260px] items-center justify-between gap-3">
-                  <span className="font-bold text-on-surface">{row.full_name}</span>
+                  <span className="font-bold text-on-surface">{formatPersonName(row.full_name)}</span>
                   <div className="flex shrink-0 gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
                     <button type="button" onClick={() => openVisitorEditor(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-outline/12 bg-surface-high/80 text-primary transition hover:bg-primary hover:text-on-primary">
                       <Edit3 size={14} />
@@ -945,8 +1013,9 @@ export default function Hotspot() {
                 </div>
               ) },
               { key: 'cpf', label: 'CPF' },
+              { key: 'phone', label: 'Celular' },
               { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || '-' },
-              { key: 'active', label: 'Estado', render: (row) => row.active ? 'ativo' : 'inativo' },
+              { key: 'active', label: 'Estado', render: (row) => row.active ? 'Ativo' : 'Inativo' },
               { key: 'devices', label: 'Dispositivos' },
               { key: 'created_at', label: 'Cadastro', render: (row) => row.created_at ? new Date(row.created_at).toLocaleString('pt-BR') : '-' },
             ]}

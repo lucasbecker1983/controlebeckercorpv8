@@ -58,6 +58,79 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - sem entrada da `VLAN 70` para a rede interna
   - com politicas de seguranca do SGCG plenamente ativas sobre a saida para internet
 
+## Portais cativos - atualizacao do logotipo JMB - 2026-05-11
+
+- arquivo alterado: `frontend/public/jmb-logo-clean.png`
+- ajuste visual aplicado:
+  - o asset compartilhado dos portais cativos foi substituido por uma versao melhor a partir de `/opt/Imagens/JMB_TECNOLOGIA_LOGOTIPO.png`
+  - o fundo opaco anterior da arte nova foi removido para manter transparencia real no portal
+  - a exportacao final foi centralizada no mesmo quadro `220x96` do asset anterior, preservando a proporcao visual usada pelos componentes
+- impacto:
+  - a nova arte passa a refletir automaticamente em `frontend/src/pages/HotspotPortal.jsx`, `frontend/src/pages/CollaboratorPortal.jsx` e no header institucional que consome `/jmb-logo-clean.png`
+- validacao:
+  - `identify frontend/public/jmb-logo-clean.png` confirmou `220x96` e canal `RGBA`
+  - validado que os quatro cantos do PNG final ficaram transparentes
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+
+## Hotspot - limpeza de sessoes antigas e endurecimento de nome com CPF - 2026-05-11
+
+- arquivos alterados:
+  - `frontend/src/pages/Hotspot.jsx`
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+- ajustes aplicados no modulo administrativo do Hotspot:
+  - a tabela `Sessoes recentes` ganhou botao para limpar sessoes ja `revogadas` ou `expiradas`
+  - criada rota administrativa `POST /api/hotspot/sessions/cleanup-stale` para remover essas sessoes do modulo e revogar `runtime IPs` residuais quando existirem
+  - os estados da tabela passaram a ficar em `pt-BR`, com exibicao explicita de `Ativa`, `Revogada` e `Expirada`
+  - os metodos de autenticacao do Hotspot tambem passaram a aparecer com rotulos operacionais em `pt-BR`
+- ajustes aplicados nos visitantes:
+  - os nomes exibidos no modulo passaram a ser normalizados com inicial maiuscula
+  - o backend do Hotspot passou a normalizar o `full_name` antes de gravar
+  - a validacao agora exige `nome e sobrenome reais`, rejeitando cadastros de palavra unica ou nome claramente insuficiente
+  - o CPF passou a ser validado pelo algoritmo completo de digitos verificadores, nao apenas por tamanho
+  - o endurecimento vale para:
+    - cadastro publico
+    - login por CPF
+    - recuperacao de senha
+    - criacao/edicao administrativa de visitantes
+- objetivo operacional:
+  - reduzir lixo cadastral no Hotspot
+  - evitar casos de visitante usando `CPF` valido com nome inconsistente ou simplificado demais no portal
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-11`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+
+## Hotspot portal - cadastro publico com validacao guiada - 2026-05-11
+
+- arquivo alterado:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- ajustes aplicados na experiencia do portal publico:
+  - mantido o fluxo operacional com `nome completo`, `CPF`, `celular` e `senha`
+  - o campo `nome completo` passou a normalizar a capitalizacao ao sair do campo
+  - o formulario ganhou placeholders mais claros para `CPF`, `celular` e `senha`
+  - o portal passou a exibir um checklist visual de preenchimento minimo antes do envio
+  - o botao `Realizar cadastro` fica bloqueado ate que nome, `CPF`, celular, senha e aceite `LGPD` atinjam o minimo esperado
+  - mensagens de erro locais foram endurecidas para reduzir preenchimento errado antes mesmo de chegar ao backend
+  - apos o cadastro concluido, o `CPF` informado e reaproveitado automaticamente na tela de login para reduzir retrabalho do visitante
+- objetivo operacional:
+  - reduzir cadastros incompletos ou incoerentes no portal cativo
+  - deixar o primeiro acesso mais claro para visitantes sem abrir mao da validacao ja existente no backend
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+
+## Hotspot - correcao da limpeza de sessoes antigas no modulo administrativo - 2026-05-11
+
+- arquivo alterado:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+- causa raiz:
+  - a rota dinamica `POST /api/hotspot/sessions/:id/revoke` estava declarada antes da rota fixa `POST /api/hotspot/sessions/cleanup-stale`
+  - com isso, o Express tentava interpretar `cleanup-stale` como se fosse `:id`, impedindo a acao do botao de limpeza no frontend
+- correcao aplicada:
+  - a rota fixa `cleanup-stale` foi movida para antes da rota parametrizada de revogacao por `id`
+  - o backend do `Hotspot` foi rebuildado e o processo `bcc-backend` reiniciado para a correcao entrar em runtime
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-11`
+  - `pm2 restart bcc-backend --update-env` executado com sucesso em `2026-05-11`
+
 ## Hotspot portal - ajustes de rotulagem e foco - 2026-05-06
 
 - arquivo alterado: `frontend/src/pages/HotspotPortal.jsx`
@@ -4903,3 +4976,328 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - nova checagem com `ss` confirmou que ainda nao havia processo escutando em `161/udp`
 - observacao:
   - a politica de firewall ficou preparada para SNMP interno/VPN; se houver monitor externo, liberar apenas o IP publico especifico do coletor, nao `Anywhere` na WAN
+
+## 2026-05-08 - Hotspot com expiracao reduzida para 4 horas
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+- ajuste aplicado:
+  - o tempo de expiracao padrao das sessoes do `Hotspot` foi reduzido de `12 horas` para `4 horas`
+  - o TTL runtime do `ipset` `sgcg_hotspot_v70_auth` passou a acompanhar as mesmas `4 horas`
+  - o `DEFAULT` de `expires_at` em `hotspot_sessions` passou a ser atualizado tambem via `ALTER TABLE`, para valer em bases ja existentes
+  - a janela de correlacao do relatorio/auditoria do Hotspot foi ajustada para `4 horas` quando a sessao ainda nao tiver `session_ended_at`
+- validacao:
+  - busca de codigo confirmou a troca dos pontos do Hotspot que ainda estavam fixos em `12 hours`
+  - `backend/src/utils/sys.ts` foi alinhado para aceitar o novo timeout `14400` do `ipset` do Hotspot, evitando `SHELL BLOCKED` no boot apos a reducao para `4 horas`
+
+## 2026-05-08 - QoS herdando VIPs institucionais e limpeza do legado FireQOS
+
+- sintoma operacional:
+  - o QoS aparentava `nao funcionar com os VIPs`
+  - em incidente real, foi preciso elevar temporariamente a banda da VLAN inteira para atender um usuario VIP
+- causa-raiz confirmada:
+  - o SGCG mantinha dois conceitos separados:
+    - `Excecoes VIP` institucionais em `policy_exceptions` e `dns_vip`
+    - `VIPs do QoS` em `net_qos_vips`
+  - o runtime de `tc` respeitava apenas `net_qos_vips`, entao um IP podia ser `VIP` no bypass institucional e continuar limitado no QoS
+  - diferencas confirmadas antes da correcao:
+    - `enp6s0.10`: VIPs institucionais ativos ausentes do QoS em `192.168.10.26`, `192.168.10.143`, `192.168.10.187`, `192.168.10.212` e `192.168.10.171`
+    - `enp6s0.50`: VIP institucional ativo ausente do QoS em `192.168.50.26`
+  - havia ainda um legado paralelo `fireqos.service` habilitado no host, criando risco de sobrescrita futura fora do SGCG
+- arquivos alterados:
+  - `backend/src/modules/qos/qos-routes.ts`
+  - `frontend/src/components/QosLimiter.jsx`
+  - `backend/src/utils/sys.ts`
+- correcao aplicada:
+  - o backend do QoS passou a herdar automaticamente, por VLAN, os VIPs ativos vindos de `policy_exceptions` e da tabela legada `dns_vip`
+  - o runtime efetivo agora aplica a uniao de:
+    - VIPs manuais do QoS em `net_qos_vips`
+    - VIPs institucionais ativos herdados automaticamente
+  - a resposta de `/api/qos` passou a expor:
+    - `vips` manuais
+    - `inherited_vips`
+    - `effective_vips`
+  - a UI de QoS passou a mostrar os VIPs herdados automaticamente do SGCG e o total efetivo priorizado no runtime
+  - o parser do `defaultClass` foi corrigido para reconhecer `default 0x10` como classe `1:10`, eliminando falso estado de `runtime_synced=false`
+  - o servico legado `fireqos.service` foi desabilitado e parado para evitar divergencia futura com o runtime oficial do SGCG
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-08`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-08`
+  - `pm2 restart bcc-backend --update-env`
+  - `pm2 restart bcc-frontend --update-env`
+  - `systemctl is-enabled fireqos` -> `disabled`
+  - `systemctl is-active fireqos` -> `inactive`
+  - `POST /api/qos/reconcile` validado com token administrativo local
+  - `GET /api/qos` passou a refletir runtime sincronizado:
+    - `enp6s0.10` com `vip_count=11`, `manual_vip_count=6`, `inherited_vip_count=9`, `runtime_synced=true`
+    - `enp6s0.50` com `vip_count=1`, `inherited_vip_count=1`, `runtime_synced=true`
+  - `tc filter show dev enp6s0.10 parent 1:` e `tc filter show dev ifb10 parent 1:` confirmaram `11` filtros `flowid 1:20`
+  - `tc filter show dev enp6s0.50 parent 1:` e `tc filter show dev ifb50 parent 1:` confirmaram o VIP herdado `192.168.50.26`
+
+## 2026-05-08 - QoS voltou ao modo manual e bypass reaplicado
+
+- decisao operacional:
+  - o QoS deve trabalhar apenas com os VIPs cadastrados manualmente no proprio modulo
+  - VIP institucional de `policy_exceptions` e `dns_vip` nao deve entrar automaticamente no `tc`
+- arquivos alterados:
+  - `backend/src/modules/qos/qos-routes.ts`
+  - `frontend/src/components/QosLimiter.jsx`
+- ajuste aplicado:
+  - removida a heranca automatica de VIPs no backend do QoS
+  - removidos da resposta de `/api/qos` os campos `inherited_vips` e `effective_vips`
+  - a UI do QoS voltou a exibir apenas os VIPs cadastrados manualmente
+  - mantida a correcao do parser de `defaultClass` para leitura fiel do runtime `tc`
+- bypass reaplicado:
+  - `POST /api/qos/reconcile` executado apos a remocao da heranca automatica
+  - o kernel voltou a respeitar apenas os IPs manuais cadastrados
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-08`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-08`
+  - `pm2 restart bcc-backend --update-env`
+  - `pm2 restart bcc-frontend --update-env`
+  - `GET /api/qos` confirmou:
+    - `enp6s0.10` com `vip_count=6` e `runtime_synced=true`
+    - `enp6s0.50` com `vip_count=0` e `runtime_synced=true`
+  - `tc filter show dev enp6s0.10 parent 1:` e `tc filter show dev ifb10 parent 1:` confirmaram `6` filtros `flowid 1:20`
+  - `tc filter show dev enp6s0.50 parent 1:` e `tc filter show dev ifb50 parent 1:` confirmaram ausencia de VIP manual nessa VLAN
+
+## 2026-05-08 - Hotspot sem data de nascimento, com celular e login por codigo SMS
+
+- decisao operacional:
+  - o cadastro do Hotspot nao deve mais pedir `data de nascimento`
+  - o identificador principal continua sendo o `CPF`
+  - o contato para recuperacao passa a ser `celular` com entrada apenas de `DDD + numero`
+  - o SGCG deve assumir `+55` automaticamente no envio do SMS
+  - como a senha do Hotspot fica armazenada em `hash argon2`, o sistema nao consegue reenviar a senha atual em texto puro
+  - para resolver o problema real de esquecimento sem forcar troca de senha, o portal agora faz `CPF -> codigo SMS -> entrar`
+- arquivos alterados:
+  - `backend/src/config/env.ts`
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+  - `frontend/src/pages/Hotspot.jsx`
+- ajuste aplicado:
+  - removido `birth_date` do schema do Hotspot com `ALTER TABLE hotspot_visitors DROP COLUMN IF EXISTS birth_date`
+  - adicionada coluna `phone` em `hotspot_visitors`
+  - criado o armazenamento de codigos temporarios em `hotspot_password_resets`
+  - o cadastro publico e o cadastro administrativo agora exigem:
+    - `nome completo`
+    - `CPF`
+    - `celular`
+    - `senha`
+  - o portal publico ganhou `Esqueci minha senha` na tela de login
+  - o fluxo final de recuperacao ficou assim:
+    - usuario informa apenas o `CPF`
+    - o backend busca o celular ja cadastrado
+    - o SGCG envia uma `senha provisoria` por SMS com validade configuravel
+    - o portal abre o segundo passo com:
+      - `senha provisoria`
+      - `nova senha`
+      - `confirmar nova senha`
+    - a nova senha so e salva quando os dois campos coincidirem
+    - a senha provisoria e de uso unico e deixa de valer apos o uso ou expiracao
+  - a integracao do SGCG ficou preparada para gateway SMS autohospedado via `SMSGate`
+- variaveis de ambiente preparadas:
+  - `HOTSPOT_SMS_PROVIDER`
+  - `HOTSPOT_SMS_BASE_URL`
+  - `HOTSPOT_SMS_USERNAME`
+  - `HOTSPOT_SMS_PASSWORD`
+  - `HOTSPOT_OTP_MINUTES`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-08`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-08`
+  - `pm2 restart bcc-backend --update-env`
+  - `pm2 restart bcc-frontend --update-env`
+  - `curl http://127.0.0.1:6778/api/hotspot/public/context` respondeu normalmente apos o restart
+  - o banco confirmou o novo estado estrutural:
+    - `hotspot_visitors` agora possui a coluna `phone`
+    - `birth_date` nao existe mais na tabela
+    - `hotspot_password_resets` foi criada
+  - retrato do cadastro validado no banco nesta data:
+    - `18` visitantes no total no primeiro snapshot
+    - `18` visitantes ativos no primeiro snapshot
+    - `0` visitantes ainda com celular preenchido no legado
+- observacao operacional importante:
+  - o fluxo `Esqueci minha senha` ja esta no sistema, mas os cadastros antigos do Hotspot ainda precisam receber celular para que o SMS funcione na pratica
+  - sem configurar o `SMSGate` no ambiente, o backend respondera falha de envio ao tentar mandar SMS
+  - por seguranca, o SGCG nao envia a senha atual do usuario porque ela nao existe em texto puro no banco; o que vai por SMS e apenas a senha provisoria descartavel
+
+## 2026-05-08 - SMSGate privado publicado no console e cadastro do Jhoelber removido para recadastro validado
+
+- decisao operacional:
+  - para viabilizar o teste de hoje sem depender de DNS/certificado novo, o `SMSGate` privado foi publicado por prefixo dentro do dominio ja valido `console.jacarezinho.cloud`
+  - o caminho escolhido para o app Android foi `https://console.jacarezinho.cloud/smsgate/api/mobile/v1`
+- infraestrutura aplicada:
+  - stack do SMSGate criada em `/etc/sgcg/smsgate`
+  - configuracao oficial baseada em `private mode`
+  - banco do SMSGate aproveitando o `MariaDB` local do host em `127.0.0.1:3306`
+  - subida validada com Docker em `host network`, evitando conflito com a cadeia `DOCKER-FORWARD` do host
+  - o worker do SMSGate mostrou-se suficiente para expor a API HTTP e executar as tarefas de manutencao, entao o contêiner extra do `server` foi removido
+- publicacao aplicada:
+  - `nginx` do console passou a encaminhar `^~ /smsgate/` para `http://127.0.0.1:3010/`
+  - o backend do SGCG foi alinhado para o endpoint oficial atual do SMSGate:
+    - rota `POST /3rdparty/v1/messages`
+    - payload `textMessage: { text: ... }`
+  - o texto institucional do SMS do Hotspot ficou padronizado como:
+    - `Prefeitura de Jacarezinho - Hotspot Institucional: sua senha provisoria e <codigo>. Validade: 5 minutos. Nao compartilhe este codigo.`
+- operacao para o Android:
+  - URL do app:
+    - `https://console.jacarezinho.cloud/smsgate/api/mobile/v1`
+  - token privado:
+    - `49db4c8e12959f5f1329cf0caea92ae438cddab64807f028`
+  - apos o primeiro pareamento, o app vai mostrar `username` e `password`
+  - para plugar isso no SGCG sem editar arquivo manualmente:
+    - `bash /opt/controlebeckercorp-v8/backend/340_set_smsgate_credentials.sh <username> <password>`
+- limpeza solicitada:
+  - o cadastro `Jhoelber lopes Pinheiro` foi removido de `hotspot_visitors`
+  - isso libera o recadastro completo com celular pelo portal publico
+- validacao:
+  - `docker compose -f /etc/sgcg/smsgate/docker-compose.yml up -d --remove-orphans`
+  - `curl http://127.0.0.1:3010/health` respondeu `{"status":"pass","version":"1.41.0"...}`
+  - `curl https://console.jacarezinho.cloud/smsgate/health` respondeu `{"status":"pass","version":"1.41.0"...}`
+  - `docker ps` confirmou `sgcg-smsgate-worker` como `healthy`
+  - `psql ... select count(*) ... Jhoelber ...` retornou `0`
+
+## 2026-05-08 - Hotspot com auto-login na recuperacao e SMSGate com autobind do emissor
+
+- ajustes funcionais do portal de recuperacao:
+  - o fluxo `Esqueci minha senha` passou a concluir com sessao imediata no `Hotspot`
+  - depois de validar `CPF + senha provisoria + nova senha + confirmar nova senha`, o backend agora:
+    - atualiza a senha
+    - associa o `MAC` ao visitante
+    - cria/atualiza o dispositivo
+    - abre a sessao do `Hotspot`
+    - devolve `redirect_url` para o frontend concluir o `ok -> conectado`
+  - o pedido inicial de recuperacao deixou de vazar existencia de cadastro ou telefone:
+    - tanto para `CPF` inexistente quanto para cadastro sem celular valido, a resposta publica fica padronizada em `Se os dados conferirem, o código será enviado por SMS.`
+- ajuste estrutural do `SMSGate`:
+  - a stack foi consolidada com dois processos:
+    - `sgcg-smsgate-server` em `127.0.0.1:3010`
+    - `sgcg-smsgate-worker` em `127.0.0.1:3011`
+  - isso substitui a leitura anterior de que apenas o `worker` bastaria para a API HTTP
+- nova estrategia de integracao do `Hotspot` com `SMSGate`:
+  - o backend ganhou suporte a envio por `JWT Bearer` assinado localmente com o `jwt.secret` do proprio `SMSGate`
+  - o envio usa escopo `messages:send` e pode apontar diretamente para `HOTSPOT_SMS_DEVICE_ID`
+  - o fallback por `Basic` com `HOTSPOT_SMS_USERNAME` e `HOTSPOT_SMS_PASSWORD` foi preservado
+- automacao criada para o emissor:
+  - novo script `backend/341_autobind_smsgate_sender.sh`
+  - novo `systemd timer` `sgcg-smsgate-autobind.timer`
+  - a cada `60 segundos`, o host:
+    - consulta o banco `sms`
+    - identifica o dispositivo Android emissor mais recente
+    - atualiza `backend/.env` com:
+      - `HOTSPOT_SMS_USER_ID`
+      - `HOTSPOT_SMS_DEVICE_ID`
+      - `HOTSPOT_SMS_JWT_SECRET`
+      - `HOTSPOT_SMS_JWT_ISSUER`
+    - reinicia `bcc-backend` apenas se houver mudanca
+  - isso elimina a necessidade de copiar manualmente o `username/password` gerado pelo app Android para o backend do `Hotspot`
+- emissor tecnico preparado nesta rodada:
+  - usuario tecnico confirmado no `SMSGate`: `SGCGGW`
+  - senha tecnica registrada para compatibilidade: `SgcgSms@2026`
+  - dispositivo emissor atualmente vinculado no `backend/.env`:
+    - `HOTSPOT_SMS_USER_ID=SGCGGW`
+    - `HOTSPOT_SMS_DEVICE_ID=sROhMPL9Oc8fy3k1hpC_f`
+  - o usuario/dispositivo experimental `SO_M07` criado durante a investigacao foi removido do banco `sms`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+  - `systemctl enable --now sgcg-smsgate-autobind.timer` executado com sucesso
+  - `systemctl status sgcg-smsgate-autobind.timer` confirmou `active (waiting)`
+  - `curl http://127.0.0.1:3010/health` respondeu `status=pass`
+  - `curl http://127.0.0.1:3011/health` respondeu `status=pass`
+  - envio de teste direto para `POST /api/3rdparty/v1/messages` com `Bearer JWT` local retornou `202 Accepted`
+  - teste controlado de ponta a ponta no `Hotspot` com cadastro temporario validou:
+    - `POST /api/hotspot/public/password-recovery/request` respondeu `200`
+    - a mensagem na fila do `SMSGate` trouxe o texto institucional com codigo de `6` digitos
+    - `POST /api/hotspot/public/password-recovery/reset` respondeu `authenticated=true`
+    - a sessao do `Hotspot` foi criada com `auth_method=password_recovery`
+- observacao operacional:
+  - o SMS fisico continua dependendo do aparelho Android com o chip emissor ficar `Online` no app `SMSGate`
+  - depois que esse aparelho conectar com:
+    - `API URL = https://console.jacarezinho.cloud/smsgate/api/mobile/v1`
+    - `Private Token = 49db4c8e12959f5f1329cf0caea92ae438cddab64807f028`
+  - o host passa a absorver automaticamente o emissor real para o `Hotspot`, sem nova edicao manual do `.env`
+
+## Hotspot - preservacao do nono digito no celular e saneamento dos cadastros SMS - 2026-05-08
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+  - `frontend/src/pages/Hotspot.jsx`
+- correcao aplicada:
+  - o `Hotspot` passou a tratar o campo de telefone explicitamente como `celular movel` para o fluxo de `SMS`
+  - numeros com `DDD + 8 digitos` que claramente representam celular salvo sem o nono digito agora sao corrigidos para o formato canonico `DDD + 9 + numero`
+  - exemplos cobertos pela nova normalizacao:
+    - `4388233543` -> `43988233543`
+    - `5543988233543` -> `43988233543`
+  - numeros de perfil tipico de telefone fixo, como `DDD + 8 digitos` iniciando em `2` a `5`, deixaram de ser aceitos como celular para o fluxo do `Hotspot`
+- saneamento aplicado no banco:
+  - `hotspot_visitors.phone` passou por correcao imediata para reinserir o nono digito em registros de `10` digitos com perfil de celular movel
+  - o cadastro validado durante a rodada, que estava salvo como `4396619529`, foi corrigido para `43996619529`
+- ajustes de interface:
+  - o portal publico e o modulo administrativo passaram a orientar o preenchimento como `DDD + celular com 9 digitos`
+  - a mascara de telefone continua exibindo o formato brasileiro, mas agora tolera entrada com `+55` sem propagar o prefixo para a base local
+- validacao:
+  - teste sintetico da regra confirmou:
+    - `43988233543` permanece `43988233543`
+    - `4388233543` passa a `43988233543`
+    - `4335261234` retorna invalido como celular
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+
+## Hotspot - fail-safe para nao prender em "Verificando dispositivo..." - 2026-05-08
+
+- arquivo alterado:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- sintoma observado:
+  - em aparelho real o portal podia ficar preso apenas em `Verificando dispositivo...`
+  - no runtime da VLAN 70, os logs do vhost cativo mostravam entrega normal do app e de `GET /api/hotspot/public/context` com `200`, entao o travamento perceptivel ficou concentrado na espera do frontend pela identificacao automatica
+- correcao aplicada:
+  - o carregamento inicial do `HotspotPortal` ganhou timeout explicito de `8 segundos` para a consulta `GET /api/hotspot/public/context`
+  - se a checagem automatica nao responder nesse prazo, o portal:
+    - abandona o spinner
+    - assume estado manual de `requires_login`
+    - libera a tela de `login/cadastro`
+    - informa ao usuario que a identificacao automatica demorou demais
+  - isso evita que o WebView do captive portal fique indefinidamente preso em `Verificando dispositivo...`
+- observacoes de runtime confirmadas na rodada:
+  - `GET http://192.168.70.1/hotspot/portal` retornou `200 OK` com o bundle atual do frontend
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` retornou o app do portal com `window.__SGCG_FORCE_PORTAL="hotspot"`
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.101` retornou `200` com JSON valido
+  - o access log dedicado `/var/log/nginx/sgcg-hotspot-captive.access.log` mostrou clientes reais carregando:
+    - HTML do captive portal
+    - assets do bundle
+    - `GET /api/hotspot/public/context`
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+
+## Hotspot - correcao da liberacao runtime apos autenticacao reconhecida - 2026-05-08
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `backend/src/modules/collaborators/collaborators-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+- sintoma observado:
+  - no portal do `Hotspot`, alguns dispositivos reconhecidos ou autenticados ficavam presos em loading ao tentar navegar
+  - a consulta real `GET /api/hotspot/public/context` para cliente da `VLAN 70` retornava `authenticated=true`, mas com `session.runtime_authorized=false`
+  - com isso, o frontend seguia para o redirecionamento externo, porém a camada de rede nao havia incluido o IP no set de liberacao
+- causa raiz validada:
+  - o host ja possuia o `ipset` `sgcg_hotspot_v70_auth` criado com `timeout 43200`
+  - o backend tentava recriar esse mesmo set com `timeout 14400` usando `ipset create ... -exist`
+  - neste `ipset v7.19`, a diferenca de timeout fazia o comando falhar com `Set cannot be created: set with the same name already exists`
+  - a falha abortava a autorizacao runtime do IP, mesmo quando o portal reconhecia corretamente o usuario/dispositivo
+- correcao aplicada:
+  - `Hotspot` e `Collaborators` passaram a verificar primeiro se o `ipset` de autorizacao ja existe e, nesse caso, apenas reutilizam o set existente
+  - a criacao do set agora so ocorre quando ele realmente nao esta presente no host
+  - se a criacao do `ipset` falhar por corrida ou diferenca de estado no host, o backend agora reconsulta o set antes de tratar a situacao como erro real
+  - o `HotspotPortal` deixou de redirecionar silenciosamente quando a resposta de autenticacao vier com `session.runtime_authorized=false`
+  - nesses casos, o portal passa a informar explicitamente que a liberacao da navegacao nao foi confirmada na camada de rede e oferece nova tentativa de liberacao
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `ipset list sgcg_hotspot_v70_auth` confirmou reaproveitamento normal do set existente
+  - `curl -H 'Host: 192.168.70.1' -H 'X-Forwarded-For: 192.168.70.103' http://192.168.70.1/api/hotspot/public/context` passou a retornar `session.runtime_authorized=true`

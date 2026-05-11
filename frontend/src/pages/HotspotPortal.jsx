@@ -5,7 +5,7 @@ import { api } from '../services/api';
 const emptyRegister = {
   full_name: '',
   cpf: '',
-  birth_date: '',
+  phone: '',
   password: '',
   lgpd_accepted: false,
 };
@@ -15,13 +15,55 @@ const emptyLogin = {
   password: '',
 };
 
+const emptyRecoveryRequest = {
+  cpf: '',
+};
+
+const emptyRecoveryReset = {
+  code: '',
+  password: '',
+  confirm_password: '',
+};
+
 const DEFAULT_SUCCESS_REDIRECT_URL = 'https://www.jacarezinho.pr.gov.br/';
+const CONTEXT_REQUEST_TIMEOUT_MS = 8000;
+
+function normalizeFullName(value) {
+  const particles = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((token, index, tokens) => {
+      const lower = token.toLocaleLowerCase('pt-BR');
+      if (index > 0 && index < tokens.length - 1 && particles.has(lower)) return lower;
+      return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
+    })
+    .join(' ');
+}
+
+function hasValidFullName(value) {
+  const tokens = normalizeFullName(value).split(' ').filter(Boolean);
+  const meaningfulTokens = tokens.filter((token) => token.replace(/[^A-Za-zÀ-ÿ]/g, '').length >= 2);
+  return tokens.length >= 2 && meaningfulTokens.length >= 2;
+}
+
+function hasValidCpfLength(value) {
+  return String(value || '').replace(/\D/g, '').length === 11;
+}
+
+function hasValidPhoneLength(value) {
+  return String(value || '').replace(/\D/g, '').length === 11;
+}
 
 function redirectAfterAuthentication(data) {
+  if (data?.session?.runtime_authorized === false) return false;
   const target = data?.redirect_url || DEFAULT_SUCCESS_REDIRECT_URL;
   window.setTimeout(() => {
     window.location.assign(target);
   }, data?.welcome_back ? 2500 : 800);
+  return true;
 }
 
 function formatCpf(value) {
@@ -30,6 +72,21 @@ function formatCpf(value) {
     .replace(/^(\d{3})(\d)/, '$1.$2')
     .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
     .replace(/\.(\d{3})(\d)/, '.$1-$2');
+}
+
+function formatPhone(value) {
+  const rawDigits = String(value || '').replace(/\D/g, '');
+  const digits = rawDigits.startsWith('55') && rawDigits.length > 11
+    ? rawDigits.slice(2, 13)
+    : rawDigits.slice(0, 11);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 6) return digits.replace(/^(\d{2})(\d+)/, '($1) $2');
+  if (digits.length <= 10) return digits.replace(/^(\d{2})(\d{4})(\d+)/, '($1) $2-$3');
+  return digits.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
+}
+
+function formatOtp(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 6);
 }
 
 function Field({ label, value, onChange, type = 'text', autoComplete, placeholder, ...inputProps }) {
@@ -173,13 +230,21 @@ export default function HotspotPortal() {
   const [view, setView] = useState('connect');
   const [registerForm, setRegisterForm] = useState(emptyRegister);
   const [loginForm, setLoginForm] = useState(emptyLogin);
+  const [recoveryRequest, setRecoveryRequest] = useState(emptyRecoveryRequest);
+  const [recoveryReset, setRecoveryReset] = useState(emptyRecoveryReset);
+  const [recoveryReady, setRecoveryReady] = useState(false);
   const [context, setContext] = useState(null);
   const [status, setStatus] = useState({ type: 'info', message: 'Verificando dispositivo...' });
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
-  const isAuthenticated = !!context?.authenticated;
-  const isRecognized = !!context?.recognized && !!context?.requires_confirm;
+  const hasRuntimeAuthorizationFailure = !!context?.authenticated && context?.session?.runtime_authorized === false;
+  const isAuthenticated = !!context?.authenticated && !hasRuntimeAuthorizationFailure;
+  const isRecognized = (!!context?.recognized && !!context?.requires_confirm) || hasRuntimeAuthorizationFailure;
+  const registerCpfDigits = registerForm.cpf.replace(/\D/g, '');
+  const registerPhoneDigits = registerForm.phone.replace(/\D/g, '');
+  const registerNameReady = hasValidFullName(registerForm.full_name);
+  const registerFormReady = registerNameReady && registerCpfDigits.length === 11 && registerPhoneDigits.length === 11 && registerForm.password.length >= 6 && registerForm.lgpd_accepted;
   const deviceText = useMemo(() => {
     if (!context) return 'Identificação em andamento';
     return context.mac ? `Dispositivo ${context.mac}` : 'Dispositivo ainda não identificado pelo gateway';
@@ -188,18 +253,32 @@ export default function HotspotPortal() {
   const loadContext = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/api/hotspot/public/context');
+      const res = await Promise.race([
+        api.get('/api/hotspot/public/context'),
+        new Promise((_, reject) => {
+          window.setTimeout(() => reject(new Error('context_timeout')), CONTEXT_REQUEST_TIMEOUT_MS);
+        }),
+      ]);
       setContext(res.data);
       if (res.data?.authenticated) {
-        setStatus({ type: 'success', message: res.data?.message || 'Acesso institucional reconhecido automaticamente para este dispositivo.' });
-        redirectAfterAuthentication(res.data);
+        const redirected = redirectAfterAuthentication(res.data);
+        setStatus({
+          type: redirected ? 'success' : 'danger',
+          message: redirected
+            ? (res.data?.message || 'Acesso institucional reconhecido automaticamente para este dispositivo.')
+            : 'O portal reconheceu o dispositivo, mas a liberação da navegação não foi confirmada na camada de rede. Aguarde alguns segundos e tente novamente.',
+        });
       } else if (res.data?.recognized && res.data?.requires_confirm) {
         setStatus({ type: 'success', message: res.data?.message || `Bem-vindo, ${res.data?.visitor?.full_name || 'visitante'}. Clique em Entrar na Internet para navegar.` });
       } else {
         setStatus({ type: 'info', message: 'Identifique-se para uso da rede pública de visitantes. Sem cadastro, login ou confirmação explícita do dispositivo reconhecido, a navegação externa permanece bloqueada.' });
       }
     } catch (error) {
-      setStatus({ type: 'danger', message: error?.response?.data?.error || 'Não foi possível verificar o dispositivo.' });
+      setContext({ authenticated: false, recognized: false, requires_confirm: false, requires_login: true, mac: null });
+      setStatus({
+        type: 'info',
+        message: error?.response?.data?.error || 'A identificação automática demorou demais. Faça login ou cadastro para continuar a navegação.',
+      });
     } finally {
       setLoading(false);
     }
@@ -214,8 +293,13 @@ export default function HotspotPortal() {
     try {
       const res = await api.post('/api/hotspot/public/continue');
       setContext(res.data);
-      setStatus({ type: 'success', message: 'Acesso confirmado. Você será encaminhado ao site oficial da Prefeitura.' });
-      redirectAfterAuthentication(res.data);
+      const redirected = redirectAfterAuthentication(res.data);
+      setStatus({
+        type: redirected ? 'success' : 'danger',
+        message: redirected
+          ? 'Acesso confirmado. Você será encaminhado ao site oficial da Prefeitura.'
+          : 'A confirmação foi registrada, mas a navegação ainda não foi liberada na camada de rede. Tente novamente em instantes.',
+      });
     } catch (error) {
       setStatus({ type: 'danger', message: error?.response?.data?.error || 'Não foi possível confirmar o dispositivo. Faça login com CPF e senha.' });
       setContext((current) => ({ ...(current || {}), recognized: false, requires_confirm: false, authenticated: false }));
@@ -227,6 +311,22 @@ export default function HotspotPortal() {
 
   const submitRegister = async (event) => {
     event.preventDefault();
+    if (!registerNameReady) {
+      setStatus({ type: 'danger', message: 'Informe nome e sobrenome reais do visitante antes de concluir o cadastro.' });
+      return;
+    }
+    if (!hasValidCpfLength(registerForm.cpf)) {
+      setStatus({ type: 'danger', message: 'Informe um CPF completo com 11 dígitos.' });
+      return;
+    }
+    if (!hasValidPhoneLength(registerForm.phone)) {
+      setStatus({ type: 'danger', message: 'Informe um celular com DDD e 9 dígitos.' });
+      return;
+    }
+    if (registerForm.password.length < 6) {
+      setStatus({ type: 'danger', message: 'A senha deve ter ao menos 6 caracteres.' });
+      return;
+    }
     if (!registerForm.lgpd_accepted) {
       setStatus({ type: 'danger', message: 'Para concluir o cadastro, aceite os termos e a política de tratamento de dados pessoais.' });
       return;
@@ -236,9 +336,11 @@ export default function HotspotPortal() {
       await api.post('/api/hotspot/public/register', {
         ...registerForm,
         cpf: registerForm.cpf.replace(/\D/g, ''),
+        phone: registerForm.phone.replace(/\D/g, ''),
       });
       setRegisterForm(emptyRegister);
       setMode('login');
+      setLoginForm((current) => ({ ...current, cpf: registerForm.cpf }));
       setStatus({ type: 'success', message: 'Cadastro institucional concluído. Faça login para continuar a navegação neste dispositivo.' });
     } catch (error) {
       setStatus({ type: 'danger', message: error?.response?.data?.error || 'Falha ao concluir cadastro.' });
@@ -256,10 +358,59 @@ export default function HotspotPortal() {
         cpf: loginForm.cpf.replace(/\D/g, ''),
       });
       setContext(res.data);
-      setStatus({ type: 'success', message: 'Identificação confirmada. Este dispositivo foi associado ao seu cadastro institucional.' });
-      redirectAfterAuthentication(res.data);
+      const redirected = redirectAfterAuthentication(res.data);
+      setStatus({
+        type: redirected ? 'success' : 'danger',
+        message: redirected
+          ? 'Identificação confirmada. Este dispositivo foi associado ao seu cadastro institucional.'
+          : 'O login foi aceito, mas a liberação da navegação não foi confirmada na camada de rede. Tente novamente em instantes.',
+      });
     } catch (error) {
       setStatus({ type: 'danger', message: error?.response?.data?.error || 'CPF ou senha inválidos.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitRecoveryRequest = async (event) => {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await api.post('/api/hotspot/public/password-recovery/request', {
+        cpf: recoveryRequest.cpf.replace(/\D/g, ''),
+      });
+      setRecoveryReady(true);
+      setRecoveryReset(emptyRecoveryReset);
+      setStatus({ type: 'success', message: res.data?.message || 'Se os dados conferirem, o código será enviado por SMS.' });
+    } catch (error) {
+      setStatus({ type: 'danger', message: error?.response?.data?.error || 'Falha ao solicitar recuperação.' });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitRecoveryReset = async (event) => {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await api.post('/api/hotspot/public/password-recovery/reset', {
+        cpf: recoveryRequest.cpf.replace(/\D/g, ''),
+        code: recoveryReset.code.replace(/\D/g, ''),
+        password: recoveryReset.password,
+        confirm_password: recoveryReset.confirm_password,
+      });
+      setRecoveryReady(false);
+      setRecoveryReset(emptyRecoveryReset);
+      setContext(res.data);
+      const redirected = redirectAfterAuthentication(res.data);
+      setStatus({
+        type: redirected ? 'success' : 'danger',
+        message: redirected
+          ? (res.data?.message || 'Senha atualizada com sucesso. Acesso liberado para este dispositivo.')
+          : 'A senha foi atualizada, mas a navegação ainda não foi liberada na camada de rede. Tente novamente em instantes.',
+      });
+    } catch (error) {
+      setStatus({ type: 'danger', message: error?.response?.data?.error || 'Falha ao validar a senha provisória.' });
     } finally {
       setSubmitting(false);
     }
@@ -308,7 +459,9 @@ export default function HotspotPortal() {
                 <div className="min-w-0">
                   <h2 className="text-xl font-black uppercase tracking-wide text-emerald-950">Bem-vindo VISITANTE</h2>
                   <p className="mt-2 text-sm leading-5 text-slate-700">
-                    Seu dispositivo foi reconhecido para {context?.visitor?.full_name || 'visitante'}. Confirme para iniciar uma nova sessão de navegação.
+                    {hasRuntimeAuthorizationFailure
+                      ? `Seu dispositivo foi identificado para ${context?.visitor?.full_name || 'visitante'}, mas a liberação da navegação precisa ser refeita.`
+                      : `Seu dispositivo foi reconhecido para ${context?.visitor?.full_name || 'visitante'}. Confirme para iniciar uma nova sessão de navegação.`}
                   </p>
                   <div className="mt-4 grid gap-2 text-sm text-slate-700">
                     <div className="break-words rounded-lg bg-slate-50 px-3 py-2">{deviceText}</div>
@@ -327,7 +480,7 @@ export default function HotspotPortal() {
                     className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-base font-black text-white transition hover:bg-emerald-800 disabled:opacity-60"
                   >
                     {submitting ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
-                    Navegar na Internet
+                    {hasRuntimeAuthorizationFailure ? 'Tentar liberar navegação' : 'Navegar na Internet'}
                   </button>
                 </div>
               </div>
@@ -357,11 +510,13 @@ export default function HotspotPortal() {
                 <div className="flex items-start gap-3">
                   <ShieldCheck className="mt-0.5 shrink-0 text-sky-800" size={22} />
                   <div>
-                    <h2 className="text-base font-black">{mode === 'login' ? 'Fazer Login' : 'Cadastrar visitante'}</h2>
+                    <h2 className="text-base font-black">{mode === 'login' ? 'Fazer Login' : mode === 'recover' ? 'Recuperar senha' : 'Cadastrar visitante'}</h2>
                     <p className="mt-1 text-sm leading-5 text-slate-600">
                       {mode === 'login'
                         ? 'Informe CPF e senha para liberar a navegação neste dispositivo já identificado pela rede.'
-                        : 'Preencha seus dados pessoais para criar o cadastro institucional do visitante antes de fazer login.'}
+                        : mode === 'recover'
+                          ? 'Informe seu CPF para receber uma senha provisória por SMS no celular já cadastrado e definir imediatamente uma nova senha.'
+                          : 'Preencha seus dados pessoais para criar o cadastro institucional do visitante antes de fazer login.'}
                     </p>
                   </div>
                 </div>
@@ -376,13 +531,97 @@ export default function HotspotPortal() {
                       {submitting ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
                       Navegar na Internet
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('recover');
+                        setRecoveryReady(false);
+                        setRecoveryRequest((current) => ({ ...current, cpf: loginForm.cpf || current.cpf }));
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-lg border border-sky-200 bg-sky-50 px-4 text-sm font-black text-sky-900 transition hover:bg-sky-100"
+                    >
+                      Esqueci minha senha
+                    </button>
                   </form>
+                ) : mode === 'recover' ? (
+                  <>
+                    <form className="mt-5 grid gap-4" onSubmit={submitRecoveryRequest}>
+                      <Field label="CPF" value={recoveryRequest.cpf} onChange={(value) => setRecoveryRequest((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" />
+                      <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold leading-5 text-emerald-950">
+                        O sistema procura o celular do seu cadastro pelo CPF e envia automaticamente uma senha provisória por SMS com DDI +55.
+                      </div>
+                      <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
+                        {submitting ? <Loader2 className="animate-spin" size={18} /> : <LogIn size={18} />}
+                        Enviar senha provisória
+                      </button>
+                    </form>
+
+                    {recoveryReady ? (
+                      <form className="mt-4 grid gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4" onSubmit={submitRecoveryReset}>
+                        <Field label="Senha provisória" value={recoveryReset.code} onChange={(value) => setRecoveryReset((f) => ({ ...f, code: formatOtp(value) }))} inputMode="numeric" />
+                        <Field label="Nova senha" type="password" value={recoveryReset.password} onChange={(value) => setRecoveryReset((f) => ({ ...f, password: value }))} autoComplete="new-password" />
+                        <Field label="Confirmar nova senha" type="password" value={recoveryReset.confirm_password} onChange={(value) => setRecoveryReset((f) => ({ ...f, confirm_password: value }))} autoComplete="new-password" />
+                        <button disabled={submitting} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-emerald-700 px-4 text-base font-black text-white transition hover:bg-emerald-800 disabled:opacity-60">
+                          {submitting ? <Loader2 className="animate-spin" size={18} /> : <ShieldCheck size={18} />}
+                          Salvar nova senha
+                        </button>
+                      </form>
+                    ) : null}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('login');
+                        setRecoveryReady(false);
+                        setRecoveryReset(emptyRecoveryReset);
+                      }}
+                      className="mt-4 inline-flex h-11 w-full items-center justify-center rounded-lg border border-slate-200 bg-white px-4 text-sm font-black text-slate-700 transition hover:border-sky-200 hover:text-sky-900"
+                    >
+                      Voltar para o login
+                    </button>
+                  </>
                 ) : (
                   <form className="mt-5 grid gap-4" onSubmit={submitRegister}>
-                    <Field label="Nome completo" value={registerForm.full_name} onChange={(value) => setRegisterForm((f) => ({ ...f, full_name: value }))} autoComplete="name" />
-                    <Field label="CPF" value={registerForm.cpf} onChange={(value) => setRegisterForm((f) => ({ ...f, cpf: formatCpf(value) }))} autoComplete="username" inputMode="numeric" />
-                    <Field label="Data de nascimento" type="date" value={registerForm.birth_date} onChange={(value) => setRegisterForm((f) => ({ ...f, birth_date: value }))} />
-                    <Field label="Senha" type="password" value={registerForm.password} onChange={(value) => setRegisterForm((f) => ({ ...f, password: value }))} autoComplete="new-password" />
+                    <Field
+                      label="Nome completo"
+                      value={registerForm.full_name}
+                      onChange={(value) => setRegisterForm((f) => ({ ...f, full_name: value }))}
+                      onBlur={() => setRegisterForm((f) => ({ ...f, full_name: normalizeFullName(f.full_name) }))}
+                      autoComplete="name"
+                      placeholder="Nome e sobrenome do visitante"
+                    />
+                    <Field
+                      label="CPF"
+                      value={registerForm.cpf}
+                      onChange={(value) => setRegisterForm((f) => ({ ...f, cpf: formatCpf(value) }))}
+                      autoComplete="username"
+                      inputMode="numeric"
+                      placeholder="000.000.000-00"
+                    />
+                    <Field
+                      label="Celular"
+                      value={registerForm.phone}
+                      onChange={(value) => setRegisterForm((f) => ({ ...f, phone: formatPhone(value) }))}
+                      inputMode="numeric"
+                      placeholder="(43) 99999-9999"
+                    />
+                    <Field
+                      label="Senha"
+                      type="password"
+                      value={registerForm.password}
+                      onChange={(value) => setRegisterForm((f) => ({ ...f, password: value }))}
+                      autoComplete="new-password"
+                      placeholder="Ao menos 6 caracteres"
+                    />
+                    <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-xs font-bold leading-5 text-slate-700">
+                      <div className={registerNameReady ? 'text-emerald-700' : 'text-slate-700'}>Nome: informe nome e sobrenome reais do visitante.</div>
+                      <div className={registerCpfDigits.length === 11 ? 'text-emerald-700' : 'text-slate-700'}>CPF: digite os 11 dígitos do documento.</div>
+                      <div className={registerPhoneDigits.length === 11 ? 'text-emerald-700' : 'text-slate-700'}>Celular: use DDD + número com 9 dígitos.</div>
+                      <div className={registerForm.password.length >= 6 ? 'text-emerald-700' : 'text-slate-700'}>Senha: mínimo de 6 caracteres.</div>
+                    </div>
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold leading-5 text-emerald-950">
+                      Informe apenas DDD + número. O SMS de recuperação será enviado automaticamente com DDI +55.
+                    </div>
                     <label className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950">
                       <input
                         type="checkbox"
@@ -394,7 +633,7 @@ export default function HotspotPortal() {
                         Ao se cadastrar você aceita os termos de uso da rede e concorda com a Lei Geral de Proteção de Dados 13.709/2018 - LGPD.
                       </span>
                     </label>
-                    <button disabled={submitting} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
+                    <button disabled={submitting || !registerFormReady} className="mt-1 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white transition hover:bg-sky-950 disabled:opacity-60">
                       {submitting ? <Loader2 className="animate-spin" size={18} /> : <UserPlus size={18} />}
                       Realizar cadastro
                     </button>
