@@ -58,6 +58,67 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - sem entrada da `VLAN 70` para a rede interna
   - com politicas de seguranca do SGCG plenamente ativas sobre a saida para internet
 
+## Hotspot - destaque da palavra CADASTRO no timeout de identificacao - 2026-05-11
+
+- arquivo alterado:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- ajuste visual aplicado:
+  - na mensagem `A identificação automática demorou demais. Faça login ou cadastro para continuar a navegação.`, a palavra `cadastro` passou a aparecer como `CADASTRO` em negrito
+  - o ajuste foi limitado ao fallback de timeout da identificacao automatica no portal publico do Hotspot
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso e gerou o bundle `index-Q2ygoGj0.js`
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` passou a servir o bundle `index-Q2ygoGj0.js` com headers anti-cache e `Captive-Portal`
+
+## Hotspot - pos-login alinhado ao Portal do Colaborador - 2026-05-11
+
+- arquivos alterados:
+  - `frontend/src/pages/HotspotPortal.jsx`
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `backend/src/utils/sys.ts`
+- ajuste aplicado:
+  - o pos-login do `Hotspot` deixou de usar a rotina propria de handoff por probe nativo com multiplas tentativas e tela fallback `Finalizar conexao`
+  - o fluxo apos credenciais, confirmacao por MAC, cadastro com sessao imediata e recuperacao de senha passou a seguir a mesma logica do `Portal do Colaborador`:
+    - grava o contexto autenticado retornado pelo backend
+    - mostra mensagem de sucesso
+    - redireciona uma unica vez via `window.location.assign(...)` depois de `800ms`
+  - a protecao operacional foi preservada: se o backend retornar `session.runtime_authorized=false`, o frontend nao redireciona silenciosamente e exibe erro recuperavel
+  - por decisao operacional do usuario, o redirecionamento para `https://www.jacarezinho.pr.gov.br/` foi removido do Hotspot
+  - o `redirect_url` publico de sucesso do Hotspot voltou a apontar para `http://connectivitycheck.gstatic.com/generate_204`, para priorizar o fechamento da janela cativa no Android
+- ajuste complementar durante validacao em aparelho real:
+  - no Android WebView, o login do IP `192.168.70.24` autorizou a rede, mas a tela cativa nao fechou porque o redirecionamento para o site da Prefeitura nao refazia o probe nativo que havia aberto a janela
+  - o frontend foi ajustado para continuar fazendo apenas um redirecionamento, mas priorizar `document.referrer` ou a URL atual quando forem probes cativos conhecidos, como `connectivitycheck.gstatic.com/generate_204`
+  - com isso, quando o captive WebView do Android abrir pelo probe nativo, o pos-login volta para o proprio probe; o gateway ja responde `204 No Content` quando a sessao esta autorizada
+- ajuste complementar de runtime:
+  - durante o teste real, o Android ainda podia classificar a rede como ruim porque o HTTP autorizado da VLAN 70 seguia para a regra geral de redirecionamento ao Squid `3128`
+  - o backend passou a manter uma regra NAT `RETURN` para `-m set --match-set sgcg_hotspot_v70_auth src` em `tcp/80`, antes do redirecionamento geral da VLAN 70 para o Squid
+  - visitantes nao autorizados continuam capturados pela regra `DNAT` do Hotspot; visitantes autorizados passam pelo probe HTTP nativo sem serem interceptados pelo proxy
+  - a allowlist interna de comandos foi atualizada para permitir essa regra de `iptables` no reconciliador do Hotspot
+- objetivo operacional:
+  - eliminar travamentos percebidos apos informar credenciais e clicar em `Navegar na Internet`
+  - reduzir divergencia entre os portais cativos, usando no Hotspot o comportamento ja validado no Portal do Colaborador
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-11`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` serviu o bundle novo `index-DqA4vn9n.js` com headers `no-store` e `Captive-Portal`
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.103` retornou `session.runtime_authorized=true`
+  - `POST http://192.168.70.1/api/hotspot/public/continue` com `X-Forwarded-For: 192.168.70.103` criou a sessao `84` com `runtime_authorized=true`
+  - `GET http://192.168.70.1/api/hotspot/public/capport` com `X-Forwarded-For: 192.168.70.103` retornou `{"captive":false}`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou `192.168.70.103` presente com timeout ativo
+  - em validacao acompanhada, `POST /api/hotspot/public/login` do IP `192.168.70.24` retornou `200`, criou sessao `85` com `auth_method=cpf_password` e `runtime_authorized=true`
+  - `GET http://192.168.70.1/generate_204` com `Host: connectivitycheck.gstatic.com` e `X-Forwarded-For: 192.168.70.24` retornou `204 No Content`
+  - `cd frontend && npm run build` concluido novamente com sucesso apos o ajuste do redirecionamento por probe
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` serviu o bundle novo `index-mB798rei.js`
+  - apos remocao do redirecionamento para o site da Prefeitura, `cd backend && npm run build` e `cd frontend && npm run build` concluiram com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` executados com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` passou a servir o bundle novo `index-hL0rzQLc.js`
+  - em novo teste acompanhado com a sessao revogada, `POST /api/hotspot/public/login` do Android `192.168.70.24` retornou `200` as `15:04:19`, criou a sessao `87` com `auth_method=cpf_password` e `runtime_authorized=true`
+  - em seguida, `GET /generate_204` para o mesmo IP retornou `204 No Content`, e `GET /api/hotspot/public/capport` retornou `{"captive":false}`
+  - `iptables -t nat -L PREROUTING -n -v --line-numbers` mostrou a regra `RETURN` para `sgcg_hotspot_v70_auth` recebendo pacotes antes do redirecionamento geral para o Squid
+
 ## Portais cativos - atualizacao do logotipo JMB - 2026-05-11
 
 - arquivo alterado: `frontend/public/jmb-logo-clean.png`
@@ -146,6 +207,99 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
 - objetivo operacional:
   - manter a tabela administrativa enxuta para operacao diaria
   - preservar integralmente a trilha institucional usada em `Relatorio`, `Auditoria` e conformidade `LGPD`
+
+## Hotspot portal - conclusao visual de login em janela cativa - 2026-05-11
+
+- arquivo alterado:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- diagnostico validado em runtime:
+  - em `2026-05-11 11:31:51 -03`, o login `POST /api/hotspot/public/login` do IP `192.168.70.18` concluiu com `200`
+  - o banco registrou sessao `cpf_password` ativa para o mesmo IP
+  - `ipset list sgcg_hotspot_v70_auth` confirmou o IP autorizado em runtime
+  - o problema percebido ficou concentrado no pos-login do captive WebView, que abria `https://www.jacarezinho.pr.gov.br/` dentro da propria janela do Hotspot, dando impressao de que o processo nao havia terminado
+- ajuste aplicado:
+  - o portal passou a detectar host/path de janela cativa, como `generate_204`, `hotspot-detect.html`, `connectivitycheck.gstatic.com`, `captive.apple.com` e equivalentes
+  - quando a autenticacao termina dentro desse contexto, o frontend deixa de fazer redirecionamento automatico silencioso
+  - a ideia de abrir `https://www.jacarezinho.pr.gov.br/` ao final foi abandonada por decisao operacional do usuario
+  - no lugar, o portal tenta fechar automaticamente a janela cativa assim que a autenticacao da rede `VISITANTES` conclui
+  - tambem passou a oferecer botao `Navegar na Internet` com acao de fechamento da janela cativa e rechecagem manual do status da rede quando o WebView cativo insistir em permanecer aberto
+  - depois, o fechamento automatico foi endurecido para ocorrer com contagem regressiva visivel de `3 segundos` e nova tentativa logo em seguida, sem depender de clique do visitante
+  - ao surgir no Android o aviso de que a rede estaria tentando abrir outro app, a rotina de fechamento foi simplificada para usar apenas `window.close()`, sem `about:blank` nem troca forçada de janela
+- objetivo operacional:
+  - evitar a falsa impressao de login incompleto
+  - reduzir casos em que o celular continua exibindo a propria janela do captive portal mesmo apos a liberacao da rede
+
+## Hotspot - restauracao da confirmacao por MAC no contexto publico - 2026-05-11
+
+- arquivo alterado:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+- causa raiz validada em runtime:
+  - o `GET /api/hotspot/public/context` havia voltado a criar sessoes `mac_auto` para MAC conhecido
+  - isso revogava a sessao `cpf_password` anterior do mesmo dispositivo/IP e mantinha o visitante em looping na janela cativa
+  - em `2026-05-11`, o IP `192.168.70.18` apareceu autorizado no `ipset`, mas com a sessao de login ja revogada e substituida repetidamente por `mac_auto`
+- correcao aplicada:
+  - o contexto publico agora procura primeiro por sessao ativa valida do dispositivo/IP e, quando encontra, preserva essa sessao e a autorizacao runtime
+  - se o MAC for conhecido mas nao houver sessao ativa valida, o backend volta a responder `recognized=true` e `requires_confirm=true`, sem recriar `mac_auto`
+  - o IP atual volta a ser retirado do runtime enquanto o usuario ainda nao confirmou a navegacao pelo portal
+- objetivo operacional:
+  - impedir que a consulta de contexto derrube ou substitua a sessao autenticada do visitante
+  - restaurar o comportamento endurecido anteriormente para evitar looping no portal cativo
+
+## Hotspot portal - endurecimento do fechamento da janela cativa - 2026-05-11
+
+- arquivo alterado:
+  - `frontend/src/pages/HotspotPortal.jsx`
+- diagnostico validado em runtime:
+  - na tela `Acesso institucional identificado`, alguns Android WebView mantinham a janela cativa aberta mesmo apos a sessao estar valida
+  - o backend e o runtime continuavam corretos quando o dispositivo confirmava retorno por `MAC`, criando sessao `mac_confirm` e recolocando o IP no `sgcg_hotspot_v70_auth`
+  - em validacao controlada com o IP `192.168.70.24`, o `POST /api/hotspot/public/continue` criou a sessao `72` com `runtime_authorized=true`
+  - no mesmo fluxo, `GET /generate_204` voltou a responder `204 No Content`, confirmando que a camada de rede estava liberada e que o gargalo restante era o encerramento visual da janela cativa
+- ajuste aplicado:
+  - o portal deixou de depender apenas de `window.close()` para sair da janela cativa
+  - ao concluir a autenticacao em contexto cativo, o frontend agora tenta:
+    - encerrar a janela
+    - se ela insistir em permanecer aberta, navegar para `/generate_204`
+    - em seguida, usar `/hotspot-detect.html` como fallback adicional compatvel com clientes que ignoram o primeiro encerramento
+  - o botao `Fechar agora e navegar` passou a usar esse fluxo endurecido, e nao apenas o fechamento direto da janela
+  - depois da validacao em aparelho Android real, a rotina foi acelerada para iniciar o encerramento em menos de `1 segundo`, com novas tentativas rapidas em seguida, reduzindo o tempo parado na tela `Acesso institucional identificado`
+- objetivo operacional:
+  - reduzir casos em que o Android continua exibindo o captive portal mesmo apos a rede `VISITANTES` ja estar liberada em backend e `ipset`
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+
+## Hotspot - revisao estrutural do handoff final da janela cativa - 2026-05-11
+
+- arquivos alterados:
+  - `frontend/src/pages/HotspotPortal.jsx`
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `/etc/nginx/sites-available/sgcg-hotspot-captive`
+- diagnostico consolidado:
+  - o problema residual nao estava apenas no clique do botao final
+  - o Hotspot ainda misturava:
+    - payload legado com `redirect_url` externo
+    - `CAPPORT` estatico retornando `captive=true` mesmo com sessao ativa
+    - fallback de fechamento que podia navegar para um probe relativo fora do gateway e acabar em `404`
+  - isso explicava o comportamento de o usuario autenticar, ver a tela `Acesso institucional identificado`, cair em handoff inconsistente e em alguns casos voltar a nao concluir corretamente a rede `VISITANTES`
+- correcao aplicada:
+  - o backend do Hotspot passou a publicar `redirect_url` alinhado ao proprio gateway `http://192.168.70.1/generate_204`, removendo do fluxo publico o legado da Prefeitura
+  - o endpoint `GET /api/hotspot/public/capport` passou a ser dinamico:
+    - retorna `captive=false` quando existe sessao ativa com `runtime_authorized=true`
+    - retorna `captive=true` com `user-portal-url` apenas quando o dispositivo ainda depende de autenticacao/confirmacao
+  - o Nginx da VLAN 70 deixou de responder `CAPPORT` estatico e passou a encaminhar `/api/hotspot/public/capport` para o backend
+  - o frontend deixou de usar fallback relativo que podia escapar para host errado e gerar `404`
+  - o encerramento da janela cativa passou a usar somente o probe absoluto do proprio gateway `http://192.168.70.1/generate_204`
+  - o probe `/canonical.html` tambem passou a ser tratado explicitamente pelo gateway para evitar desvios em clientes Android/Chrome
+- validacao de runtime:
+  - `GET /api/hotspot/public/context` para `192.168.70.24` confirmou `authenticated=true` e `session.runtime_authorized=true`
+  - `GET /api/hotspot/public/capport` direto no backend para `192.168.70.24` confirmou `{"captive":false}`
+  - `GET /api/hotspot/public/capport` pelo Nginx para `192.168.70.24` tambem confirmou `{"captive":false}`
+  - `GET /generate_204` pelo gateway para `192.168.70.24` confirmou `204 No Content`
+  - `GET /canonical.html` pelo gateway para `192.168.70.24` confirmou `204 No Content`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso em `2026-05-11`
+  - `cd frontend && npm run build` concluido com sucesso em `2026-05-11`
+  - `pm2 restart bcc-backend --update-env` executado com sucesso em `2026-05-11`
+  - `nginx -t` e `systemctl reload nginx` concluidos com sucesso em `2026-05-11`
 
 ## Hotspot portal - ajustes de rotulagem e foco - 2026-05-06
 
@@ -5317,3 +5471,61 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `pm2 restart bcc-frontend --update-env` executado com sucesso
   - `ipset list sgcg_hotspot_v70_auth` confirmou reaproveitamento normal do set existente
   - `curl -H 'Host: 192.168.70.1' -H 'X-Forwarded-For: 192.168.70.103' http://192.168.70.1/api/hotspot/public/context` passou a retornar `session.runtime_authorized=true`
+
+## Hotspot - handoff direto apos Navegar na Internet - 2026-05-11
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+- sintoma observado:
+  - apos informar credenciais e clicar em `Navegar na Internet`, o portal ainda podia renderizar uma segunda tela de `dispositivo identificado`
+  - em celulares reais essa segunda tela podia travar ou demorar a executar o handoff do captive portal, deixando o usuario visualmente preso mesmo apos autenticacao
+  - o caminho critico de autorizacao tambem fazia reconciliacao pesada de `iptables` dentro do clique, em um host com tabela NAT muito grande, aumentando o risco de atraso perceptivel
+- correcao aplicada:
+  - o frontend passou a tratar login, confirmacao de MAC, cadastro com sessao imediata e recuperacao de senha como `handoff direto`
+  - quando o backend retorna `authenticated=true` e `session.runtime_authorized=true`, a UI nao cai mais na tela intermediaria de detalhes do dispositivo; ela chama diretamente `http://192.168.70.1/generate_204?sgcg_handoff=...`
+  - se o WebView nao fechar sozinho, a tela fallback agora mostra `Internet liberada` com botao `Continuar para a internet`, sem repetir a tela de dispositivo identificado
+  - o frontend agora exige `session.runtime_authorized === true` para handoff; respostas sem confirmacao runtime continuam como erro recuperavel
+  - o backend deixou de executar `ensureHotspotEnforcement()` dentro de `authorizeHotspotIp()` e `revokeHotspotIp()` no caminho publico
+  - a autorizacao runtime do clique passou a ser caminho rapido:
+    - garantir o `ipset` existente
+    - executar `ipset add sgcg_hotspot_v70_auth <ip> timeout 14400 -exist`
+    - confirmar a presenca do IP via `ipset list`, que ja e permitido pela allowlist interna
+  - a tentativa de verificacao por `ipset test` foi evitada porque o `execCmd` do backend bloqueia esse comando pela allowlist
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` serviu o bundle novo `index-XOzi48X0.js` com headers `no-store` e `Captive-Portal`
+  - `POST http://192.168.70.1/api/hotspot/public/continue` com `X-Forwarded-For: 192.168.70.24` retornou em `0.074s` com `session.runtime_authorized=true`
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.24` retornou em `0.085s` com `session.runtime_authorized=true`
+  - `GET http://192.168.70.1/generate_204?sgcg_handoff=final` com `Host: connectivitycheck.gstatic.com` e `X-Forwarded-For: 192.168.70.24` retornou `204 No Content` em `0.079s`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou `192.168.70.24` presente no set de liberacao
+
+## Hotspot - handoff por probe nativo do aparelho - 2026-05-11
+
+- arquivos alterados:
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `frontend/src/pages/HotspotPortal.jsx`
+- ajuste aplicado:
+  - o sucesso padrao do backend deixou de apontar para URL local do gateway e passou a usar `http://connectivitycheck.gstatic.com/generate_204`
+  - o frontend passou a inferir o probe nativo a partir de `window.location`, `document.referrer` e `User-Agent`
+  - destinos de handoff por sistema:
+    - Android/Chrome: `http://connectivitycheck.gstatic.com/generate_204`
+    - iPhone/iPad: `http://captive.apple.com/hotspot-detect.html`
+    - Windows: `http://www.msftconnecttest.com/connecttest.txt`
+    - Firefox: `http://detectportal.firefox.com/canonical.html`
+  - quando a tela ja estiver aberta exatamente na URL do probe, como `captive.apple.com/hotspot-detect.html`, o portal agora executa `window.location.reload()` apos liberar o IP; isso forca o aparelho a buscar a mesma URL novamente, mas ja fora da interceptacao cativa
+  - a tela `Internet liberada` saiu do caminho normal; so existe fallback `Finalizar conexao` se a navegacao automatica nao trocar de pagina
+  - o fallback manual tambem aponta para o probe nativo do aparelho, nao para uma segunda pagina local do gateway
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `GET http://192.168.70.1/hotspot/portal` serviu o bundle novo `index-BaNqBi1t.js`
+  - `POST http://192.168.70.1/api/hotspot/public/continue` com `X-Forwarded-For: 192.168.70.103` retornou em `0.086s` com `session.runtime_authorized=true`
+  - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.103` retornou em `0.032s` com `session.runtime_authorized=true`
+  - `GET http://192.168.70.1/api/hotspot/public/capport` com `X-Forwarded-For: 192.168.70.103` retornou `{"captive":false}`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou `192.168.70.103` presente no set de liberacao

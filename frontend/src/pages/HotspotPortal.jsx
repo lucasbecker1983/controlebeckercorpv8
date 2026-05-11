@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Eye, EyeOff, FileCheck2, Loader2, LogIn, ShieldCheck, UserPlus, Wifi } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Eye, EyeOff, FileCheck2, Loader2, LogIn, ShieldCheck, UserPlus } from 'lucide-react';
 import { api } from '../services/api';
 
 const emptyRegister = {
@@ -25,8 +25,26 @@ const emptyRecoveryReset = {
   confirm_password: '',
 };
 
-const DEFAULT_SUCCESS_REDIRECT_URL = 'https://www.jacarezinho.pr.gov.br/';
+const DEFAULT_SUCCESS_REDIRECT_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 const CONTEXT_REQUEST_TIMEOUT_MS = 8000;
+const CAPTIVE_PROBE_HOSTS = new Set([
+  'connectivitycheck.gstatic.com',
+  'clients3.google.com',
+  'captive.apple.com',
+  'www.msftconnecttest.com',
+  'msftconnecttest.com',
+  'detectportal.firefox.com',
+]);
+const CAPTIVE_PROBE_PATHS = new Set([
+  '/generate_204',
+  '/hotspot-detect.html',
+  '/connecttest.txt',
+  '/ncsi.txt',
+  '/canonical.html',
+  '/success.txt',
+  '/library/test/success.html',
+  '/kindle-wifi/wifistub.html',
+]);
 
 function normalizeFullName(value) {
   const particles = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
@@ -59,11 +77,24 @@ function hasValidPhoneLength(value) {
 
 function redirectAfterAuthentication(data) {
   if (data?.session?.runtime_authorized === false) return false;
-  const target = data?.redirect_url || DEFAULT_SUCCESS_REDIRECT_URL;
   window.setTimeout(() => {
-    window.location.assign(target);
-  }, data?.welcome_back ? 2500 : 800);
+    window.location.assign(getPostAuthRedirectUrl(data));
+  }, 800);
   return true;
+}
+
+function getPostAuthRedirectUrl(data) {
+  if (typeof window === 'undefined') return data?.redirect_url || DEFAULT_SUCCESS_REDIRECT_URL;
+  const candidates = [document.referrer, window.location.href].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      const parsed = new URL(candidate);
+      if (CAPTIVE_PROBE_HOSTS.has(parsed.hostname.toLowerCase()) || CAPTIVE_PROBE_PATHS.has(parsed.pathname)) {
+        return parsed.href;
+      }
+    } catch {}
+  }
+  return data?.redirect_url || DEFAULT_SUCCESS_REDIRECT_URL;
 }
 
 function formatCpf(value) {
@@ -277,7 +308,11 @@ export default function HotspotPortal() {
       setContext({ authenticated: false, recognized: false, requires_confirm: false, requires_login: true, mac: null });
       setStatus({
         type: 'info',
-        message: error?.response?.data?.error || 'A identificação automática demorou demais. Faça login ou cadastro para continuar a navegação.',
+        message: error?.response?.data?.error || (
+          <>
+            A identificação automática demorou demais. Faça login ou <strong>CADASTRO</strong> para continuar a navegação.
+          </>
+        ),
       });
     } finally {
       setLoading(false);
@@ -297,7 +332,7 @@ export default function HotspotPortal() {
       setStatus({
         type: redirected ? 'success' : 'danger',
         message: redirected
-          ? 'Acesso confirmado. Você será encaminhado ao site oficial da Prefeitura.'
+          ? 'Acesso confirmado. Navegação liberada para este dispositivo.'
           : 'A confirmação foi registrada, mas a navegação ainda não foi liberada na camada de rede. Tente novamente em instantes.',
       });
     } catch (error) {
@@ -333,11 +368,22 @@ export default function HotspotPortal() {
     }
     setSubmitting(true);
     try {
-      await api.post('/api/hotspot/public/register', {
+      const res = await api.post('/api/hotspot/public/register', {
         ...registerForm,
         cpf: registerForm.cpf.replace(/\D/g, ''),
         phone: registerForm.phone.replace(/\D/g, ''),
       });
+      if (res.data?.authenticated) {
+        setContext(res.data);
+        const redirected = redirectAfterAuthentication(res.data);
+        setStatus({
+          type: redirected ? 'success' : 'danger',
+          message: redirected
+            ? 'Cadastro concluído. Navegação liberada para este dispositivo.'
+            : 'O cadastro foi aceito, mas a navegação ainda não foi liberada na camada de rede. Tente novamente em instantes.',
+        });
+        return;
+      }
       setRegisterForm(emptyRegister);
       setMode('login');
       setLoginForm((current) => ({ ...current, cpf: registerForm.cpf }));
@@ -362,7 +408,7 @@ export default function HotspotPortal() {
       setStatus({
         type: redirected ? 'success' : 'danger',
         message: redirected
-          ? 'Identificação confirmada. Este dispositivo foi associado ao seu cadastro institucional.'
+          ? 'Identificação confirmada. Navegação liberada para este dispositivo.'
           : 'O login foi aceito, mas a liberação da navegação não foi confirmada na camada de rede. Tente novamente em instantes.',
       });
     } catch (error) {

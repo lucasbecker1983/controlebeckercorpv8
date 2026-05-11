@@ -41,7 +41,7 @@ const HOTSPOT_WAN_IFACE = 'enp8s0';
 const HOTSPOT_GATEWAY_IP = '192.168.70.1';
 const HOTSPOT_AUTH_SET = 'sgcg_hotspot_v70_auth';
 const HOTSPOT_SESSION_SECONDS = HOTSPOT_SESSION_HOURS * 60 * 60;
-const HOTSPOT_SUCCESS_REDIRECT_URL = 'https://www.jacarezinho.pr.gov.br/';
+const HOTSPOT_SUCCESS_REDIRECT_URL = 'http://connectivitycheck.gstatic.com/generate_204';
 const HOTSPOT_OTP_MINUTES = Math.max(1, env.hotspotOtpMinutes || 5);
 const NAME_PARTICLES = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
 
@@ -361,6 +361,13 @@ async function ensureHotspotEnforcement() {
     await ensureOrderedPortalRule(
         'nat',
         'PREROUTING',
+        `iptables -t nat -C PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set --match-set ${HOTSPOT_AUTH_SET} src -j RETURN`,
+        `iptables -t nat -D PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set --match-set ${HOTSPOT_AUTH_SET} src -j RETURN`,
+        (position) => `iptables -t nat -I PREROUTING ${position} -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set --match-set ${HOTSPOT_AUTH_SET} src -j RETURN`,
+    );
+    await ensureOrderedPortalRule(
+        'nat',
+        'PREROUTING',
         `iptables -t nat -C PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
         `iptables -t nat -D PREROUTING -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
         (position) => `iptables -t nat -I PREROUTING ${position} -i ${HOTSPOT_VLAN_IFACE} -p tcp --dport 80 -m set ! --match-set ${HOTSPOT_AUTH_SET} src -j DNAT --to-destination ${HOTSPOT_GATEWAY_IP}:80`,
@@ -378,15 +385,15 @@ async function ensureHotspotEnforcement() {
 async function authorizeHotspotIp(ip: string | null, vlanId: number | null) {
     const normalizedIp = normalizeIp(ip);
     if (vlanId !== HOTSPOT_VLAN_ID || !isVlan70Ip(normalizedIp)) return false;
-    await ensureHotspotEnforcement();
+    await ensureHotspotAuthSetExists();
     await execCmdStrict(`ipset add ${HOTSPOT_AUTH_SET} ${normalizedIp} timeout ${HOTSPOT_SESSION_SECONDS} -exist`);
-    return true;
+    const authorizedIps = await listAuthorizedHotspotIps();
+    return authorizedIps.includes(normalizedIp as string);
 }
 
 async function revokeHotspotIp(ip: string | null) {
     const normalizedIp = normalizeIp(ip);
     if (!isVlan70Ip(normalizedIp)) return false;
-    await ensureHotspotEnforcement().catch(() => null);
     await revokeHotspotIpRuntimeOnly(normalizedIp);
     return true;
 }
@@ -460,6 +467,34 @@ async function findKnownDevice(mac: string) {
         [normalizedMac],
     );
     return visitor.rowCount && visitor.rows[0].visitor_active ? visitor.rows[0] : null;
+}
+
+async function findActiveSessionByDeviceOrIp(ip: string | null, mac: string | null) {
+    const normalizedIp = normalizeIp(ip);
+    const normalizedMac = normalizeOptionalMac(mac);
+    const result = await pool.query(
+        `SELECT s.id AS session_id,
+                s.started_at,
+                s.expires_at,
+                s.auth_method,
+                s.vlan_id,
+                v.id,
+                v.full_name,
+                v.cpf,
+                v.mac_address
+           FROM hotspot_sessions s
+           JOIN hotspot_visitors v ON v.id = s.visitor_id
+          WHERE s.status = 'active'
+            AND s.expires_at > NOW()
+            AND (
+                ($1::inet IS NOT NULL AND s.client_ip = $1::inet)
+                OR ($2::text IS NOT NULL AND s.mac_address = $2::text)
+            )
+          ORDER BY s.started_at DESC
+          LIMIT 1`,
+        [normalizedIp || null, normalizedMac || null],
+    ).catch(() => ({ rows: [] as any[] }));
+    return result.rows[0] || null;
 }
 
 async function readHotspotEnforcementStatus() {
@@ -551,6 +586,18 @@ function publicVisitor(row: any) {
         cpf: maskCpf(row.cpf),
         mac_address: row.mac_address || null,
     };
+}
+
+function buildCapportPayload(captive: boolean) {
+    return captive
+        ? {
+            captive: true,
+            'user-portal-url': 'http://192.168.70.1/hotspot/portal',
+            'venue-info-url': 'http://192.168.70.1/hotspot/portal',
+        }
+        : {
+            captive: false,
+        };
 }
 
 function adminVisitor(row: any, includeRawCpf = false) {
@@ -655,13 +702,56 @@ router.use('/public', (_req, res, next) => {
     next();
 });
 
-router.get('/public/capport', (_req, res) => {
+router.get('/public/capport', async (req, res) => {
+    await ensureSchema();
+    const ip = getClientIp(req);
+    const vlanId = inferVlanId(ip);
+    const mac = await inferMac(ip);
+
+    if (!mac) {
+        res.type('application/captive+json');
+        return res.json(buildCapportPayload(true));
+    }
+
+    const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
+    if (!activeSession) {
+        res.type('application/captive+json');
+        return res.json(buildCapportPayload(true));
+    }
+
+    const runtimeAuthorized = await authorizeHotspotIp(ip, vlanId).catch(() => false);
     res.type('application/captive+json');
-    res.json({
-        captive: true,
-        'user-portal-url': 'http://192.168.70.1/hotspot/portal',
-        'venue-info-url': 'http://192.168.70.1/hotspot/portal',
-    });
+    return res.json(buildCapportPayload(!runtimeAuthorized));
+});
+
+router.get('/public/probe', async (req, res) => {
+    await ensureSchema();
+    const ip = getClientIp(req);
+    const vlanId = inferVlanId(ip);
+    const mac = await inferMac(ip);
+    const probe = String(req.query.kind || 'generate_204').trim().toLowerCase();
+
+    if (!mac) {
+        return res.status(401).json({ authorized: false, reason: 'mac_not_found', ip, vlan_id: vlanId });
+    }
+
+    const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
+    if (!activeSession) {
+        return res.status(401).json({ authorized: false, reason: 'no_active_session', ip, mac, vlan_id: vlanId });
+    }
+
+    const runtimeAuthorized = await authorizeHotspotIp(ip, vlanId).catch(() => false);
+    if (!runtimeAuthorized) {
+        return res.status(401).json({ authorized: false, reason: 'runtime_not_authorized', ip, mac, vlan_id: vlanId });
+    }
+
+    if (probe === 'connecttest') return res.type('text/plain').status(200).send('Microsoft Connect Test');
+    if (probe === 'ncsi') return res.type('text/plain').status(200).send('Microsoft NCSI');
+    if (probe === 'success_txt') return res.type('text/plain').status(200).send('success');
+    if (probe === 'hotspot_detect' || probe === 'library_success' || probe === 'kindle_stub') {
+        return res.type('text/html').status(200).send('<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>');
+    }
+    return res.status(204).end();
 });
 
 router.get('/public/context', async (req, res) => {
@@ -676,6 +766,39 @@ router.get('/public/context', async (req, res) => {
         return res.json({ authenticated: false, ip, mac: null, vlan_id: vlanId, requires_login: true, revoked });
     }
 
+    const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
+    if (activeSession) {
+        const runtimeAuthorized = await authorizeHotspotIp(ip, vlanId).catch(() => false);
+        await audit(
+            req,
+            'hotspot_active_session_recognized',
+            true,
+            { ip, mac, vlan_id: vlanId },
+            { visitor_id: activeSession.id, session_id: activeSession.session_id, runtime_authorized: runtimeAuthorized },
+            'Portal reconheceu sessao ativa valida e preservou a liberacao da rede.',
+        );
+        return res.json({
+            authenticated: true,
+            recognized: true,
+            welcome_back: true,
+            requires_confirm: false,
+            requires_login: false,
+            ip,
+            mac,
+            vlan_id: vlanId,
+            visitor: publicVisitor(activeSession),
+            session: {
+                id: activeSession.session_id,
+                started_at: activeSession.started_at,
+                expires_at: activeSession.expires_at,
+                auth_method: activeSession.auth_method,
+                runtime_authorized: runtimeAuthorized,
+            },
+            redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL,
+            message: `Bem-vindo de volta, ${activeSession.full_name}. Sua sessao de visitante continua valida neste dispositivo.`,
+        });
+    }
+
     const row = await findKnownDevice(mac);
 
     if (!row) {
@@ -684,29 +807,27 @@ router.get('/public/context', async (req, res) => {
         return res.json({ authenticated: false, ip, mac, vlan_id: vlanId, requires_login: true, revoked });
     }
 
-    const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address };
-    const session = await createSession(req, visitor, row, 'mac_auto', ip, mac, vlanId);
+    await revokeHotspotIp(ip).catch(() => false);
     await audit(
         req,
-        'hotspot_mac_auto_login',
+        'hotspot_mac_recognized_confirmation_required',
         true,
         { ip, mac, vlan_id: vlanId },
-        { visitor_id: visitor.id, device_id: row.id, session_id: session.id },
-        'Dispositivo reconhecido por MAC; sessao autorizada automaticamente no portal.',
+        { visitor_id: row.visitor_id, device_id: row.id },
+        'Dispositivo reconhecido por MAC; confirmacao explicita continua obrigatoria antes de liberar a navegacao.',
     );
     res.json({
-        authenticated: true,
+        authenticated: false,
         recognized: true,
-        welcome_back: true,
-        requires_confirm: false,
+        welcome_back: false,
+        requires_confirm: true,
         requires_login: false,
         ip,
         mac,
         vlan_id: vlanId,
-        visitor: publicVisitor(visitor),
-        session,
+        visitor: publicVisitor({ id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address }),
         redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL,
-        message: `Bem-vindo de volta, ${visitor.full_name}. Seu dispositivo foi reconhecido automaticamente.`,
+        message: `Bem-vindo de volta, ${row.full_name}. Clique em Navegar na Internet para continuar.`,
     });
 });
 
