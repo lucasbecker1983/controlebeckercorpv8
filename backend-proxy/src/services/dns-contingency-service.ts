@@ -33,6 +33,9 @@ const PONTORH_END_MARKER = '# END SGCG_PONTORH_OPENDNS';
 const CHAIN_NAME = 'DNS_EMERGENCY_V8';
 const DEFAULT_PROVIDERS: ResolverProvider[] = ['google', 'cloudflare', 'quad9'];
 const PERMANENT_WORK_DNS_PROVIDERS: ResolverProvider[] = ['opendns'];
+const FIREWALL_LOCK_DIR = '/run/sgcg-firewall.lock';
+const FIREWALL_LOCK_STALE_MS = 120_000;
+const FIREWALL_LOCK_WAIT_MS = 15_000;
 
 const RESOLVER_CATALOG: Record<ResolverProvider, { label: string; addresses: string[] }> = {
     google: { label: 'Google Public DNS', addresses: ['8.8.8.8', '8.8.4.4'] },
@@ -87,6 +90,47 @@ class DnsContingencyService {
 
     async sleep(ms: number) {
         await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    async acquireFirewallRuntimeLock(context: string) {
+        const deadline = Date.now() + FIREWALL_LOCK_WAIT_MS;
+        while (Date.now() < deadline) {
+            try {
+                fs.mkdirSync(FIREWALL_LOCK_DIR, { recursive: false });
+                fs.writeFileSync(`${FIREWALL_LOCK_DIR}/owner.json`, JSON.stringify({
+                    pid: process.pid,
+                    context,
+                    created_at: new Date().toISOString(),
+                }, null, 2));
+                return () => fs.rmSync(FIREWALL_LOCK_DIR, { recursive: true, force: true });
+            } catch (error) {
+                const code = (error as NodeJS.ErrnoException).code;
+                if (code !== 'EEXIST') throw error;
+
+                try {
+                    const stat = fs.statSync(FIREWALL_LOCK_DIR);
+                    if (Date.now() - stat.mtimeMs > FIREWALL_LOCK_STALE_MS) {
+                        fs.rmSync(FIREWALL_LOCK_DIR, { recursive: true, force: true });
+                        continue;
+                    }
+                } catch {
+                    continue;
+                }
+
+                await this.sleep(250);
+            }
+        }
+
+        throw new Error(`Lock de firewall SGCG ocupado por mais de ${FIREWALL_LOCK_WAIT_MS}ms (${context}).`);
+    }
+
+    async withFirewallRuntimeLock<T>(context: string, action: () => Promise<T>): Promise<T> {
+        const release = await this.acquireFirewallRuntimeLock(context);
+        try {
+            return await action();
+        } finally {
+            release();
+        }
     }
 
     async ensureSchema() {
@@ -398,6 +442,48 @@ class DnsContingencyService {
         return removed;
     }
 
+    async dedupeNatRuntimeRules() {
+        const saved = await runCommand('iptables-save', ['-t', 'nat'], { elevated: true, allowFailure: true });
+        if (saved.code !== 0 || !saved.stdout) {
+            return { removed: 0, applied: false };
+        }
+
+        const seen = new Set<string>();
+        let removed = 0;
+        const deduped = String(saved.stdout)
+            .split('\n')
+            .filter((line) => {
+                if (!line.startsWith('-A ')) return true;
+                if (!seen.has(line)) {
+                    seen.add(line);
+                    return true;
+                }
+                removed += 1;
+                return false;
+            })
+            .join('\n');
+
+        if (removed <= 0) {
+            return { removed, applied: false };
+        }
+
+        const candidate = `${deduped.trimEnd()}\n`;
+        await runCommand('iptables-restore', ['--test'], {
+            elevated: true,
+            input: candidate,
+        });
+        // iptables-nft neste host reaplica NAT sem limpar todas as ocorrencias antigas;
+        // por isso limpamos as cadeias base e restauramos o snapshot completo deduplicado.
+        for (const chain of ['PREROUTING', 'INPUT', 'OUTPUT', 'POSTROUTING']) {
+            await runCommand('iptables', ['-t', 'nat', '-F', chain], { elevated: true });
+        }
+        await runCommand('iptables-restore', [], {
+            elevated: true,
+            input: candidate,
+        });
+        return { removed, applied: true };
+    }
+
     async countRuntimeRulesWithComment(table: string, chain: string, comment: string) {
         const saved = await runCommand('iptables-save', ['-t', table], { elevated: true, allowFailure: true });
         return String(saved.stdout || '')
@@ -443,11 +529,29 @@ class DnsContingencyService {
         const removed: string[] = [];
         const currentRules = await runCommand('iptables-save', ['-t', 'filter'], { elevated: true, allowFailure: true });
         const currentNatRules = await runCommand('iptables-save', ['-t', 'nat'], { elevated: true, allowFailure: true });
+        const filterLines = String(currentRules.stdout || '').split('\n');
+        const natLines = String(currentNatRules.stdout || '').split('\n');
         const existingRuntimeRules = new Set<string>();
         const staleNatVipIps = new Set<string>();
+        const staleFilterVipIps = new Set<string>();
         const natVipOrder = new Map<string, { firstRedirect: number | null; firstReturn: number | null }>();
+        const firstGlobalDnsRedirect = natLines.findIndex((line) => (
+            line.startsWith('-A PREROUTING ')
+            && line.includes('-i enp6s0+')
+            && line.includes('--dport 53')
+            && line.includes('-j REDIRECT')
+            && line.includes('--to-ports 53')
+        ));
+        const firstCommonForwardBlock = filterLines.findIndex((line) => (
+            line.startsWith('-A FORWARD ')
+            && (
+                line.includes('SGCG SOCIAL BLOCK')
+                || (line.includes('--dport 853') && line.includes('-j DROP'))
+                || line.includes('REJECT --reject-with')
+            )
+        ));
 
-        String(currentNatRules.stdout || '').split('\n').forEach((line, index) => {
+        natLines.forEach((line, index) => {
             if (!line.includes('sgcg-vip-bypass') || !line.startsWith('-A PREROUTING ')) return;
             const ipMatch = line.match(/\s-s\s+(\d+\.\d+\.\d+\.\d+(?:\/32)?)\b/);
             const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
@@ -468,13 +572,39 @@ class DnsContingencyService {
             }
         }
 
+        for (const ip of vipIps) {
+            const normalizedIp = `${ip}/32`;
+            const firstVipNat = natLines.findIndex((line) => (
+                line.startsWith('-A PREROUTING ')
+                && line.includes('sgcg-vip-bypass')
+                && line.includes(`-s ${normalizedIp}`)
+            ));
+            if (firstGlobalDnsRedirect >= 0 && (firstVipNat < 0 || firstVipNat > firstGlobalDnsRedirect)) {
+                staleNatVipIps.add(normalizedIp);
+            }
+
+            const firstVipForward = filterLines.findIndex((line) => (
+                line.startsWith('-A FORWARD ')
+                && line.includes('sgcg-vip-bypass')
+                && (line.includes(`-s ${normalizedIp}`) || line.includes(`-d ${normalizedIp}`))
+            ));
+            if (firstCommonForwardBlock >= 0 && (firstVipForward < 0 || firstVipForward > firstCommonForwardBlock)) {
+                staleFilterVipIps.add(normalizedIp);
+            }
+        }
+
         for (const line of `${currentRules.stdout || ''}\n${currentNatRules.stdout || ''}`.split('\n')) {
             if (line.includes('sgcg-vip-bypass')) {
                 const match = line.match(/^-A\s+(\S+)\s+(.+)$/);
                 if (!match) continue;
                 const ipMatch = line.match(/\s-[sd]\s+(\d+\.\d+\.\d+\.\d+(?:\/32)?)\b/);
                 const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
-                if (normalizedIp && activeVipSet.has(normalizedIp) && !staleNatVipIps.has(normalizedIp)) continue;
+                if (
+                    normalizedIp
+                    && activeVipSet.has(normalizedIp)
+                    && !staleNatVipIps.has(normalizedIp)
+                    && !staleFilterVipIps.has(normalizedIp)
+                ) continue;
                 const args = match[2].trim().split(/\s+/);
                 const table = line.includes('--to-ports') || match[1] === 'PREROUTING' ? 'nat' : 'filter';
                 const key = this.runtimeRuleKey(table, match[1], args);
@@ -637,22 +767,37 @@ class DnsContingencyService {
         const withEarlyBlock = this.injectEarlyManagedBlock(original, this.buildEarlyFirewallBlock(vipBypassRows, emergencyVlans));
         const withPontorhNatBlock = this.injectPontorhManagedBlock(withEarlyBlock, this.buildPontorhOpenDnsNatBlock(configuredVlans));
         const candidate = this.injectManagedBlock(withPontorhNatBlock, block);
+        const configChanged = candidate !== original;
         await this.validateFirewallConfig(candidate);
-        fs.writeFileSync(this.blockFile, candidate);
+        if (configChanged) {
+            fs.writeFileSync(this.blockFile, candidate);
+        }
         try {
-            if (await this.commandExists('ufw')) {
+            if (configChanged && await this.commandExists('ufw')) {
                 await runCommand('ufw', ['reload'], { elevated: true });
             }
-            await this.applyRuntimePontorhOpenDnsRules(configuredVlans);
-            await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
+            const pontorh = await this.applyRuntimePontorhOpenDnsRules(configuredVlans);
+            const vipRuntime = await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
+            const dedupe = await this.dedupeNatRuntimeRules();
+            if (dedupe.removed > 0) {
+                await this.recordAudit({
+                    action: 'runtime-dedupe',
+                    requestedBy: 'system',
+                    reason: 'Deduplicacao automatica da tabela nat durante reconciliacao do firewall',
+                    result: dedupe,
+                    success: true,
+                }).catch(() => undefined);
+            }
+            return { original, candidate, config_changed: configChanged, runtime: { pontorh, vip: vipRuntime, dedupe } };
         } catch (error) {
-            fs.writeFileSync(this.blockFile, original);
-            if (await this.commandExists('ufw')) {
+            if (configChanged) {
+                fs.writeFileSync(this.blockFile, original);
+            }
+            if (configChanged && await this.commandExists('ufw')) {
                 await runCommand('ufw', ['reload'], { elevated: true, allowFailure: true });
             }
             throw error;
         }
-        return { original, candidate };
     }
 
     async getScopedVlans(scopeType: ContingencyScopeType, vlanIds: number[]) {
@@ -728,14 +873,14 @@ class DnsContingencyService {
     async ensureFirewallState() {
         if (this.firewallApplyPromise) return this.firewallApplyPromise;
 
-        this.firewallApplyPromise = (async () => {
+        this.firewallApplyPromise = this.withFirewallRuntimeLock('dns-contingency.ensureFirewallState', async () => {
             const block = await this.buildFirewallBlock();
             const [vipBypassRows, emergencyVlans] = await Promise.all([
                 this.listVipBypassRows(),
                 this.listEmergencyVlanRows(),
             ]);
             return this.applyFirewallBlock(block, vipBypassRows, emergencyVlans);
-        })();
+        });
 
         try {
             return await this.firewallApplyPromise;

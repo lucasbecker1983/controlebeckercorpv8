@@ -5607,3 +5607,40 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `GET http://192.168.70.1/api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.103` retornou em `0.032s` com `session.runtime_authorized=true`
   - `GET http://192.168.70.1/api/hotspot/public/capport` com `X-Forwarded-For: 192.168.70.103` retornou `{"captive":false}`
   - `ipset list sgcg_hotspot_v70_auth` confirmou `192.168.70.103` presente no set de liberacao
+
+## VIP 192.168.10.40 - bypass UFW/DNS/ACL/RPZ e QoS VLAN 10 - 2026-05-12
+
+- arquivos alterados:
+  - `backend-proxy/src/services/dns-contingency-service.ts`
+  - `backend-proxy/src/services/proxy-engine-service.ts`
+- sintoma observado:
+  - o IP `192.168.10.40` estava cadastrado como VIP total em `policy_exceptions`, `dns_vip` e `proxy_vips`
+  - o mesmo IP tambem estava como VIP manual do QoS em `net_qos_vips` para `enp6s0.10`
+  - apesar disso, o runtime de NAT tinha acumulado dezenas de milhares de regras duplicadas vindas de reaplicacoes de UFW/before.rules, deixando a leitura de precedencia e reconciliacao do bypass fragil
+- correcao aplicada:
+  - adicionada deduplicacao automatica da tabela `nat` no reconciliador de contingencia/firewall do `backend-proxy`
+  - a deduplicacao preserva a primeira ocorrencia de cada regra, valida com `iptables-restore --test`, limpa as cadeias base da tabela `nat` e restaura o snapshot completo ja deduplicado
+  - isso evita que novos `ufw reload` feitos pelo motor acumulem copias de `PREROUTING`, `POSTROUTING`, DNS redirect, FTP 18121 e MASQUERADE
+- endurecimento complementar aplicado:
+  - o reconciliador de firewall passou a usar lock global em `/run/sgcg-firewall.lock`, com timeout e limpeza de lock stale, impedindo reconciliacoes simultaneas do motor
+  - VIP ativo que aparecer depois do redirect DNS global ou depois dos bloqueios comuns de `FORWARD` passa a ser considerado runtime invalido; o motor remove e reinsere as regras `sgcg-vip-bypass` na precedencia correta
+  - a deduplicacao automatica passou a registrar auditoria `runtime-dedupe` em `dns_contingency_audit` quando remover regras duplicadas
+  - o modulo `Proxy & Logs` passou a chamar `dnsContingencyService.ensureFirewallState()` apos aplicar modo/interceptacao ou bypass emergencial, fechando a janela em que outro `ufw reload` poderia recriar duplicatas apos a contingencia DNS ja ter reconciliado
+  - quando o `/etc/ufw/before.rules` gerado e identico ao arquivo atual, o reconciliador valida a configuracao mas nao regrava o arquivo nem executa `ufw reload`; ele apenas reconcilia Pontorh, VIPs e deduplicacao runtime, evitando recriar duplicatas pequenas em ciclos normais de 60 segundos
+- correcao runtime:
+  - backup salvo em `/opt/controlebeckercorp-v8/backups/runtime-firewall-20260512-131704`
+  - removidas `58062` regras duplicadas da tabela `nat`
+  - apos reinicio do `backend-proxy`, a tabela estabilizou com `nat_rules=114` e `duplicates=0`
+- validacao:
+  - `192.168.10.40` confirmado ativo em `policy_exceptions`, `dns_vip`, `proxy_vips` e `/etc/squid/acl/proxy_ip_bypass.acl`
+  - `/etc/unbound/becker/vip-bypass.conf` contem `32.40.10.168.192.rpz-client-ip CNAME rpz-passthru.`
+  - `iptables -t nat -S PREROUTING` confirmou o VIP antes do redirect DNS global `enp6s0+ --dport 53`
+  - `iptables -S FORWARD` confirmou `sgcg-vip-bypass` do `192.168.10.40` antes de `SGCG SOCIAL BLOCK VLAN10` e antes do DROP global de DoT da VLAN 10
+  - `tc filter show dev enp6s0.10 parent 1:` confirmou `c0a80a28` em `flowid 1:20` para download
+  - `tc filter show dev ifb10 parent 1:` confirmou `c0a80a28` em `flowid 1:20` para upload
+  - `unbound-checkconf` sem erros, `unbound` e `squid` ativos
+  - `dig @127.0.0.1 -p 5355 prefeitura.sp.gov.br A +short` respondeu `34.144.201.80`
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `pm2 restart backend-proxy --update-env` executado com sucesso
+  - apos uma rodada completa do reconciliador automatico, `/run/sgcg-firewall.lock` estava liberado, `backend-proxy` online e `iptables-save -t nat` manteve `nat_rules=114` e `duplicates=0`
+  - apos nova rodada sem mudanca de configuracao, a auditoria `runtime-dedupe` nao recebeu novas entradas depois de `2026-05-12 13:49:12`, confirmando que o reconciliador deixou de recriar duplicatas recorrentes quando nao ha alteracao no `before.rules`

@@ -12,6 +12,7 @@ import { ensureProxySchema } from './proxy-schema-service';
 import { ReportService } from './report-service';
 import { filterOperationalVlans, getGatewayFromSubnet, INTERNAL_DNS_BY_VLAN } from './blocking-release-scope';
 import { policyCompilerService } from './policy-compiler-service';
+import { dnsContingencyService } from './dns-contingency-service';
 
 const toJson = (value: any) => JSON.stringify(value || {});
 
@@ -507,6 +508,7 @@ export class ProxyEngineService {
             const totalBlockActive = await hasActiveTotalVlanBlock();
             const bypassGlobal = mode === 'off' && !totalBlockActive;
             const interception = await this.interceptionService.applyMode(mode, bypassGlobal);
+            const firewallRuntime = await dnsContingencyService.ensureFirewallState();
             const conntrackReset = await this.interceptionService.resetTestTargetConntrack(mode);
             const logger = await this.dnsLoggerService.ensureRunning();
             const squidActive = await this.isSquidActive();
@@ -526,6 +528,7 @@ export class ProxyEngineService {
                     squid_conf: squidResult.configPath,
                     squid_backup: squidResult.install.backupPath,
                     ufw_backup: interception.backupPath,
+                    firewall_runtime: firewallRuntime?.runtime,
                     conntrack_reset: conntrackReset,
                     redirects_active: interception.ports.length > 0,
                 },
@@ -539,6 +542,7 @@ export class ProxyEngineService {
                 result: {
                     active_ports: modePorts(mode),
                     interception_backup: interception.backupPath,
+                    firewall_runtime: firewallRuntime?.runtime,
                     conntrack_reset: conntrackReset,
                 },
                 success: true,
@@ -567,6 +571,7 @@ export class ProxyEngineService {
 
     async emergencyBypass(requestedBy = 'system') {
         await this.interceptionService.applyMode('off', true);
+        const firewallRuntime = await dnsContingencyService.ensureFirewallState();
         const conntrackReset = await this.interceptionService.resetTestTargetConntrack('off');
         await this.updateState({
             mode: 'off',
@@ -581,6 +586,7 @@ export class ProxyEngineService {
             last_validation: {
                 validated_at: new Date().toISOString(),
                 conntrack_reset: conntrackReset,
+                firewall_runtime: firewallRuntime?.runtime,
                 redirects_active: false,
             },
             last_error: null,
@@ -589,7 +595,7 @@ export class ProxyEngineService {
             action: 'emergency-bypass',
             requestedBy,
             payload: { observed_scopes: getObservedClientScopes() },
-            result: { bypass_global: true, conntrack_reset: conntrackReset },
+            result: { bypass_global: true, conntrack_reset: conntrackReset, firewall_runtime: firewallRuntime?.runtime },
             success: true,
             message: 'Bypass global ativado',
         });
