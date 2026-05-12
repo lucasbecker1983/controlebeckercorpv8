@@ -881,6 +881,220 @@ export const reportsService = {
         return { rows: identityEnrichment.enrichRows(rows), sync };
     },
 
+    async getGovernanceVisual(filters: NavFilters = {}) {
+        const effectiveFilters: NavFilters = {
+            period: filters.period || '24h',
+            source: filters.source || 'all',
+            action: filters.action || 'all',
+            vlan: filters.vlan,
+            domain: filters.domain,
+            ip: filters.ip,
+            date_from: filters.date_from,
+            date_to: filters.date_to,
+        };
+        const sync = await syncNavigationEvents(effectiveFilters);
+        const params: unknown[] = [];
+        const where: string[] = [
+            "ne.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
+            "(ne.domain IS NULL OR (ne.domain NOT LIKE '%.local' AND ne.domain NOT LIKE '%.arpa'))",
+        ];
+        where.push(buildTimeFilter('ne.event_at', params, effectiveFilters));
+        if (effectiveFilters.vlan) {
+            const vnum = parseInt(String(effectiveFilters.vlan).replace(/\D/g, ''), 10);
+            if (Number.isFinite(vnum)) where.push(`ne.vlan_id = ${p(params, vnum)}`);
+        }
+        if (effectiveFilters.domain?.trim()) {
+            where.push(`COALESCE(ne.domain, ne.url, '') ILIKE ${p(params, `%${effectiveFilters.domain.trim()}%`)}`);
+        }
+        if (effectiveFilters.ip?.trim()) {
+            where.push(`ne.client_ip = ${p(params, effectiveFilters.ip.trim())}::inet`);
+        }
+        if (effectiveFilters.source && effectiveFilters.source !== 'all') {
+            where.push(`ne.source_type = ${p(params, effectiveFilters.source)}`);
+        }
+        if (effectiveFilters.action === 'block') where.push('ne.blocked = true');
+        else if (effectiveFilters.action === 'allow') where.push('ne.blocked = false');
+
+        const wc = where.join(' AND ');
+        const baseParams = params.slice();
+
+        const [
+            summary,
+            byHour,
+            byVlan,
+            byCategory,
+            topBlockedDomains,
+            topAllowedDomains,
+            topClients,
+            sourceDistribution,
+            policyHits,
+            sessionTypes,
+            anomalies,
+        ] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COUNT(*)::bigint AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::bigint AS blocked,
+                    COUNT(*) FILTER (WHERE NOT ne.blocked)::bigint AS allowed,
+                    COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    COUNT(DISTINCT ne.domain)::int AS unique_domains,
+                    COUNT(*) FILTER (WHERE ne.session_id IS NOT NULL)::bigint AS session_linked,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'dns')::bigint AS dns_events,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'proxy')::bigint AS proxy_events,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'ufw')::bigint AS ufw_events,
+                    COUNT(DISTINCT ne.vlan_id)::int AS active_vlans
+                FROM navigation_events ne
+                WHERE ${wc}
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    date_trunc('hour', ne.event_at) AS bucket,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked,
+                    COUNT(*) FILTER (WHERE NOT ne.blocked)::int AS allowed
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY bucket
+                ORDER BY bucket ASC
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(ne.vlan_id::text, 'n/d') AS vlan_id,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked,
+                    COUNT(*) FILTER (WHERE NOT ne.blocked)::int AS allowed,
+                    COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    COUNT(DISTINCT ne.domain)::int AS unique_domains
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY COALESCE(ne.vlan_id::text, 'n/d')
+                ORDER BY total DESC
+                LIMIT 12
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(NULLIF(ne.category, ''), 'Sem classificacao') AS category,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY COALESCE(NULLIF(ne.category, ''), 'Sem classificacao')
+                ORDER BY blocked DESC, total DESC
+                LIMIT 12
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(ne.domain, ne.url, 'sem dominio') AS domain,
+                    COUNT(*)::int AS total,
+                    COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    MAX(ne.event_at) AS last_seen,
+                    MAX(ne.policy_source) FILTER (WHERE ne.policy_source IS NOT NULL) AS policy_source
+                FROM navigation_events ne
+                WHERE ${wc} AND ne.blocked
+                GROUP BY COALESCE(ne.domain, ne.url, 'sem dominio')
+                ORDER BY total DESC
+                LIMIT 12
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(ne.domain, ne.url, 'sem dominio') AS domain,
+                    COUNT(*)::int AS total,
+                    COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    MAX(ne.event_at) AS last_seen
+                FROM navigation_events ne
+                WHERE ${wc} AND NOT ne.blocked
+                GROUP BY COALESCE(ne.domain, ne.url, 'sem dominio')
+                ORDER BY total DESC
+                LIMIT 12
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    host(ne.client_ip) AS client_ip,
+                    COALESCE(MAX(ne.identity_name), MAX(ne.identity_username), 'Sem identidade') AS identity_label,
+                    MAX(ne.mac_address) FILTER (WHERE ne.mac_address IS NOT NULL) AS mac_address,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked,
+                    COUNT(*) FILTER (WHERE NOT ne.blocked)::int AS allowed,
+                    COUNT(DISTINCT ne.domain)::int AS unique_domains,
+                    MAX(ne.event_at) AS last_seen
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY ne.client_ip
+                ORDER BY blocked DESC, total DESC
+                LIMIT 12
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    ne.source_type,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY ne.source_type
+                ORDER BY total DESC
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(NULLIF(ne.policy_source, ''), 'sem politica') AS policy_source,
+                    COALESCE(NULLIF(ne.matched_rule, ''), 'sem regra') AS matched_rule,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY COALESCE(NULLIF(ne.policy_source, ''), 'sem politica'), COALESCE(NULLIF(ne.matched_rule, ''), 'sem regra')
+                ORDER BY blocked DESC, total DESC
+                LIMIT 10
+            `, baseParams),
+            pool.query(`
+                SELECT
+                    COALESCE(ne.session_type, 'sem sessao') AS session_type,
+                    COUNT(*)::int AS total
+                FROM navigation_events ne
+                WHERE ${wc}
+                GROUP BY COALESCE(ne.session_type, 'sem sessao')
+                ORDER BY total DESC
+            `, baseParams),
+            pool.query(`
+                WITH hour_counts AS (
+                    SELECT date_trunc('hour', ne.event_at) AS bucket, COUNT(*)::float AS total
+                    FROM navigation_events ne
+                    WHERE ${wc}
+                    GROUP BY bucket
+                ),
+                stats AS (
+                    SELECT AVG(total) AS avg_total, STDDEV_POP(total) AS std_total FROM hour_counts
+                )
+                SELECT
+                    h.bucket,
+                    h.total::int AS total,
+                    ROUND(COALESCE((h.total - s.avg_total) / NULLIF(s.std_total, 0), 0)::numeric, 2) AS score
+                FROM hour_counts h CROSS JOIN stats s
+                WHERE h.total > COALESCE(s.avg_total, 0)
+                ORDER BY score DESC, h.total DESC
+                LIMIT 5
+            `, baseParams),
+        ]);
+
+        return {
+            generated_at: new Date().toISOString(),
+            scope: effectiveFilters,
+            sync,
+            summary: summary.rows[0] || {},
+            charts: {
+                by_hour: byHour.rows,
+                by_vlan: byVlan.rows,
+                by_category: byCategory.rows,
+                top_blocked_domains: topBlockedDomains.rows,
+                top_allowed_domains: topAllowedDomains.rows,
+                top_clients: identityEnrichment.enrichRows(topClients.rows),
+                source_distribution: sourceDistribution.rows,
+                policy_hits: policyHits.rows,
+                session_types: sessionTypes.rows,
+                anomalies: anomalies.rows,
+            },
+        };
+    },
+
     async getSystemAudit(filters: AuditFilters) {
         const limit = Math.min(Number(filters.limit) || 200, 1000);
         const page = Math.max(Number(filters.page) || 1, 1);

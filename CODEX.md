@@ -78,6 +78,33 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `cd frontend && npm run build` concluido com sucesso
   - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` ja executados na rodada
 
+## Governanca Visual - cockpit executivo com graficos investigaveis - 2026-05-12
+
+- arquivos alterados:
+  - `backend/src/modules/reports/reports-service.ts`
+  - `backend/src/modules/reports/reports-routes.ts`
+  - `frontend/src/pages/GovernanceVisual.jsx`
+  - `frontend/src/pages/Reports.jsx`
+  - `frontend/src/App.jsx`
+  - `frontend/src/components/Sidebar.jsx`
+- ajuste aplicado:
+  - mantida a divisao entre `Governanca` e `Controle`, com nova ponte visual para investigacao tecnica
+  - criado o endpoint `GET /api/reports/governance-visual`, que consolida indicadores executivos a partir de `navigation_events`
+  - criado o menu `Governanca Visual` dentro da secao de Governanca
+  - a nova tela apresenta cards executivos, linha do tempo, donut de fontes, grafico por VLAN, categorias bloqueadas, dominios bloqueados/liberados, clientes que exigem atencao, regras acionadas, origem institucional das sessoes e picos/anomalias
+  - todos os graficos principais sao clicaveis e encaminham para `Relatorios Forenses` com filtros de periodo, fonte, VLAN, dominio, IP ou acao
+  - `Relatorios Forenses` passou a inicializar seus filtros a partir da URL, permitindo que a Governanca Visual abra a investigacao ja filtrada
+- objetivo de produto:
+  - entregar uma camada visual para gestores baterem o olho em graficos e questionarem pontos concretos sem perder a rastreabilidade tecnica
+  - transformar os graficos em entrada de investigacao, nao apenas ornamento de dashboard
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso e gerou o bundle `index-ClyBChx_.js`
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` executados com sucesso
+  - chamada direta ao servico compilado `reportsService.getGovernanceVisual({ period: '24h' })` retornou `122406` eventos, `16325` bloqueios, `121910` eventos DNS/RPZ, `478` eventos UFW, `25` buckets horarios e anomalias calculadas
+  - `https://127.0.0.1:6777/governanca-visual` serviu os assets `index-ClyBChx_.js` e `index-IATdg7vs.css`
+  - `https://127.0.0.1:6777/relatorios?tab=navigation&source=ufw&period=24h` serviu o mesmo bundle, validando a rota de investigacao filtrada
+
 ## Relatorios Forenses - auditoria unificada de navegacao - 2026-05-12
 
 - arquivos alterados:

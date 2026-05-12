@@ -1,4 +1,4 @@
-import { Boxes, Eye, FileCheck2, FileText, Fingerprint, Headphones, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, Smartphone, UserCog, Waypoints, Wifi } from 'lucide-react';
+import { BarChart3, Boxes, Eye, FileCheck2, FileText, Fingerprint, Headphones, Landmark, LayoutDashboard, Network, ScrollText, ServerCog, Settings2, ShieldCheck, Smartphone, UserCog, Waypoints, Wifi } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -7,6 +7,7 @@ const menu = [
     tone: 'governance',
     items: [
       { label: 'Centro de Governança', icon: Landmark, path: '/' },
+      { label: 'Governança Visual', icon: BarChart3, path: '/governanca-visual' },
       { label: 'Políticas Institucionais', icon: Fingerprint, path: '/bloqueios-liberacoes?tab=policies' },
       { label: 'LGPD & Proteção de Dados', icon: ShieldCheck, path: '/lgpd' },
       { label: 'Governança de Dados', icon: ScrollText, path: '/governanca-dados' },

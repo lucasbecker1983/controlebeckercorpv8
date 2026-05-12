@@ -3,6 +3,25 @@ import { reportsService } from './reports-service';
 
 const router = Router();
 
+router.get('/governance-visual', async (req: Request, res: Response) => {
+    try {
+        await reportsService.ensureSchema();
+        const result = await reportsService.getGovernanceVisual({
+            period: String(req.query.period || '24h'),
+            ip: req.query.ip as string,
+            vlan: req.query.vlan as string,
+            domain: req.query.domain as string,
+            source: req.query.source as 'all' | 'dns' | 'proxy' | 'ufw',
+            action: req.query.action as 'block' | 'allow' | 'all',
+            date_from: req.query.date_from as string,
+            date_to: req.query.date_to as string,
+        });
+        res.json(result);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 router.get('/navigation', async (req: Request, res: Response) => {
     try {
         await reportsService.ensureSchema();

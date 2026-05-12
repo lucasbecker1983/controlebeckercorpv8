@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Activity,
   AlertTriangle,
@@ -193,11 +194,22 @@ const IdentityBlock = ({ item }) => {
 };
 
 export default function Reports() {
-  const [activeTab, setActiveTab] = useState('navigation');
+  const [searchParams] = useSearchParams();
+  const initialNavFilters = () => ({
+    period: searchParams.get('period') || '24h',
+    ip: searchParams.get('ip') || '',
+    vlan: searchParams.get('vlan') || '',
+    domain: searchParams.get('domain') || '',
+    source: searchParams.get('source') || 'all',
+    action: searchParams.get('action') || 'all',
+    date_from: searchParams.get('date_from') || '',
+    date_to: searchParams.get('date_to') || '',
+  });
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'navigation');
 
   // Navigation tab state
-  const [navFilters, setNavFilters] = useState({ period: '24h', ip: '', vlan: '', domain: '', source: 'all', action: 'all', date_from: '', date_to: '' });
-  const [navView, setNavView] = useState('events'); // 'events' | 'by_ip'
+  const [navFilters, setNavFilters] = useState(initialNavFilters);
+  const [navView, setNavView] = useState(searchParams.get('view') || 'events'); // 'events' | 'by_ip'
   const [navData, setNavData] = useState(null);
   const [navPage, setNavPage] = useState(1);
   const [navLoading, setNavLoading] = useState(false);

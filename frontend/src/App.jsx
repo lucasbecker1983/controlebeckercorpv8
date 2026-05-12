@@ -16,6 +16,7 @@ import Backups from './pages/Backups';
 import Security from './pages/Security';
 import Settings from './pages/Settings';
 import DataGovernance from './pages/DataGovernance';
+import GovernanceVisual from './pages/GovernanceVisual';
 import ApprovalsExceptions from './pages/ApprovalsExceptions';
 import Lgpd from './pages/Lgpd';
 import Reports from './pages/Reports';
@@ -226,6 +227,7 @@ export default function App() {
           <Route path="/users" element={<Users />} />
           <Route path="/proxy" element={<Proxy />} />
           <Route path="/bloqueios-liberacoes" element={<BlockingReleases />} />
+          <Route path="/governanca-visual" element={<GovernanceVisual />} />
           <Route path="/governanca-dados" element={<DataGovernance />} />
           <Route path="/lgpd" element={<Lgpd />} />
           <Route path="/aprovacoes-excecoes" element={<ApprovalsExceptions />} />
