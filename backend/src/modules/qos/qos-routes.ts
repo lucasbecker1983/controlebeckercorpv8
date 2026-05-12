@@ -124,7 +124,6 @@ const reconcileAllPolicies = async () => {
                 );
                 normalizedVips = normalizeVips(vips.rows);
             }
-
             const runtime = await applyPolicyToKernel(iface, downLimit, upLimit, normalizedVips);
 
             results.push({
@@ -155,7 +154,7 @@ const getIfbName = (iface: string) => {
 
 const parseDefaultClass = (qdiscText: string) => {
     const defaultClassMatch = qdiscText.match(/default 0x([0-9a-f]+)/i);
-    return defaultClassMatch ? `1:${parseInt(defaultClassMatch[1], 16)}` : null;
+    return defaultClassMatch ? `1:${defaultClassMatch[1].toLowerCase()}` : null;
 };
 
 const parseClasses = (classesOutput: string) => {

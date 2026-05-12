@@ -46,6 +46,13 @@ const ACTION_OPTIONS = [
   { value: 'allow', label: 'Somente liberados' },
 ];
 
+const NAV_SOURCE_OPTIONS = [
+  { value: 'all', label: 'Todas as fontes' },
+  { value: 'dns', label: 'DNS / RPZ' },
+  { value: 'proxy', label: 'Proxy / ACL' },
+  { value: 'ufw', label: 'UFW' },
+];
+
 const AUDIT_SOURCE_OPTIONS = [
   { value: 'all',         label: 'Todas as fontes' },
   { value: 'sistema',     label: 'Sistema (API)' },
@@ -109,6 +116,8 @@ const Pill = ({ children, color = 'gray' }) => {
 
 const srcColor = { sistema: 'blue', autenticacao: 'purple', lgpd: 'amber', politicas: 'teal' };
 const srcLabel = { sistema: 'Sistema', autenticacao: 'Autenticação', lgpd: 'LGPD', politicas: 'Políticas' };
+const navSrcColor = { dns: 'blue', proxy: 'purple', ufw: 'amber' };
+const navSrcLabel = { dns: 'DNS/RPZ', proxy: 'Proxy/ACL', ufw: 'UFW' };
 
 const ACTION_LABELS = {
   login: 'Acesso ao sistema',
@@ -187,7 +196,7 @@ export default function Reports() {
   const [activeTab, setActiveTab] = useState('navigation');
 
   // Navigation tab state
-  const [navFilters, setNavFilters] = useState({ period: '24h', ip: '', vlan: '', domain: '', action: 'all', date_from: '', date_to: '' });
+  const [navFilters, setNavFilters] = useState({ period: '24h', ip: '', vlan: '', domain: '', source: 'all', action: 'all', date_from: '', date_to: '' });
   const [navView, setNavView] = useState('events'); // 'events' | 'by_ip'
   const [navData, setNavData] = useState(null);
   const [navPage, setNavPage] = useState(1);
@@ -347,7 +356,7 @@ export default function Reports() {
               <Filter size={14} />
               Filtros de Navegação
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium text-on-surface/50">Período</label>
                 <select
@@ -410,6 +419,17 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-medium text-on-surface/50">Fonte</label>
+                <select
+                  value={navFilters.source}
+                  onChange={(e) => setNavFilters((f) => ({ ...f, source: e.target.value }))}
+                  className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
+                >
+                  {NAV_SOURCE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
                 <label className="text-[11px] font-medium text-on-surface/50">Ação</label>
                 <select
                   value={navFilters.action}
@@ -431,7 +451,7 @@ export default function Reports() {
                 Aplicar filtros
               </button>
               <button
-                onClick={() => { setNavFilters({ period: '24h', ip: '', vlan: '', domain: '', action: 'all', date_from: '', date_to: '' }); }}
+                onClick={() => { setNavFilters({ period: '24h', ip: '', vlan: '', domain: '', source: 'all', action: 'all', date_from: '', date_to: '' }); }}
                 className="rounded-lg border border-outline/20 px-4 py-2 text-sm text-on-surface/60 hover:text-on-surface"
               >
                 Limpar
@@ -466,12 +486,15 @@ export default function Reports() {
 
           {/* Summary Cards */}
           {navData?.summary && navView === 'events' && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
               <SummaryCard label="Total" value={Number(navData.summary.total).toLocaleString('pt-BR')} icon={Activity} />
               <SummaryCard label="Bloqueados" value={Number(navData.summary.blocked).toLocaleString('pt-BR')} color="red-500" icon={XCircle} />
               <SummaryCard label="Liberados" value={Number(navData.summary.allowed).toLocaleString('pt-BR')} color="green-500" icon={CheckCircle2} />
               <SummaryCard label="IPs únicos" value={navData.summary.unique_ips} icon={Monitor} />
               <SummaryCard label="Domínios únicos" value={navData.summary.unique_domains} icon={Globe2} />
+              <SummaryCard label="DNS/RPZ" value={Number(navData.summary.dns_events || 0).toLocaleString('pt-BR')} icon={Globe2} />
+              <SummaryCard label="Proxy/ACL" value={Number(navData.summary.proxy_events || 0).toLocaleString('pt-BR')} icon={Shield} />
+              <SummaryCard label="Com sessão" value={Number(navData.summary.session_linked || 0).toLocaleString('pt-BR')} icon={User} />
             </div>
           )}
 
@@ -493,14 +516,16 @@ export default function Reports() {
           {!navLoading && navView === 'events' && navData?.rows && (
             <>
               <div className="overflow-x-auto rounded-xl border border-outline/10 bg-surface-high shadow-sm">
-                <table className="w-full min-w-[1040px] text-sm">
+                <table className="w-full min-w-[1220px] text-sm">
                   <thead>
                     <tr className="border-b border-outline/10 bg-surface">
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Data / Hora</th>
+                      <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Fonte</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">IP Origem</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Usuário / Estação</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">VLAN</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Domínio consultado</th>
+                      <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Sessão</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Tipo</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Ação</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Resposta DNS</th>
@@ -510,7 +535,7 @@ export default function Reports() {
                   <tbody>
                     {navData.rows.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="py-12 text-center text-sm text-on-surface/40">
+                        <td colSpan={11} className="py-12 text-center text-sm text-on-surface/40">
                           Nenhum evento encontrado para os filtros aplicados.
                         </td>
                       </tr>
@@ -521,6 +546,9 @@ export default function Reports() {
                       return (
                         <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
                           <td className="px-3 py-2 font-mono text-xs text-on-surface/70">{fmt(ev.occurred_at)}</td>
+                          <td className="px-3 py-2">
+                            <Pill color={navSrcColor[ev.source_type] || 'gray'}>{navSrcLabel[ev.source_type] || ev.source_type || 'Fonte'}</Pill>
+                          </td>
                           <td className="px-3 py-2 font-mono text-xs font-semibold text-on-surface">{ev.client_ip || '—'}</td>
                           <td className="px-3 py-2"><IdentityBlock item={ev} /></td>
                           <td className="px-3 py-2">
@@ -532,6 +560,9 @@ export default function Reports() {
                             <span className="block truncate text-xs text-on-surface" title={ev.domain}>
                               {ev.domain || '—'}
                             </span>
+                          </td>
+                          <td className="px-3 py-2 text-xs text-on-surface/60">
+                            {ev.session_type ? `${ev.session_type} #${ev.session_id}` : '—'}
                           </td>
                           <td className="px-3 py-2 text-xs text-on-surface/60">{ev.query_type || '—'}</td>
                           <td className="px-3 py-2">
@@ -578,7 +609,7 @@ export default function Reports() {
           {/* By-IP table */}
           {!navLoading && navView === 'by_ip' && navData?.rows && (
             <div className="overflow-x-auto rounded-xl border border-outline/10 bg-surface-high shadow-sm">
-              <table className="w-full min-w-[960px] text-sm">
+                <table className="w-full min-w-[1080px] text-sm">
                 <thead>
                   <tr className="border-b border-outline/10 bg-surface">
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">IP</th>
@@ -588,6 +619,7 @@ export default function Reports() {
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Bloqueados</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Liberados</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Domínios únicos</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Fontes</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Primeiro acesso</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Último acesso</th>
                   </tr>
@@ -595,7 +627,7 @@ export default function Reports() {
                 <tbody>
                   {navData.rows.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-12 text-center text-sm text-on-surface/40">
+                      <td colSpan={10} className="py-12 text-center text-sm text-on-surface/40">
                         Nenhum cliente encontrado para os filtros aplicados.
                       </td>
                     </tr>
@@ -623,6 +655,9 @@ export default function Reports() {
                       <td className="px-3 py-2"><Pill color="red">{Number(row.blocked).toLocaleString('pt-BR')}</Pill></td>
                       <td className="px-3 py-2"><Pill color="green">{Number(row.allowed).toLocaleString('pt-BR')}</Pill></td>
                       <td className="px-3 py-2 text-xs text-on-surface/70">{Number(row.unique_domains).toLocaleString('pt-BR')}</td>
+                      <td className="px-3 py-2 text-xs text-on-surface/70">
+                        DNS {Number(row.dns_events || 0).toLocaleString('pt-BR')} · Proxy {Number(row.proxy_events || 0).toLocaleString('pt-BR')}
+                      </td>
                       <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(row.first_seen)}</td>
                       <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(row.last_seen)}</td>
                     </tr>

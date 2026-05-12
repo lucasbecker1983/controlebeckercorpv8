@@ -1,4 +1,6 @@
 import PDFDocument from 'pdfkit';
+import crypto from 'crypto';
+import fs from 'fs/promises';
 import { pool } from '../../config/db';
 import { identityEnrichment } from '../identity/identity-enrichment';
 
@@ -7,6 +9,7 @@ const ENTITY = 'Secretaria de Comércio, Indústria, Serviços e Inovação';
 const SYSTEM = 'SGCG — Sistema de Governança e Controle Governamental';
 
 const LOGO_PATH = '/opt/controlebeckercorp-v8/frontend/public/jmb-logo-clean.png';
+const UFW_LOG_PATH = '/var/log/ufw.log';
 
 const LGPD_REFS = [
     'Lei nº 13.709/2018 (LGPD) — Art. 6º, I: finalidade legítima',
@@ -103,6 +106,7 @@ export type NavFilters = {
     ip?: string;
     vlan?: string | number;
     domain?: string;
+    source?: 'all' | 'dns' | 'proxy' | 'ufw';
     action?: 'block' | 'allow' | 'all';
     page?: number;
     limit?: number;
@@ -135,6 +139,442 @@ const buildTimeFilter = (col: string, params: unknown[], filters: { period?: str
     }
     return `${col} >= NOW() - ${p(params, parsePeriod(filters.period))}::interval`;
 };
+
+const periodMs = (period?: string) => {
+    const parsed = parsePeriod(period);
+    const [rawValue, unit] = parsed.split(' ');
+    const value = Math.max(1, parseInt(rawValue, 10) || 24);
+    if (unit.startsWith('hour')) return value * 60 * 60 * 1000;
+    if (unit.startsWith('day')) return value * 24 * 60 * 60 * 1000;
+    if (unit.startsWith('month')) return value * 30 * 24 * 60 * 60 * 1000;
+    return 24 * 60 * 60 * 1000;
+};
+
+const inferVlanFromIp = (ip: string | null | undefined): number | null => {
+    if (!ip) return null;
+    const match = /^192\.168\.(\d+)\./.exec(ip);
+    if (!match) return null;
+    const octet = Number(match[1]);
+    return Number.isFinite(octet) ? octet : null;
+};
+
+const isInternalAuditIp = (ip: string | null | undefined): boolean => {
+    if (!ip) return false;
+    return /^10\./.test(ip) || /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip) || /^192\.168\./.test(ip);
+};
+
+const parseUfwLine = (line: string) => {
+    if (!line.includes('[UFW ')) return null;
+    const timestamp = line.split(/\s+/, 1)[0];
+    const eventAt = new Date(timestamp);
+    if (Number.isNaN(eventAt.getTime())) return null;
+    const read = (key: string) => {
+        const match = new RegExp(`(?:^|\\s)${key}=([^\\s]+)`).exec(line);
+        return match?.[1] || null;
+    };
+    const src = read('SRC');
+    if (!isInternalAuditIp(src)) return null;
+    const dst = read('DST');
+    const proto = read('PROTO');
+    const spt = read('SPT');
+    const dpt = read('DPT');
+    const inIface = read('IN');
+    const outIface = read('OUT');
+    const actionMatch = /\[UFW\s+([^\]]+)\]/.exec(line);
+    const rawAction = actionMatch?.[1] || 'LOG';
+    const sourceId = crypto
+        .createHash('sha1')
+        .update([timestamp, src, dst, proto, spt, dpt, inIface, outIface, rawAction].join('|'))
+        .digest('hex');
+    return {
+        sourceId,
+        eventAt,
+        clientIp: src,
+        vlanId: inferVlanFromIp(src),
+        domain: dst || null,
+        url: `${proto || 'IP'} ${src || '-'}:${spt || '-'} -> ${dst || '-'}:${dpt || '-'}`,
+        method: proto || null,
+        statusCode: dpt ? Number(dpt) : null,
+        action: rawAction.toLowerCase().includes('block') ? 'blocked' : 'allowed',
+        blocked: rawAction.toLowerCase().includes('block'),
+        matchedRule: rawAction,
+        evidence: {
+            in: inIface,
+            out: outIface,
+            src,
+            dst,
+            spt,
+            dpt,
+            proto,
+            raw_action: rawAction,
+        },
+    };
+};
+
+const getFilterWindow = (filters: NavFilters) => {
+    const now = Date.now();
+    const from = filters.date_from ? new Date(filters.date_from).getTime() : now - periodMs(filters.period);
+    const to = filters.date_to ? new Date(filters.date_to).getTime() : now;
+    return { from, to };
+};
+
+const proxyDomainSql = `
+    CASE
+        WHEN pal.url IS NULL OR pal.url = '' OR pal.url = '-' THEN NULL
+        WHEN pal.url ILIKE 'IP:%' THEN LOWER(NULLIF(TRIM(SUBSTRING(pal.url FROM 4)), ''))
+        ELSE LOWER(NULLIF(SPLIT_PART(SPLIT_PART(REGEXP_REPLACE(pal.url, '^https?://', '', 'i'), '/', 1), ':', 1), ''))
+    END
+`;
+
+const proxyIpSql = `
+    CASE
+        WHEN pal.client_ip ~ '^[0-9]{1,3}(\\.[0-9]{1,3}){3}$' THEN pal.client_ip::inet
+        ELSE NULL
+    END
+`;
+
+const proxyVlanSql = `
+    CASE
+        WHEN pal.client_ip LIKE '192.168.10.%' THEN 10
+        WHEN pal.client_ip LIKE '192.168.30.%' THEN 30
+        WHEN pal.client_ip LIKE '192.168.50.%' THEN 50
+        WHEN pal.client_ip LIKE '192.168.70.%' THEN 70
+        WHEN pal.client_ip LIKE '192.168.99.%' THEN 99
+        ELSE NULL
+    END
+`;
+
+async function syncUfwNavigationEvents(filters: NavFilters = {}) {
+    if (filters.source && filters.source !== 'all' && filters.source !== 'ufw') {
+        return { inserted: 0, error: null as string | null };
+    }
+    let content = '';
+    try {
+        content = await fs.readFile(UFW_LOG_PATH, 'utf8');
+    } catch (error: any) {
+        return { inserted: 0, error: error?.message || 'ufw_log_unavailable' };
+    }
+
+    const { from, to } = getFilterWindow(filters);
+    const rows = content
+        .split('\n')
+        .map(parseUfwLine)
+        .filter((row): row is NonNullable<ReturnType<typeof parseUfwLine>> => Boolean(row))
+        .filter((row) => {
+            const time = row.eventAt.getTime();
+            if (time < from || time > to) return false;
+            if (filters.ip?.trim() && row.clientIp !== filters.ip.trim()) return false;
+            if (filters.vlan) {
+                const vlan = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
+                if (Number.isFinite(vlan) && row.vlanId !== vlan) return false;
+            }
+            if (filters.domain?.trim()) {
+                const needle = filters.domain.trim().toLowerCase();
+                if (!String(row.domain || row.url || '').toLowerCase().includes(needle)) return false;
+            }
+            if (filters.action === 'block' && !row.blocked) return false;
+            if (filters.action === 'allow' && row.blocked) return false;
+            return true;
+        })
+        .slice(-5000);
+
+    if (!rows.length) return { inserted: 0, error: null as string | null };
+
+    const params: unknown[] = [];
+    const tuples = rows.map((row) => {
+        const values = [
+            row.sourceId,
+            row.eventAt,
+            row.clientIp,
+            row.vlanId,
+            row.domain,
+            row.url,
+            row.method,
+            row.statusCode,
+            row.action,
+            row.blocked,
+            row.matchedRule,
+            JSON.stringify(row.evidence),
+        ];
+        const placeholders = values.map((value) => p(params, value));
+        return `(${placeholders.join(', ')})`;
+    });
+
+    const sql = `
+        WITH incoming (
+            source_event_id, event_at, client_ip, vlan_id, domain, url, method,
+            status_code, action, blocked, matched_rule, evidence
+        ) AS (
+            VALUES ${tuples.join(',\n')}
+        )
+        INSERT INTO navigation_events (
+            source_type, source_event_id, event_at, client_ip, vlan_id, mac_address,
+            identity_type, identity_id, identity_name, identity_username,
+            session_type, session_id, domain, url, method, status_code, bytes,
+            action, blocked, category, query_type, response_code, policy_source,
+            matched_rule, confidence, evidence
+        )
+        SELECT
+            'ufw',
+            i.source_event_id::text,
+            i.event_at::timestamptz,
+            i.client_ip::inet,
+            i.vlan_id::int,
+            COALESCE(hs.mac_address, cs.mac_address),
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 ELSE NULL END,
+            COALESCE(hs.visitor_id::text, cs.user_id::text),
+            COALESCE(hv.full_name, cu.full_name),
+            cu.username,
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 ELSE NULL END,
+            COALESCE(hs.id, cs.id),
+            i.domain::text,
+            i.url::text,
+            i.method::text,
+            i.status_code::int,
+            NULL,
+            i.action::text,
+            i.blocked::boolean,
+            'firewall',
+            NULL,
+            NULL,
+            'ufw',
+            i.matched_rule::text,
+            CASE WHEN hs.id IS NOT NULL OR cs.id IS NOT NULL THEN 85 ELSE 55 END,
+            i.evidence::jsonb
+        FROM incoming i
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM hotspot_sessions s
+            WHERE s.client_ip = i.client_ip::inet
+              AND i.event_at::timestamptz >= s.started_at
+              AND i.event_at::timestamptz <= COALESCE(s.revoked_at, s.expires_at, s.last_seen_at + INTERVAL '4 hours')
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) hs ON true
+        LEFT JOIN hotspot_visitors hv ON hv.id = hs.visitor_id
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM collab_sessions s
+            WHERE s.client_ip = i.client_ip::inet
+              AND i.event_at::timestamptz >= s.started_at
+              AND i.event_at::timestamptz <= COALESCE(s.revoked_at, s.expires_at)
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) cs ON hs.id IS NULL
+        LEFT JOIN collab_users cu ON cu.id = cs.user_id
+        ON CONFLICT (source_type, source_event_id) DO NOTHING
+    `;
+
+    const result = await pool.query(sql, params);
+    return { inserted: result.rowCount || 0, error: null as string | null };
+}
+
+async function syncNavigationEvents(filters: NavFilters = {}) {
+    const dnsParams: unknown[] = [];
+    const dnsWhere = [
+        buildTimeFilter('d.occurred_at', dnsParams, filters),
+        "d.client_ip IS NOT NULL",
+        "d.query_name IS NOT NULL",
+        "d.query_name <> '-'",
+        "d.query_name NOT LIKE '%.local'",
+        "d.query_name NOT LIKE '%.arpa'",
+        "d.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
+    ];
+    if (filters.ip?.trim()) dnsWhere.push(`d.client_ip = ${p(dnsParams, filters.ip.trim())}::inet`);
+    if (filters.vlan) {
+        const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
+        if (Number.isFinite(vnum)) dnsWhere.push(`d.vlan_id = ${p(dnsParams, vnum)}`);
+    }
+    if (filters.domain?.trim()) dnsWhere.push(`d.query_name ILIKE ${p(dnsParams, `%${filters.domain.trim()}%`)}`);
+    if (filters.action === 'block') dnsWhere.push(`d.action = 'blocked'`);
+    else if (filters.action === 'allow') dnsWhere.push(`d.action <> 'blocked'`);
+
+    const proxyParams: unknown[] = [];
+    const proxyWhere = [
+        buildTimeFilter('pal.timestamp', proxyParams, filters),
+        "pal.client_ip IS NOT NULL",
+        "pal.client_ip NOT IN ('127.0.0.1', '::1')",
+        `${proxyIpSql} IS NOT NULL`,
+        `${proxyDomainSql} IS NOT NULL`,
+        `${proxyDomainSql} <> ''`,
+    ];
+    if (filters.ip?.trim()) proxyWhere.push(`pal.client_ip = ${p(proxyParams, filters.ip.trim())}`);
+    if (filters.vlan) {
+        const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
+        if (Number.isFinite(vnum)) proxyWhere.push(`${proxyVlanSql} = ${p(proxyParams, vnum)}`);
+    }
+    if (filters.domain?.trim()) proxyWhere.push(`${proxyDomainSql} ILIKE ${p(proxyParams, `%${filters.domain.trim()}%`)}`);
+    if (filters.action === 'block') proxyWhere.push(`UPPER(COALESCE(pal.action, '')) ~ '(DENIED|BLOCK|FORBIDDEN)'`);
+    else if (filters.action === 'allow') proxyWhere.push(`NOT (UPPER(COALESCE(pal.action, '')) ~ '(DENIED|BLOCK|FORBIDDEN)')`);
+
+    const dnsSql = `
+        INSERT INTO navigation_events (
+            source_type, source_event_id, event_at, client_ip, vlan_id, mac_address,
+            identity_type, identity_id, identity_name, identity_username,
+            session_type, session_id, domain, url, method, status_code, bytes,
+            action, blocked, category, query_type, response_code, policy_source,
+            matched_rule, confidence, evidence
+        )
+        SELECT
+            'dns',
+            d.id::text,
+            d.occurred_at,
+            d.client_ip,
+            d.vlan_id,
+            COALESCE(hs.mac_address, cs.mac_address),
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 WHEN d.identity_user IS NOT NULL OR d.identity_computer IS NOT NULL THEN 'endpoint'
+                 ELSE NULL END,
+            COALESCE(hs.visitor_id::text, cs.user_id::text),
+            COALESCE(hv.full_name, cu.full_name, d.identity_user, d.identity_computer),
+            COALESCE(cu.username, d.identity_user),
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 ELSE NULL END,
+            COALESCE(hs.id, cs.id),
+            LOWER(d.query_name),
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            CASE WHEN d.action = 'blocked' THEN 'blocked' ELSE 'allowed' END,
+            d.action = 'blocked',
+            d.category,
+            d.query_type,
+            d.response_code,
+            d.policy_source,
+            d.matched_rule,
+            CASE WHEN hs.id IS NOT NULL OR cs.id IS NOT NULL THEN 95
+                 WHEN d.identity_user IS NOT NULL OR d.identity_computer IS NOT NULL THEN 80
+                 ELSE 65 END,
+            jsonb_build_object(
+                'resolver', d.resolver,
+                'rule_id', d.rule_id,
+                'raw_action', d.action,
+                'fingerprint', d.fingerprint,
+                'identity_user', d.identity_user,
+                'identity_computer', d.identity_computer
+            )
+        FROM dns_policy_events d
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM hotspot_sessions s
+            WHERE s.client_ip = d.client_ip
+              AND d.occurred_at >= s.started_at
+              AND d.occurred_at <= COALESCE(s.revoked_at, s.expires_at, s.last_seen_at + INTERVAL '4 hours')
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) hs ON true
+        LEFT JOIN hotspot_visitors hv ON hv.id = hs.visitor_id
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM collab_sessions s
+            WHERE s.client_ip = d.client_ip
+              AND d.occurred_at >= s.started_at
+              AND d.occurred_at <= COALESCE(s.revoked_at, s.expires_at)
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) cs ON hs.id IS NULL
+        LEFT JOIN collab_users cu ON cu.id = cs.user_id
+        WHERE ${dnsWhere.join(' AND ')}
+        ON CONFLICT (source_type, source_event_id) DO NOTHING
+    `;
+
+    const proxySql = `
+        INSERT INTO navigation_events (
+            source_type, source_event_id, event_at, client_ip, vlan_id, mac_address,
+            identity_type, identity_id, identity_name, identity_username,
+            session_type, session_id, domain, url, method, status_code, bytes,
+            action, blocked, category, query_type, response_code, policy_source,
+            matched_rule, confidence, evidence
+        )
+        SELECT
+            'proxy',
+            pal.id::text,
+            pal.timestamp::timestamptz,
+            ${proxyIpSql},
+            ${proxyVlanSql},
+            COALESCE(hs.mac_address, cs.mac_address),
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 WHEN pal.username IS NOT NULL THEN 'proxy_user'
+                 ELSE NULL END,
+            COALESCE(hs.visitor_id::text, cs.user_id::text),
+            COALESCE(hv.full_name, cu.full_name, pal.username),
+            COALESCE(cu.username, pal.username),
+            CASE WHEN hs.id IS NOT NULL THEN 'hotspot'
+                 WHEN cs.id IS NOT NULL THEN 'collaborator'
+                 ELSE NULL END,
+            COALESCE(hs.id, cs.id),
+            ${proxyDomainSql},
+            pal.url,
+            pal.method,
+            pal.status_code,
+            pal.bytes,
+            CASE WHEN UPPER(COALESCE(pal.action, '')) ~ '(DENIED|BLOCK|FORBIDDEN)' THEN 'blocked' ELSE 'allowed' END,
+            UPPER(COALESCE(pal.action, '')) ~ '(DENIED|BLOCK|FORBIDDEN)',
+            NULL,
+            NULL,
+            NULL,
+            'proxy',
+            pal.action,
+            CASE WHEN hs.id IS NOT NULL OR cs.id IS NOT NULL THEN 90
+                 WHEN pal.username IS NOT NULL THEN 75
+                 ELSE 60 END,
+            jsonb_build_object(
+                'proxy_action', pal.action,
+                'duration_ms', pal.duration_ms,
+                'username', pal.username
+            )
+        FROM proxy_audit_log pal
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM hotspot_sessions s
+            WHERE s.client_ip = ${proxyIpSql}
+              AND pal.timestamp::timestamptz >= s.started_at
+              AND pal.timestamp::timestamptz <= COALESCE(s.revoked_at, s.expires_at, s.last_seen_at + INTERVAL '4 hours')
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) hs ON true
+        LEFT JOIN hotspot_visitors hv ON hv.id = hs.visitor_id
+        LEFT JOIN LATERAL (
+            SELECT s.*
+            FROM collab_sessions s
+            WHERE s.client_ip = ${proxyIpSql}
+              AND pal.timestamp::timestamptz >= s.started_at
+              AND pal.timestamp::timestamptz <= COALESCE(s.revoked_at, s.expires_at)
+            ORDER BY s.started_at DESC
+            LIMIT 1
+        ) cs ON hs.id IS NULL
+        LEFT JOIN collab_users cu ON cu.id = cs.user_id
+        WHERE ${proxyWhere.join(' AND ')}
+        ON CONFLICT (source_type, source_event_id) DO NOTHING
+    `;
+
+    const results = await Promise.allSettled([
+        pool.query(dnsSql, dnsParams),
+        pool.query(proxySql, proxyParams),
+        syncUfwNavigationEvents(filters),
+    ]);
+
+    return {
+        dns_inserted: results[0].status === 'fulfilled' ? results[0].value.rowCount : 0,
+        proxy_inserted: results[1].status === 'fulfilled' ? results[1].value.rowCount : 0,
+        ufw_inserted: results[2].status === 'fulfilled' ? results[2].value.inserted : 0,
+        errors: results
+            .map((result) => {
+                if (result.status === 'rejected') return result.reason?.message || String(result.reason);
+                if ('error' in result.value && result.value.error) return result.value.error;
+                return null;
+            })
+            .filter(Boolean),
+    };
+}
 
 export const reportsService = {
     async ensureSchema() {
@@ -211,6 +651,65 @@ export const reportsService = {
                 EXCEPTION WHEN undefined_table THEN NULL;
                 END $outer$;
 
+                CREATE TABLE IF NOT EXISTS navigation_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_type VARCHAR(24) NOT NULL,
+                    source_event_id TEXT NOT NULL,
+                    event_at TIMESTAMPTZ NOT NULL,
+                    client_ip INET NOT NULL,
+                    vlan_id INTEGER,
+                    mac_address TEXT,
+                    identity_type VARCHAR(32),
+                    identity_id TEXT,
+                    identity_name TEXT,
+                    identity_username TEXT,
+                    session_type VARCHAR(32),
+                    session_id BIGINT,
+                    domain TEXT,
+                    url TEXT,
+                    method VARCHAR(16),
+                    status_code INTEGER,
+                    bytes BIGINT,
+                    action VARCHAR(32) NOT NULL,
+                    blocked BOOLEAN NOT NULL DEFAULT FALSE,
+                    category TEXT,
+                    query_type VARCHAR(32),
+                    response_code VARCHAR(32),
+                    policy_source TEXT,
+                    matched_rule TEXT,
+                    confidence INTEGER NOT NULL DEFAULT 50,
+                    evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE (source_type, source_event_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_event_at
+                    ON navigation_events (event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_ip_time
+                    ON navigation_events (client_ip, event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_vlan_time
+                    ON navigation_events (vlan_id, event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_domain
+                    ON navigation_events (domain);
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_source_time
+                    ON navigation_events (source_type, event_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_navigation_events_session
+                    ON navigation_events (session_type, session_id, event_at DESC);
+
+                DO $outer$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger
+                        WHERE tgname = 'trg_immutable_navigation_events'
+                          AND tgrelid = 'navigation_events'::regclass
+                    ) THEN
+                        EXECUTE $sql$
+                            CREATE TRIGGER trg_immutable_navigation_events
+                                BEFORE UPDATE OR DELETE ON navigation_events
+                                FOR EACH ROW EXECUTE FUNCTION prevent_audit_record_modification()
+                        $sql$;
+                    END IF;
+                END $outer$;
+
                 CREATE INDEX IF NOT EXISTS idx_proxy_radar_vlan_occurred
                     ON proxy_radar_events (vlan_id, occurred_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_proxy_radar_blocked_occurred
@@ -231,32 +730,34 @@ export const reportsService = {
     },
 
     async getNavigation(filters: NavFilters) {
+        const sync = await syncNavigationEvents(filters);
         const limit = Math.min(Number(filters.limit) || 200, 1000);
         const page = Math.max(Number(filters.page) || 1, 1);
         const offset = (page - 1) * limit;
         const params: unknown[] = [];
 
-        // Exclui loopback e domínios internos .local
         const where: string[] = [
-            "d.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
-            "d.query_name NOT LIKE '%.local'",
-            "d.query_name NOT LIKE '%.arpa'",
+            "ne.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
+            "(ne.domain IS NULL OR (ne.domain NOT LIKE '%.local' AND ne.domain NOT LIKE '%.arpa'))",
         ];
 
-        where.push(buildTimeFilter('d.occurred_at', params, filters));
+        where.push(buildTimeFilter('ne.event_at', params, filters));
 
         if (filters.ip?.trim()) {
-            where.push(`d.client_ip = ${p(params, filters.ip.trim())}::inet`);
+            where.push(`ne.client_ip = ${p(params, filters.ip.trim())}::inet`);
         }
         if (filters.vlan) {
             const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
-            where.push(`d.vlan_id = ${p(params, vnum)}`);
+            where.push(`ne.vlan_id = ${p(params, vnum)}`);
         }
         if (filters.domain?.trim()) {
-            where.push(`d.query_name ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
+            where.push(`COALESCE(ne.domain, ne.url, '') ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
         }
-        if (filters.action === 'block') where.push(`d.action = 'blocked'`);
-        else if (filters.action === 'allow') where.push(`d.action <> 'blocked'`);
+        if (filters.source && filters.source !== 'all') {
+            where.push(`ne.source_type = ${p(params, filters.source)}`);
+        }
+        if (filters.action === 'block') where.push(`ne.blocked = true`);
+        else if (filters.action === 'allow') where.push(`ne.blocked = false`);
 
         const wc = where.join(' AND ');
         const baseParams = params.slice();
@@ -264,32 +765,52 @@ export const reportsService = {
         const [rowsRes, statsRes] = await Promise.all([
             pool.query(
                 `SELECT
-                    d.id,
-                    d.occurred_at,
-                    d.vlan_id,
-                    host(d.client_ip) AS client_ip,
-                    d.query_name      AS domain,
-                    d.query_type,
-                    d.response_code,
-                    d.action,
-                    d.action = 'blocked' AS blocked,
-                    d.category,
-                    d.matched_rule,
-                    d.policy_source
-                FROM dns_policy_events d
+                    ne.id,
+                    ne.source_type,
+                    ne.source_event_id,
+                    ne.event_at AS occurred_at,
+                    ne.vlan_id,
+                    host(ne.client_ip) AS client_ip,
+                    ne.mac_address,
+                    ne.identity_type,
+                    ne.identity_id,
+                    ne.identity_name,
+                    ne.identity_username,
+                    ne.identity_name AS identity_display_user,
+                    ne.identity_username AS identity_user,
+                    ne.session_type,
+                    ne.session_id,
+                    ne.domain,
+                    ne.url,
+                    ne.method,
+                    ne.status_code,
+                    ne.bytes,
+                    ne.query_type,
+                    ne.response_code,
+                    ne.action,
+                    ne.blocked,
+                    ne.category,
+                    ne.matched_rule,
+                    ne.policy_source,
+                    ne.confidence
+                FROM navigation_events ne
                 WHERE ${wc}
-                ORDER BY d.occurred_at DESC
+                ORDER BY ne.event_at DESC
                 LIMIT ${p(params, limit)} OFFSET ${p(params, offset)}`,
                 params,
             ),
             pool.query(
                 `SELECT
                     COUNT(*)::bigint AS total,
-                    COUNT(*) FILTER (WHERE d.action = 'blocked')::bigint   AS blocked,
-                    COUNT(*) FILTER (WHERE d.action <> 'blocked')::bigint  AS allowed,
-                    COUNT(DISTINCT d.client_ip)::int   AS unique_ips,
-                    COUNT(DISTINCT d.query_name)::int  AS unique_domains
-                FROM dns_policy_events d
+                    COUNT(*) FILTER (WHERE ne.blocked)::bigint   AS blocked,
+                    COUNT(*) FILTER (WHERE NOT ne.blocked)::bigint  AS allowed,
+                    COUNT(DISTINCT ne.client_ip)::int   AS unique_ips,
+                    COUNT(DISTINCT ne.domain)::int  AS unique_domains,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'dns')::bigint AS dns_events,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'proxy')::bigint AS proxy_events,
+                    COUNT(*) FILTER (WHERE ne.source_type = 'ufw')::bigint AS ufw_events,
+                    COUNT(*) FILTER (WHERE ne.session_id IS NOT NULL)::bigint AS session_linked
+                FROM navigation_events ne
                 WHERE ${wc}`,
                 baseParams,
             ),
@@ -301,29 +822,36 @@ export const reportsService = {
             total,
             page,
             limit,
+            sync,
             summary: statsRes.rows[0] ?? { total: 0, blocked: 0, allowed: 0, unique_ips: 0, unique_domains: 0 },
         };
     },
 
     async getNavigationByIp(filters: NavFilters) {
+        const sync = await syncNavigationEvents(filters);
         const params: unknown[] = [];
         const where: string[] = [
             "client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
-            "query_name NOT LIKE '%.local'",
-            "query_name NOT LIKE '%.arpa'",
+            "(domain IS NULL OR (domain NOT LIKE '%.local' AND domain NOT LIKE '%.arpa'))",
         ];
 
-        where.push(buildTimeFilter('occurred_at', params, filters));
+        where.push(buildTimeFilter('event_at', params, filters));
 
+        if (filters.ip?.trim()) {
+            where.push(`client_ip = ${p(params, filters.ip.trim())}::inet`);
+        }
         if (filters.vlan) {
             const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
             where.push(`vlan_id = ${p(params, vnum)}`);
         }
         if (filters.domain?.trim()) {
-            where.push(`query_name ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
+            where.push(`COALESCE(domain, url, '') ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
         }
-        if (filters.action === 'block') where.push(`action = 'blocked'`);
-        else if (filters.action === 'allow') where.push(`action <> 'blocked'`);
+        if (filters.source && filters.source !== 'all') {
+            where.push(`source_type = ${p(params, filters.source)}`);
+        }
+        if (filters.action === 'block') where.push(`blocked = true`);
+        else if (filters.action === 'allow') where.push(`blocked = false`);
 
         const wc = where.join(' AND ');
 
@@ -332,19 +860,25 @@ export const reportsService = {
                 host(client_ip) AS client_ip,
                 vlan_id,
                 COUNT(*)::bigint AS total,
-                COUNT(*) FILTER (WHERE action = 'blocked')::bigint  AS blocked,
-                COUNT(*) FILTER (WHERE action <> 'blocked')::bigint AS allowed,
-                COUNT(DISTINCT query_name)::bigint AS unique_domains,
-                MAX(occurred_at) AS last_seen,
-                MIN(occurred_at) AS first_seen
-            FROM dns_policy_events
+                COUNT(*) FILTER (WHERE blocked)::bigint  AS blocked,
+                COUNT(*) FILTER (WHERE NOT blocked)::bigint AS allowed,
+                COUNT(DISTINCT domain)::bigint AS unique_domains,
+                COUNT(*) FILTER (WHERE source_type = 'dns')::bigint AS dns_events,
+                COUNT(*) FILTER (WHERE source_type = 'proxy')::bigint AS proxy_events,
+                COUNT(*) FILTER (WHERE source_type = 'ufw')::bigint AS ufw_events,
+                MAX(event_at) AS last_seen,
+                MIN(event_at) AS first_seen,
+                MAX(identity_name) FILTER (WHERE identity_name IS NOT NULL) AS identity_display_user,
+                MAX(identity_username) FILTER (WHERE identity_username IS NOT NULL) AS identity_user,
+                MAX(mac_address) FILTER (WHERE mac_address IS NOT NULL) AS mac_address
+            FROM navigation_events
             WHERE ${wc}
             GROUP BY client_ip, vlan_id
             ORDER BY total DESC
             LIMIT 300`,
             params,
         );
-        return identityEnrichment.enrichRows(rows);
+        return { rows: identityEnrichment.enrichRows(rows), sync };
     },
 
     async getSystemAudit(filters: AuditFilters) {

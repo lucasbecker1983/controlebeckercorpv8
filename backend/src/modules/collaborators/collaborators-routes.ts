@@ -226,6 +226,18 @@ async function listAuthorizedIps(): Promise<string[]> {
     return Array.from(new Set(out.match(/192\.168\.30\.\d{1,3}/g) || [])).sort();
 }
 
+async function ensureCollabAuthSetExists() {
+    const existingSet = await execCmd(`ipset list ${COLLAB_AUTH_SET}`);
+    if (existingSet) return;
+    try {
+        await execCmdStrict(`ipset create ${COLLAB_AUTH_SET} hash:ip timeout ${COLLAB_SESSION_SECONDS} -exist`);
+    } catch {
+        const recheck = await execCmd(`ipset list ${COLLAB_AUTH_SET}`);
+        if (recheck) return;
+        throw new Error(`Nao foi possivel garantir o ipset ${COLLAB_AUTH_SET}.`);
+    }
+}
+
 async function revokeIpRuntimeOnly(ip: string): Promise<boolean> {
     const n = normalizeIp(ip);
     if (!isVlan30Ip(n)) return false;
@@ -283,7 +295,7 @@ export async function ensureCollabEnforcement() {
         await disableCollabEnforcement();
         return;
     }
-    await execCmdStrict(`ipset create ${COLLAB_AUTH_SET} hash:ip timeout ${COLLAB_SESSION_SECONDS} -exist`);
+    await ensureCollabAuthSetExists();
     await expireExpiredSessions();
     await ensureOrderedPortalRule(
         'nat',

@@ -58,6 +58,57 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - sem entrada da `VLAN 70` para a rede interna
   - com politicas de seguranca do SGCG plenamente ativas sobre a saida para internet
 
+## Commit de coerencia com producao - pendencias incorporadas - 2026-05-12
+
+- arquivos incluidos junto da rodada de auditoria:
+  - `backend/src/config/env.ts`
+  - `backend/src/modules/collaborators/collaborators-routes.ts`
+  - `backend/src/modules/qos/qos-routes.ts`
+  - `backend/340_set_smsgate_credentials.sh`
+  - `backend/341_autobind_smsgate_sender.sh`
+- revisao de coerencia:
+  - as variaveis `HOTSPOT_SMS_*` seguem o runtime ja usado pelo Hotspot/SMSGate e nao carregam segredo hardcoded no codigo
+  - `340_set_smsgate_credentials.sh` recebe usuario/senha por argumento e atualiza apenas o `.env` local, reiniciando `bcc-backend`
+  - `341_autobind_smsgate_sender.sh` le `/etc/sgcg/smsgate/config.yml`, vincula `HOTSPOT_SMS_USER_ID`, `HOTSPOT_SMS_DEVICE_ID`, `HOTSPOT_SMS_JWT_SECRET` e `HOTSPOT_SMS_JWT_ISSUER` no `.env` local e nao publica esses valores no repositorio
+  - o Colaborador passou a garantir o `ipset` `sgcg_collab_v30_auth` reutilizando o set existente quando houver diferenca de timeout, seguindo o endurecimento ja validado no Hotspot
+  - o QoS passou a preservar a classe default real retornada pelo `tc`, sem converter `0xNN` para decimal e divergir da nomenclatura do kernel
+- validacao:
+  - `git diff --check` concluido sem alertas
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` ja executados na rodada
+
+## Relatorios Forenses - auditoria unificada de navegacao - 2026-05-12
+
+- arquivos alterados:
+  - `backend/src/modules/reports/reports-service.ts`
+  - `backend/src/modules/reports/reports-routes.ts`
+  - `frontend/src/pages/Reports.jsx`
+- ajuste aplicado:
+  - o modulo de Relatorios passou a consolidar evidencias de navegacao na tabela imutavel `navigation_events`
+  - o consolidado registra `source_type`, `source_event_id`, horario, IP, VLAN, MAC quando disponivel, identidade, sessao vinculada, dominio/URL, metodo, status, bytes, acao, categoria, regra aplicada, politica, confianca e evidencia bruta em `jsonb`
+  - as fontes ativas nesta rodada sao:
+    - `dns`: eventos de `dns_policy_events`, cobrindo DNS/RPZ, categoria, regra e politica aplicada
+    - `proxy`: eventos de `proxy_audit_log`, cobrindo ACL/proxy, URL/SNI, metodo, status, bytes e acao
+    - `ufw`: eventos internos de `/var/log/ufw.log`, filtrados para origem em redes privadas do SGCG para evitar poluir auditoria de navegacao com varreduras externas de WAN
+  - eventos DNS/proxy/UFW passam a tentar vinculo automatico com `hotspot_sessions` e `collab_sessions` pelo IP e janela temporal da sessao
+  - quando nao ha sessao, o resultado ainda e enriquecido por `identityEnrichment`, preservando usuario/estacao do agente endpoint quando disponivel
+  - `GET /api/reports/navigation` e `GET /api/reports/navigation/by-ip` agora leem o consolidado unificado em vez de depender somente de `dns_policy_events`
+  - `POST /api/reports/navigation/sync` foi adicionado para forcar sincronizacao do consolidado com os mesmos filtros de navegacao
+  - o frontend de `Relatorios Forenses` ganhou filtro por fonte (`DNS/RPZ`, `Proxy/ACL`, `UFW`), coluna de fonte, coluna de sessao vinculada e cards de contagem por fonte
+- impacto operacional:
+  - a auditoria deixa de responder apenas `qual dominio apareceu no DNS` e passa a cruzar fonte de evidencia, politica aplicada, bloqueio/liberacao, identidade e sessao
+  - os relatorios de navegacao preservam o escopo LGPD: dominio/SNI/IP/porta e metadados tecnicos, sem capturar conteudo de paginas HTTPS
+  - a tabela `navigation_events` possui trigger de imutabilidade contra `UPDATE` e `DELETE`, reaproveitando a funcao institucional `prevent_audit_record_modification()`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso e gerou o bundle `index-CUYGbZMG.js`
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` executados com sucesso
+  - chamada direta ao servico compilado `reportsService.getNavigation({ period: '1h' })` criou/populou `navigation_events` e retornou `8980` eventos no periodo, sendo `8937` DNS/RPZ, `43` UFW e `259` vinculados a sessao
+  - `reportsService.getNavigation({ period: '1h', source: 'ufw' })` retornou `43` eventos UFW internos, incluindo bloqueio de `192.168.50.12` para `192.168.10.1:80` com identidade endpoint enriquecida
+  - `reportsService.exportNavigationPdf({ period: '1h' })` gerou PDF valido com `208371` bytes
+  - `https://127.0.0.1:6777/relatorios` serviu os assets `index-CUYGbZMG.js` e `index-DsshXmxW.css`
+
 ## Hotspot - destaque da palavra CADASTRO no timeout de identificacao - 2026-05-11
 
 - arquivo alterado:
