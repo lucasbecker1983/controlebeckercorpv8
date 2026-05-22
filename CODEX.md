@@ -5667,3 +5667,74 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
   - `curl -sk -I https://127.0.0.1:6777/hotspot` retornou HTTP `200`
   - `curl -sk -I https://127.0.0.1:6777/colaboradores-mobile` retornou HTTP `200`
+
+## VLAN 30 - liberacao temporaria de YouTube e Redes Sociais - 2026-05-22
+
+- solicitacao:
+  - liberar somente hoje, `2026-05-22`, YouTube e redes sociais para a `VLAN 30`
+  - manter reversao automatica no fim do dia
+- aplicacao:
+  - criado `scripts/apply_vlan30_social_youtube_20260522.js`
+  - criado `scripts/revoke_vlan30_social_youtube_20260522.js`
+  - o motor `Bloqueios e Liberacoes` recebeu allowlist por VLAN 30 para:
+    - categoria `YouTube`
+    - categoria `Redes Sociais`
+  - `release_policies` ficou com:
+    - `9` dominios ativos na categoria `YouTube`
+    - `50` dominios ativos na categoria `Redes Sociais`
+  - o backend-proxy recompilou os artefatos e atualizou `/etc/squid/acl/allowlist-vlan-30.acl`
+  - inserida regra runtime temporaria antes do DROP social da VLAN 30:
+    - comentario `SGCG TEMP VLAN30 SOCIAL ALLOW 20260522`
+    - origem `192.168.30.0/24`
+    - interface `enp6s0.30`
+    - destino `ipset sgcg_social_blocked`
+    - acao `ACCEPT`
+  - por causa do safe-mode atual do Unbound, com RPZ por VLAN/tag suspensa, foi adicionada excecao temporaria marcada em `/etc/unbound/becker/allowed.rpz` para nomes do YouTube necessarios a resolucao
+- reversao automatica:
+  - timer systemd criado:
+    - `sgcg-revoke-vlan30-social-youtube-20260522.timer`
+    - execucao prevista: `2026-05-22 23:59:00 -03`
+  - a reversao remove:
+    - allowlists temporarias `YouTube` e `Redes Sociais` da VLAN 30 em `release_policies`
+    - regra runtime `SGCG TEMP VLAN30 SOCIAL ALLOW 20260522`
+    - bloco temporario `SGCG TEMP VLAN30 YOUTUBE ALLOW 20260522` da RPZ allow
+    - recompila/reaplica o motor de bloqueios e recarrega o Unbound se a configuracao validar
+- validacao:
+  - `node scripts/apply_vlan30_social_youtube_20260522.js` concluiu com `ok=true`
+  - regra temporaria apareceu imediatamente antes de `SGCG SOCIAL BLOCK VLAN30` no `iptables-save -t filter`
+  - `systemctl list-timers sgcg-revoke-vlan30-social-youtube-20260522.timer` confirmou proxima execucao em `2026-05-22 23:59:00 -03`
+  - `unbound-checkconf` retornou sem erros
+  - `systemctl is-active unbound squid` retornou `active`
+  - `pm2 describe backend-proxy` confirmou processo `online`
+  - `dig @127.0.0.1 youtube.com A +short` retornou IP publico
+  - `dig @127.0.0.1 instagram.com A +short` retornou IP publico
+  - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta, preservando bloqueio adulto de controle
+  - excecao PontoRH/OpenDNS preservada: `iptables-save -t nat` manteve `RETURN` para `208.67.222.222` e `208.67.220.220` na interface `enp6s0.30` antes do redirect DNS global
+  - consulta direta `dig @208.67.222.222 pontorh.com.br A +short` retornou IP publico
+
+## Bloqueios e Liberacoes - UX por VLAN e global restrito - 2026-05-22
+
+- motivo:
+  - a operacao para liberar/bloquear uma categoria em uma VLAN estava burocratica e espalhada
+  - o sistema induzia escopo global como caminho facil, contrariando a regra operacional desejada
+- regra institucional aplicada:
+  - novas politicas devem nascer por VLAN
+  - politica global so e permitida para `Bloquear Pornografia`
+  - liberacoes globais novas passam a ser recusadas pelo backend, mesmo se chamadas fora da UI
+- frontend:
+  - `frontend/src/pages/BlockingReleases.jsx` ganhou painel direto no topo: `Aplicar regra em VLAN`
+  - o painel concentra `Liberar/Bloquear`, `Categoria`, `VLANs`, observacao opcional e botao `Aplicar`
+  - o operador pode selecionar VLANs individualmente, `Todas` ou `Limpar`, sem navegar por abas/escopos
+  - o editor de politica agora abre com escopo `VLAN(s)` por padrao
+  - a opcao `Global` aparece desabilitada salvo quando a politica for bloqueio de pornografia/adulto
+  - os textos da tela passaram a reforcar que global e excecao, nao fluxo normal
+- backend:
+  - `backend-proxy/src/services/domain-policy-manager-service.ts` agora recusa politica global fora de `block + pornografia/adulto`
+  - `backend-proxy/src/services/blocking-release-service.ts` agora usa VLAN como padrao para politicas simples/categorias rapidas quando o escopo nao e informado
+  - `blocking-release-service` tambem recusa categoria/politica global que nao seja bloqueio de pornografia/adulto
+- validacao:
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart backend-proxy --update-env` e `pm2 restart bcc-frontend --update-env` executados; ambos ficaram `online`
+  - `curl -k https://127.0.0.1:6777/bloqueios-liberacoes` retornou HTTP `200`
+  - tentativa programatica de criar allowlist global de teste retornou: `Politica global permitida apenas para Bloquear Pornografia. Selecione uma ou mais VLANs.`

@@ -310,6 +310,27 @@ const normalizeCategoryKey = (value: string) => String(value || '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+const policyTextIncludesPornography = (...values: unknown[]) => {
+    const text = values
+        .map((value) => normalizeCategoryKey(String(value || '')))
+        .filter(Boolean)
+        .join('-');
+    return /(pornograf|adulto|conteudo-adulto)/.test(text);
+};
+
+const assertGlobalPolicyAllowed = (kind: PolicyKind, scopeType: ScopeType, payload: any) => {
+    if (scopeType !== 'global') return;
+    if (kind === 'block' && policyTextIncludesPornography(
+        payload?.category,
+        payload?.label,
+        payload?.key,
+        payload?.description,
+        payload?.notes,
+        payload?.reason,
+    )) return;
+    throw new Error('Política global permitida apenas para Bloquear Pornografia. Selecione uma ou mais VLANs.');
+};
+
 const formatSnapshotKey = (date = new Date()) => date.toISOString().replace(/[:.]/g, '-');
 
 const normalizeMetadataKey = (value: string) => String(value || '')
@@ -1211,13 +1232,14 @@ class BlockingReleaseService {
         await this.ensureReady();
         const table = kind === 'block' ? 'blocking_policies' : 'release_policies';
         const domain = normalizeDomain(String(payload?.domain || ''));
-        const scopeType: ScopeType = String(payload?.scope_type || payload?.scopeType || 'global') === 'vlan' ? 'vlan' : 'global';
+        const scopeType: ScopeType = String(payload?.scope_type || payload?.scopeType || 'vlan') === 'global' ? 'global' : 'vlan';
         const scopeValue = scopeType === 'vlan'
             ? String(assertManagedPolicyVlan(payload?.scope_value || payload?.scopeValue || payload?.vlan_id || ''))
             : 'global';
 
         if (!domain) throw new Error('Domínio obrigatório');
         if (scopeType === 'vlan' && !scopeValue) throw new Error('VLAN obrigatória para escopo por VLAN');
+        assertGlobalPolicyAllowed(kind, scopeType, payload);
 
         if (kind === 'block') {
             const { rows } = await pool.query(
@@ -1340,7 +1362,7 @@ class BlockingReleaseService {
     }
 
     private buildCategoryScope(payload: any) {
-        const scopeType: ScopeType = String(payload?.scope_type || payload?.scopeType || 'global') === 'vlan' ? 'vlan' : 'global';
+        const scopeType: ScopeType = String(payload?.scope_type || payload?.scopeType || 'vlan') === 'global' ? 'global' : 'vlan';
         const scopeValue = scopeType === 'vlan'
             ? String(assertManagedPolicyVlan(payload?.scope_value || payload?.scopeValue || payload?.vlan_id || payload?.vlanId || ''))
             : 'global';
@@ -1410,6 +1432,7 @@ class BlockingReleaseService {
         const category = String(payload?.category || payload?.label || payload?.key || '').trim();
         const description = String(payload?.description || payload?.helper || category || '').trim() || null;
         const { scopeType, scopeValue } = this.buildCategoryScope(payload);
+        assertGlobalPolicyAllowed(kind, scopeType, { ...payload, category, description });
         const client = await pool.connect();
         try {
             await client.query('BEGIN');

@@ -364,6 +364,13 @@ function policyTypeTone(type) {
   return type === 'allow' ? 'success' : 'danger';
 }
 
+function isPornographyPolicyDraft(form) {
+  const text = [form?.name, form?.description, form?.category]
+    .map((value) => String(value || '').toLocaleLowerCase('pt-BR'))
+    .join(' ');
+  return form?.policy_type === 'block' && /pornograf|adulto|conteudo-adulto|conteúdo-adulto/.test(text);
+}
+
 function actionTone(action) {
   if (action === 'blocked') return 'danger';
   if (action === 'allowed') return 'success';
@@ -830,10 +837,11 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
 }
 
 function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving }) {
+  const selectableVlans = (vlans || []).filter(vlanIsInStandard);
   const [form, setForm] = useState({
     name: '',
     policy_type: 'block',
-    scope_type: 'global',
+    scope_type: 'vlan',
     vlan_ids: [],
     domainsText: '',
     description: '',
@@ -846,7 +854,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
     setForm({
       name: item?.name || '',
       policy_type: item?.policy_type || 'block',
-      scope_type: item?.scope_type || 'global',
+      scope_type: item?.scope_type || 'vlan',
       vlan_ids: (item?.vlan_ids || []).map((value) => Number(value)).filter((value) => Number.isFinite(value)),
       domainsText: (item?.domains || item?.entries?.map((entry) => entry.domain || entry.normalized_domain) || []).join('\n'),
       description: governance.summary || '',
@@ -855,6 +863,10 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
   }, [open, item]);
 
   const domains = splitDomains(form.domainsText);
+  const globalAllowed = isPornographyPolicyDraft(form);
+  const scopeIsValid = form.scope_type === 'vlan'
+    ? form.vlan_ids.length > 0
+    : globalAllowed;
   const toggleVlan = (vlanId) => {
     setForm((current) => ({
       ...current,
@@ -863,6 +875,12 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
         : [...current.vlan_ids, vlanId].sort((left, right) => left - right),
     }));
   };
+  const selectAllVlans = () => setForm((current) => ({
+    ...current,
+    scope_type: 'vlan',
+    vlan_ids: selectableVlans.map((vlan) => Number(vlan.vlan_id)).filter(Number.isFinite).sort((left, right) => left - right),
+  }));
+  const clearVlans = () => setForm((current) => ({ ...current, vlan_ids: [] }));
 
   const submit = () => onSubmit({
     name: form.name.trim(),
@@ -895,7 +913,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
             <ActionButton
               tone="primary"
               onClick={submit}
-              disabled={saving || !form.name.trim() || !domains.length || (form.scope_type === 'vlan' && !form.vlan_ids.length)}
+              disabled={saving || !form.name.trim() || !domains.length || !scopeIsValid}
             >
               {saving ? 'Salvando...' : item ? 'Salvar Política' : 'Criar Política'}
             </ActionButton>
@@ -969,11 +987,11 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
 
               <label className="flex flex-col gap-2.5">
                 <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
-                <SelectInput value={form.scope_type} onChange={(event) => setForm((current) => ({ ...current, scope_type: event.target.value, vlan_ids: [] }))}>
-                  <option value="global">Global</option>
+                <SelectInput value={form.scope_type} onChange={(event) => setForm((current) => ({ ...current, scope_type: event.target.value, vlan_ids: event.target.value === 'global' ? [] : current.vlan_ids }))}>
                   <option value="vlan">VLAN(s)</option>
+                  <option value="global" disabled={!globalAllowed}>Global - apenas Pornografia</option>
                 </SelectInput>
-                <p className="text-xs leading-5 text-on-surface/58">`Global` vale para todo o módulo. `VLAN(s)` restringe a política apenas às VLANs selecionadas abaixo.</p>
+                <p className="text-xs leading-5 text-on-surface/58">O padrão operacional é por VLAN. Global só é permitido para bloqueio de pornografia.</p>
               </label>
             </div>
 
@@ -981,13 +999,17 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
-                  <p className="mt-1 text-xs leading-5 text-on-surface/58">Selecione uma ou mais VLANs somente quando o escopo estiver em `VLAN(s)`. Sem seleção, a política não pode ser salva.</p>
+                  <p className="mt-1 text-xs leading-5 text-on-surface/58">Selecione exatamente onde a regra vale. Nada novo nasce global por padrão.</p>
                 </div>
-                <StateBadge label={form.scope_type === 'vlan' ? `${form.vlan_ids.length} selecionada(s)` : 'Escopo global'} tone={form.scope_type === 'vlan' && form.vlan_ids.length ? 'primary' : 'neutral'} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <StateBadge label={form.scope_type === 'vlan' ? `${form.vlan_ids.length} selecionada(s)` : 'Escopo global'} tone={form.scope_type === 'vlan' && form.vlan_ids.length ? 'primary' : 'neutral'} />
+                  <ActionButton tone="ghost" onClick={selectAllVlans} disabled={form.scope_type !== 'vlan'} className="min-h-9 rounded-2xl px-3 py-2 text-[10px] shadow-none">Todas</ActionButton>
+                  <ActionButton tone="ghost" onClick={clearVlans} disabled={form.scope_type !== 'vlan' || !form.vlan_ids.length} className="min-h-9 rounded-2xl px-3 py-2 text-[10px] shadow-none">Limpar</ActionButton>
+                </div>
               </div>
               <div className="mt-4 rounded-[24px] border border-outline/12 bg-container/60 p-3">
                 <div className="flex max-h-[220px] flex-wrap gap-3 overflow-y-auto pr-1">
-                  {vlans.map((vlan) => (
+                  {selectableVlans.map((vlan) => (
                     <button
                       key={vlan.vlan_id}
                       type="button"
@@ -1029,12 +1051,13 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
 }
 
 function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubmit, saving }) {
+  const selectableVlans = (vlans || []).filter(vlanIsInStandard);
   const [form, setForm] = useState({
     mode: 'existing',
     policy_id: '',
     policy_type: 'allow',
     name: '',
-    scope_type: 'global',
+    scope_type: 'vlan',
     vlan_ids: [],
     description: '',
   });
@@ -1049,7 +1072,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
       policy_id: compatible[0]?.id ? String(compatible[0].id) : '',
       policy_type: 'allow',
       name: event?.domain ? `Liberar ${event.domain}` : 'Nova política',
-      scope_type: hasVlan ? 'vlan' : 'global',
+      scope_type: 'vlan',
       vlan_ids: hasVlan ? [vlanId] : [],
       description: `Domínio incluído a partir do relatório de dados${event?.client_ip ? ` do IP ${event.client_ip}` : ''}.`,
     });
@@ -1058,6 +1081,10 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
   if (!event) return null;
   const domain = event.domain || event.url_or_host || '';
   const compatiblePolicies = (policies || []).filter((policy) => policy.policy_type === form.policy_type);
+  const globalAllowed = isPornographyPolicyDraft(form);
+  const scopeIsValid = form.scope_type === 'vlan'
+    ? form.vlan_ids.length > 0
+    : globalAllowed;
   const toggleVlan = (vlanId) => {
     setForm((current) => ({
       ...current,
@@ -1066,6 +1093,12 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
         : [...current.vlan_ids, vlanId].sort((left, right) => left - right),
     }));
   };
+  const selectAllVlans = () => setForm((current) => ({
+    ...current,
+    scope_type: 'vlan',
+    vlan_ids: selectableVlans.map((vlan) => Number(vlan.vlan_id)).filter(Number.isFinite).sort((left, right) => left - right),
+  }));
+  const clearVlans = () => setForm((current) => ({ ...current, vlan_ids: [] }));
 
   return (
     <DialogShell
@@ -1085,7 +1118,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
             <ActionButton
               tone="primary"
               onClick={() => onSubmit({ ...form, domain })}
-              disabled={saving || !domain || (form.mode === 'existing' && !form.policy_id) || (form.mode === 'new' && (!form.name.trim() || (form.scope_type === 'vlan' && !form.vlan_ids.length)))}
+              disabled={saving || !domain || (form.mode === 'existing' && !form.policy_id) || (form.mode === 'new' && (!form.name.trim() || !scopeIsValid))}
             >
               {saving ? 'Salvando...' : 'Salvar domínio'}
             </ActionButton>
@@ -1151,15 +1184,21 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
           <div className="grid gap-4 md:grid-cols-[0.8fr_1.2fr]">
             <label className="space-y-2">
               <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
-              <SelectInput value={form.scope_type} onChange={(eventValue) => setForm((current) => ({ ...current, scope_type: eventValue.target.value, vlan_ids: [] }))}>
-                <option value="global">Global</option>
+              <SelectInput value={form.scope_type} onChange={(eventValue) => setForm((current) => ({ ...current, scope_type: eventValue.target.value, vlan_ids: eventValue.target.value === 'global' ? [] : current.vlan_ids }))}>
                 <option value="vlan">VLAN(s)</option>
+                <option value="global" disabled={!globalAllowed}>Global - apenas Pornografia</option>
               </SelectInput>
             </label>
             <div className={form.scope_type === 'vlan' ? 'space-y-2' : 'space-y-2 opacity-55'}>
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton tone="ghost" onClick={selectAllVlans} disabled={form.scope_type !== 'vlan'} className="min-h-8 rounded-2xl px-3 py-1.5 text-[10px] shadow-none">Todas</ActionButton>
+                  <ActionButton tone="ghost" onClick={clearVlans} disabled={form.scope_type !== 'vlan' || !form.vlan_ids.length} className="min-h-8 rounded-2xl px-3 py-1.5 text-[10px] shadow-none">Limpar</ActionButton>
+                </div>
+              </div>
               <div className="flex flex-wrap gap-2">
-                {vlans.filter(vlanIsInStandard).map((vlan) => (
+                {selectableVlans.map((vlan) => (
                   <button
                     key={vlan.vlan_id}
                     type="button"
@@ -1695,6 +1734,16 @@ const SPORADIC_CATEGORIES = [
   },
 ];
 
+const QUICK_VLAN_CATEGORIES = [
+  ...SPORADIC_CATEGORIES,
+  {
+    key: 'pornografia',
+    label: 'Pornografia',
+    description: 'Bloqueio institucional permanente',
+    domains: ['pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'redtube.com', 'youporn.com', 'tube8.com', 'spankbang.com'],
+  },
+];
+
 const SPORADIC_DURATIONS = [
   { value: 30, label: '30 minutos' },
   { value: 60, label: '1 hora' },
@@ -2205,6 +2254,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const [confirmDialog, setConfirmDialog] = useState({ open: false, title: '', subtitle: '', bullets: [], tone: 'warning', confirmLabel: 'Confirmar', action: null });
   const [working, setWorking] = useState({ policy: false, vip: false, sporadic: false, contingency: false, engine: false, audit: false });
   const [operationProgress, setOperationProgress] = useState({ vip: 0, sporadic: 0 });
+  const [quickVlanRule, setQuickVlanRule] = useState({ policy_type: 'allow', category: 'youtube', vlan_ids: [], notes: '' });
   const [policySearch, setPolicySearch] = useState('');
   const [policyFilters, setPolicyFilters] = useState({ type: 'all', status: 'all', scope: 'all' });
   const [vlanSearch, setVlanSearch] = useState('');
@@ -2322,6 +2372,14 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const sortedVlans = useMemo(
     () => [...(data.vlans || [])].sort((a, b) => Number(a.vlan_id) - Number(b.vlan_id)),
     [data.vlans],
+  );
+  const quickSelectableVlans = useMemo(
+    () => sortedVlans.filter(vlanIsInStandard),
+    [sortedVlans],
+  );
+  const quickRuleCategory = useMemo(
+    () => QUICK_VLAN_CATEGORIES.find((item) => item.key === quickVlanRule.category) || QUICK_VLAN_CATEGORIES[0],
+    [quickVlanRule.category],
   );
 
   const namedPolicies = useMemo(
@@ -2513,6 +2571,69 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     </>
   );
 
+  const quickVlanRulePanel = (
+    <ThemeAwareSurface tone="primary" className="p-4 sm:p-5">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">Aplicar regra em VLAN</div>
+          <div className="mt-2 text-xl font-black text-on-surface">Escolha ação, categoria e VLANs no mesmo lugar</div>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Ação</span>
+              <SelectInput value={quickVlanRule.policy_type} onChange={(event) => setQuickVlanRule((current) => ({ ...current, policy_type: event.target.value }))}>
+                <option value="allow">Liberar</option>
+                <option value="block">Bloquear</option>
+              </SelectInput>
+            </label>
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Categoria</span>
+              <SelectInput value={quickVlanRule.category} onChange={(event) => setQuickVlanRule((current) => ({ ...current, category: event.target.value }))}>
+                {QUICK_VLAN_CATEGORIES.map((category) => (
+                  <option key={category.key} value={category.key}>{category.label}</option>
+                ))}
+              </SelectInput>
+            </label>
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Observação</span>
+              <TextInput value={quickVlanRule.notes} onChange={(event) => setQuickVlanRule((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
+            </label>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2 xl:justify-end">
+          <ActionButton tone="ghost" onClick={selectAllQuickRuleVlans} className="min-h-10 rounded-2xl px-3 shadow-none">Todas</ActionButton>
+          <ActionButton tone="ghost" onClick={clearQuickRuleVlans} disabled={!quickVlanRule.vlan_ids.length} className="min-h-10 rounded-2xl px-3 shadow-none">Limpar</ActionButton>
+          <ActionButton tone={quickVlanRule.policy_type === 'allow' ? 'success' : 'danger'} icon={Power} onClick={applyQuickVlanRule} disabled={working.policy || !quickVlanRule.vlan_ids.length}>
+            {working.policy ? 'Aplicando...' : 'Aplicar'}
+          </ActionButton>
+        </div>
+      </div>
+      <div className="mt-4 rounded-[24px] border border-outline/12 bg-container/60 p-3">
+        <div className="flex flex-wrap gap-2">
+          {quickSelectableVlans.map((vlan) => (
+            <button
+              key={`quick-vlan-${vlan.vlan_id}`}
+              type="button"
+              onClick={() => toggleQuickRuleVlan(vlan.vlan_id)}
+              aria-pressed={quickVlanRule.vlan_ids.includes(vlan.vlan_id)}
+              className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                quickVlanRule.vlan_ids.includes(vlan.vlan_id)
+                  ? 'border-primary/20 bg-primary text-on-primary shadow-md shadow-primary/20'
+                  : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
+              }`}
+            >
+              VLAN {vlan.vlan_id}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <StateBadge label={quickVlanRule.vlan_ids.length ? `VLAN ${quickVlanRule.vlan_ids.join(', ')}` : 'Nenhuma VLAN selecionada'} tone={quickVlanRule.vlan_ids.length ? 'primary' : 'warning'} />
+          <StateBadge label={quickRuleCategory?.description || 'Categoria rápida'} tone="neutral" />
+          <StateBadge label="Global fica fora deste fluxo" tone="success" />
+        </div>
+      </div>
+    </ThemeAwareSurface>
+  );
+
   const quickActionGroups = [
     {
       label: 'Governança',
@@ -2523,13 +2644,6 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
           tone: 'primary',
           icon: Plus,
           onClick: () => setPolicyEditor({ open: true, item: null }),
-        },
-        {
-          label: 'Escopo global',
-          title: 'Editar política global',
-          tone: 'ghost',
-          icon: Layers3,
-          onClick: () => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' }),
         },
         {
           label: 'VIP',
@@ -2655,10 +2769,10 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     },
     {
       icon: Layers3,
-      eyebrow: 'Políticas globais',
-      title: 'Categorias ativas globalmente',
-      value: `${globalBlockedCount} bloqueios / ${globalAllowedCount} liberações`,
-      subtitle: 'Resumo compacto do que vale para toda a operação.',
+      eyebrow: 'Global permitido',
+      title: 'Somente Bloquear Pornografia',
+      value: `${globalBlockedCount} bloqueio(s)`,
+      subtitle: globalAllowedCount ? `${globalAllowedCount} liberação(ões) globais legadas exigem revisão.` : 'Novas liberações e bloqueios comuns nascem por VLAN.',
       tone: globalBlockedCount ? 'danger' : 'neutral',
     },
     {
@@ -2781,6 +2895,72 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       setWorking((current) => ({ ...current, engine: false }));
     }
   };
+
+  function toggleQuickRuleVlan(vlanId) {
+    setQuickVlanRule((current) => ({
+      ...current,
+      vlan_ids: current.vlan_ids.includes(vlanId)
+        ? current.vlan_ids.filter((item) => item !== vlanId)
+        : [...current.vlan_ids, vlanId].sort((left, right) => left - right),
+    }));
+  }
+
+  function selectAllQuickRuleVlans() {
+    setQuickVlanRule((current) => ({
+      ...current,
+      vlan_ids: quickSelectableVlans.map((vlan) => Number(vlan.vlan_id)).filter(Number.isFinite).sort((left, right) => left - right),
+    }));
+  }
+
+  function clearQuickRuleVlans() {
+    setQuickVlanRule((current) => ({ ...current, vlan_ids: [] }));
+  }
+
+  async function applyQuickVlanRule() {
+    const vlanIds = quickVlanRule.vlan_ids.map(Number).filter(Number.isFinite).sort((left, right) => left - right);
+    if (!vlanIds.length) {
+      flash('Selecione ao menos uma VLAN.', 'warning');
+      return;
+    }
+    const category = quickRuleCategory;
+    if (!category?.domains?.length) {
+      flash('Categoria sem domínios cadastrados.', 'danger');
+      return;
+    }
+
+    setWorking((current) => ({ ...current, policy: true }));
+    try {
+      for (const vlanId of vlanIds) {
+        await requestAction('category-policy', 'POST', {
+          policy_type: quickVlanRule.policy_type,
+          category: category.label,
+          label: category.label,
+          key: category.key,
+          aliases: [category.key, category.label],
+          domains: category.domains,
+          scope_type: 'vlan',
+          vlan_id: vlanId,
+          description: quickVlanRule.notes.trim() || `${quickVlanRule.policy_type === 'allow' ? 'Liberar' : 'Bloquear'} ${category.label} na VLAN ${vlanId}`,
+          notes: quickVlanRule.notes.trim() || null,
+        });
+      }
+
+      await runAction('apply', 'POST', {
+        restart_squid: true,
+        disconnect_active_sessions: quickVlanRule.policy_type === 'block',
+        auto_disconnect_social_sessions: quickVlanRule.policy_type === 'block' && category.key === 'redes_sociais',
+        domains: category.domains,
+        vlan_ids: vlanIds,
+        lookback_minutes: 20,
+      }, { reload: false });
+      await loadAll();
+      flash(`${quickVlanRule.policy_type === 'allow' ? 'Liberação' : 'Bloqueio'} de ${category.label} aplicado em VLAN ${vlanIds.join(', ')}.`, 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao aplicar regra por VLAN.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, policy: false }));
+    }
+  }
 
   const scopeEditorLabel = scopeEditor.scopeType === 'vlan'
     ? `VLAN ${scopeEditor.scopeValue}`
@@ -3519,6 +3699,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       />
 
       {quickActionsPanel}
+      {quickVlanRulePanel}
 
       {banner ? (
         <ListRow className={banner.tone === 'danger'
@@ -3819,14 +4000,13 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
           <SectionCard
             title="Escopos de aplicação"
-            subtitle="As políticas são distribuídas por escopo global ou por VLAN, preservando governança clara sobre onde cada decisão vale."
-            actions={<ActionButton tone="ghost" icon={Layers3} onClick={() => setScopeEditor({ open: true, scopeType: 'global', scopeValue: 'global' })}>Editar global</ActionButton>}
+            subtitle="O uso normal é por VLAN. Global fica reservado para bloqueio institucional de pornografia."
           >
             <div className="grid gap-5 2xl:grid-cols-2">
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-lg font-black text-on-surface">Global</div>
-                  <StateBadge label={`${globalBlockedCount + globalAllowedCount} políticas globais ativas`} tone="primary" />
+                  <div className="text-lg font-black text-on-surface">Global: somente pornografia</div>
+                  <StateBadge label={`${globalBlockedCount} bloqueio(s) global(is)`} tone="danger" />
                 </div>
                 {globalScopePolicies.length ? globalScopePolicies.map((policy) => (
                   <ListRow key={`global-policy-${policy.id}`}>
@@ -3846,8 +4026,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                 )) : (
                   <EmptyStateBlock
                     icon={ShieldCheck}
-                    title="Nenhuma política criada"
-                    description="Crie políticas na aba Políticas para que elas apareçam nos escopos global e por VLAN."
+                    title="Nenhuma política global criada"
+                    description="Use global apenas para bloquear pornografia; para o restante, selecione VLANs."
                     action={<ActionButton tone="primary" icon={Plus} onClick={() => setPolicyEditor({ open: true, item: null })}>Criar política</ActionButton>}
                   />
                 )}
@@ -3889,9 +4069,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
           <SectionCard title="Hierarquia de precedência" subtitle="A ordem de decisão e execução continua explícita para auditoria e troubleshooting.">
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <ListRow><div className="text-sm font-semibold text-on-surface">1. VIPs</div><div className="mt-2 text-sm text-on-surface/62">Bypass total real: firewall livre e Unbound recursivo com passthrough de RPZ.</div></ListRow>
-              <ListRow><div className="text-sm font-semibold text-on-surface">2. Liberação</div><div className="mt-2 text-sm text-on-surface/62">Allowlist global ou por VLAN tem precedência.</div></ListRow>
-              <ListRow><div className="text-sm font-semibold text-on-surface">3. Bloqueio</div><div className="mt-2 text-sm text-on-surface/62">Blacklist global ou por VLAN.</div></ListRow>
+              <ListRow><div className="text-sm font-semibold text-on-surface">1. VIPs</div><div className="mt-2 text-sm text-on-surface/62">Bypass real: firewall livre, sem RPZ, com DNS clássico auditável.</div></ListRow>
+              <ListRow><div className="text-sm font-semibold text-on-surface">2. Liberação</div><div className="mt-2 text-sm text-on-surface/62">Allowlist por VLAN tem precedência.</div></ListRow>
+              <ListRow><div className="text-sm font-semibold text-on-surface">3. Bloqueio</div><div className="mt-2 text-sm text-on-surface/62">Pornografia pode ser global; demais bloqueios são por VLAN.</div></ListRow>
               <ListRow><div className="text-sm font-semibold text-on-surface">4. Contingência</div><div className="mt-2 text-sm text-on-surface/62">Emergência temporária auditada.</div></ListRow>
             </div>
           </SectionCard>

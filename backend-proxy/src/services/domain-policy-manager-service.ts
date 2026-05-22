@@ -60,6 +60,26 @@ const normalizeTextKey = (value: string) => String(value || '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+const policyTextIncludesPornography = (...values: unknown[]) => {
+    const text = values
+        .map((value) => normalizeTextKey(String(value || '')))
+        .filter(Boolean)
+        .join('-');
+    return /(pornograf|adulto|conteudo-adulto|conteudo-adulto)/.test(text);
+};
+
+const assertGlobalScopeAllowed = (input: {
+    scopeType: ScopeType;
+    policyType: PolicyType;
+    name?: unknown;
+    description?: unknown;
+    governanceSummary?: unknown;
+}) => {
+    if (input.scopeType !== 'global') return;
+    if (input.policyType === 'block' && policyTextIncludesPornography(input.name, input.description, input.governanceSummary)) return;
+    throw new Error('Política global permitida apenas para Bloquear Pornografia. Selecione uma ou mais VLANs.');
+};
+
 const parseGovernanceText = (value: unknown) => {
     const raw = String(value || '').trim();
     if (!raw) return { summary: '', metadata: {} as Record<string, string> };
@@ -228,7 +248,7 @@ const normalizePolicyType = (value: unknown): PolicyType => {
 };
 
 const normalizeScope = (payload: any, fallback?: { scope_type?: string; scope_value?: string }) => {
-    const rawScopeType = String(payload?.scope_type || payload?.scopeType || fallback?.scope_type || 'global').toLowerCase();
+    const rawScopeType = String(payload?.scope_type || payload?.scopeType || fallback?.scope_type || 'vlan').toLowerCase();
     const scopeType: ScopeType = rawScopeType === 'vlan' ? 'vlan' : 'global';
     if (scopeType === 'global') {
         return { scopeType, scopeValues: ['global'], scopeValue: 'global' };
@@ -589,6 +609,13 @@ export class DomainPolicyManagerService {
             ...payload,
             requested_by: payload?.requested_by || requestedBy,
         });
+        assertGlobalScopeAllowed({
+            scopeType: scope.scopeType,
+            policyType,
+            name,
+            description: payload?.description,
+            governanceSummary: governance.summary,
+        });
         const client = await pool.connect();
         try {
             await client.query('BEGIN');
@@ -682,6 +709,13 @@ export class DomainPolicyManagerService {
                 ...payload,
                 requested_by: payload?.requested_by || current.requested_by || requestedBy,
             }, current);
+            assertGlobalScopeAllowed({
+                scopeType: scope.scopeType,
+                policyType,
+                name,
+                description: payload?.description ?? current.description,
+                governanceSummary: governance.summary,
+            });
 
             await client.query(
                 `
