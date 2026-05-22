@@ -1,0 +1,10 @@
+[Unit]
+Description=Agenda semanal SGCG para fechar YouTube e Redes Sociais na VLAN 30
+
+[Timer]
+OnCalendar=Fri *-*-* 17:00:00 America/Sao_Paulo
+Persistent=true
+Unit=sgcg-vlan30-social-youtube-close.service
+
+[Install]
+WantedBy=timers.target

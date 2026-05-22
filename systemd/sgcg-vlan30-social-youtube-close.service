@@ -1,0 +1,9 @@
+[Unit]
+Description=SGCG fecha YouTube e Redes Sociais na VLAN 30 nas sextas 17h
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/controlebeckercorp-v8
+ExecStart=/usr/bin/node /opt/controlebeckercorp-v8/scripts/vlan30_friday_social_youtube_window.js close

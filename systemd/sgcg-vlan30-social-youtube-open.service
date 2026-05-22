@@ -1,0 +1,9 @@
+[Unit]
+Description=SGCG abre YouTube e Redes Sociais na VLAN 30 nas sextas 08-17
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/controlebeckercorp-v8
+ExecStart=/usr/bin/node /opt/controlebeckercorp-v8/scripts/vlan30_friday_social_youtube_window.js open

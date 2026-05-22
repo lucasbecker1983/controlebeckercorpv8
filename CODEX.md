@@ -5738,3 +5738,50 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `pm2 restart backend-proxy --update-env` e `pm2 restart bcc-frontend --update-env` executados; ambos ficaram `online`
   - `curl -k https://127.0.0.1:6777/bloqueios-liberacoes` retornou HTTP `200`
   - tentativa programatica de criar allowlist global de teste retornou: `Politica global permitida apenas para Bloquear Pornografia. Selecione uma ou mais VLANs.`
+
+## VLAN 30 - janela semanal YouTube e Redes Sociais - 2026-05-22
+
+- regra:
+  - toda sexta-feira, das `08:00` as `17:00`, a `VLAN 30` fica com `YouTube` e `Redes Sociais` liberados
+  - fora da janela, a liberacao semanal e removida e volta a prevalecer o bloqueio operacional
+  - `Pornografia` permanece como bloqueio global mandatorio
+- implementacao:
+  - criado `scripts/vlan30_friday_social_youtube_window.js`
+  - criado `systemd/sgcg-vlan30-social-youtube-open.service`
+  - criado `systemd/sgcg-vlan30-social-youtube-open.timer`
+  - criado `systemd/sgcg-vlan30-social-youtube-close.service`
+  - criado `systemd/sgcg-vlan30-social-youtube-close.timer`
+  - as unidades foram instaladas em `/etc/systemd/system/`
+  - timers habilitados:
+    - abertura: `Fri *-*-* 08:00:00 America/Sao_Paulo`
+    - fechamento: `Fri *-*-* 17:00:00 America/Sao_Paulo`
+  - o script `open` tambem valida a janela de horario, evitando abrir fora de sexta-feira 08-17 se o timer persistente executar apos reboot
+  - o script `close` remove a allowlist semanal de `YouTube` e `Redes Sociais`, remove a regra runtime e limpa o bloco temporario de RPZ do YouTube
+- runtime:
+  - por hoje ser sexta-feira `2026-05-22` e estar dentro da janela, a abertura foi aplicada imediatamente
+  - timer transiente antigo `sgcg-revoke-vlan30-social-youtube-20260522.timer` foi parado para a regra nova assumir o fechamento as `17:00`
+  - regra runtime ativa antes do DROP social:
+    - comentario `SGCG FRIDAY VLAN30 SOCIAL ALLOW 0800-1700`
+    - origem `192.168.30.0/24`
+    - interface `enp6s0.30`
+    - destino `ipset sgcg_social_blocked`
+    - acao `ACCEPT`
+  - RPZ allow temporaria marcada:
+    - `SGCG FRIDAY VLAN30 YOUTUBE ALLOW START`
+    - `SGCG FRIDAY VLAN30 YOUTUBE ALLOW END`
+- validacao:
+  - `node --check scripts/vlan30_friday_social_youtube_window.js` concluido sem erro
+  - `systemd-analyze calendar` validou os calendarios de abertura e fechamento
+  - `systemctl list-timers 'sgcg-vlan30-social-youtube-*'` mostrou:
+    - proximo fechamento: `2026-05-22 17:00:00 -03`
+    - proxima abertura: `2026-05-29 08:00:00 -03`
+  - timers `sgcg-vlan30-social-youtube-open.timer` e `sgcg-vlan30-social-youtube-close.timer` ficaram `enabled` e `active`
+  - `node scripts/vlan30_friday_social_youtube_window.js open` retornou `ok=true`
+  - banco confirmou `50` dominios em `Redes Sociais` e `9` dominios em `YouTube` para `scope_type='vlan'`, `scope_value='30'`, `created_by='sgcg-friday-vlan30-window'`
+  - `iptables-save -t filter` mostrou `SGCG FRIDAY VLAN30 SOCIAL ALLOW 0800-1700` imediatamente antes de `SGCG SOCIAL BLOCK VLAN30`
+  - `unbound-checkconf` retornou sem erros
+  - `systemctl is-active unbound squid` retornou `active`
+  - `pm2 describe backend-proxy` confirmou processo `online`
+  - `dig @127.0.0.1 youtube.com A +short` retornou IP publico
+  - `dig @127.0.0.1 instagram.com A +short` retornou IP publico
+  - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta
