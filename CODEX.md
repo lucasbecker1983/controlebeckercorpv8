@@ -5644,3 +5644,26 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `pm2 restart backend-proxy --update-env` executado com sucesso
   - apos uma rodada completa do reconciliador automatico, `/run/sgcg-firewall.lock` estava liberado, `backend-proxy` online e `iptables-save -t nat` manteve `nat_rules=114` e `duplicates=0`
   - apos nova rodada sem mudanca de configuracao, a auditoria `runtime-dedupe` nao recebeu novas entradas depois de `2026-05-12 13:49:12`, confirmando que o reconciliador deixou de recriar duplicatas recorrentes quando nao ha alteracao no `before.rules`
+
+## Hotspot e Acesso Mobile - pesquisa com autocomplete e filtros - 2026-05-22
+
+- objetivo:
+  - facilitar a localizacao administrativa de visitantes no modulo `Hotspot`
+  - facilitar a localizacao administrativa de colaboradores no modulo `Acesso Mobile de Colaboradores`
+  - reduzir tempo de operacao quando houver muitos cadastros ativos/inativos
+- frontend:
+  - `frontend/src/pages/Hotspot.jsx` recebeu bloco `Pesquisa de visitantes` antes da tabela de visitantes
+  - o campo de pesquisa do Hotspot usa autocomplete via `datalist` com nomes, CPF, celular e MAC ja carregados
+  - a tabela de visitantes passou a ser filtrada em memoria por nome, CPF, celular, MAC, estado do cadastro e vinculo de dispositivo
+  - `frontend/src/pages/Collaborators.jsx` recebeu bloco `Pesquisa de colaboradores` antes da tabela de colaboradores
+  - o campo de pesquisa do Acesso Mobile usa autocomplete via `datalist` com nome, usuario, departamento e cargo/funcao ja carregados
+  - a tabela de colaboradores passou a ser filtrada em memoria por nome, usuario, departamento, cargo/funcao, estado da conta e departamento
+  - os contadores das listas indicam quantos registros estao visiveis em relacao ao total carregado
+- escopo:
+  - ajuste limitado ao frontend administrativo
+  - nenhuma rota, schema, ipset, firewall, UFW, DNS, RPZ, ACL ou enforcement runtime foi alterado
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+  - `curl -sk -I https://127.0.0.1:6777/hotspot` retornou HTTP `200`
+  - `curl -sk -I https://127.0.0.1:6777/colaboradores-mobile` retornou HTTP `200`

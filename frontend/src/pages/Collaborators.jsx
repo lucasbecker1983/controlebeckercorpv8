@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, BarChart2, CheckCircle2, Clock, Eye, EyeOff, FileText, Filter, LockKeyhole,
-  LockOpen, Plus, Printer, RefreshCw, ShieldCheck, Smartphone, Trash2,
+  LockOpen, Plus, Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2,
   UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -22,6 +22,12 @@ function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function matchesText(row, query, fields) {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase('pt-BR');
+  if (!normalizedQuery) return true;
+  return fields.some((field) => String(row[field] || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
 }
 
 function Field({ label, value, onChange, type = 'text', required = false, placeholder = '' }) {
@@ -689,6 +695,33 @@ export default function Collaborators() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dialog, setDialog] = useState({ open: false, item: null });
+  const [userFilters, setUserFilters] = useState({ query: '', active: 'all', department: 'all' });
+
+  const departments = useMemo(() => (
+    [...new Set(users.map((user) => String(user.department || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+  ), [users]);
+
+  const userAutocomplete = useMemo(() => (
+    [...new Set(users
+      .flatMap((user) => [user.full_name, user.username, user.department, user.position])
+      .filter(Boolean))]
+      .slice(0, 80)
+  ), [users]);
+
+  const filteredUsers = useMemo(() => users.filter((user) => {
+    const activeMatch = userFilters.active === 'all'
+      || (userFilters.active === 'active' && user.active !== false)
+      || (userFilters.active === 'inactive' && user.active === false);
+    const departmentMatch = userFilters.department === 'all'
+      || String(user.department || '').trim() === userFilters.department;
+    return activeMatch
+      && departmentMatch
+      && matchesText(user, userFilters.query, ['full_name', 'username', 'department', 'position']);
+  }), [users, userFilters]);
+
+  const setUserFilter = (key) => (value) => setUserFilters((current) => ({ ...current, [key]: value }));
+  const clearUserFilters = () => setUserFilters({ query: '', active: 'all', department: 'all' });
 
   const load = async () => {
     setLoading(true);
@@ -830,11 +863,48 @@ export default function Collaborators() {
             </div>
           </Surface>
 
+          <Surface className="p-5">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <Search className="mt-0.5 shrink-0 text-primary" size={20} />
+                <div>
+                  <h2 className="text-sm font-black uppercase text-on-surface">Pesquisa de colaboradores</h2>
+                  <p className="mt-1 text-xs text-on-surface/55">Use nome, usuário, departamento ou cargo. O campo sugere colaboradores já cadastrados.</p>
+                </div>
+              </div>
+              <ActionButton tone="ghost" icon={Filter} onClick={clearUserFilters}>Limpar filtros</ActionButton>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.9fr]">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">Pesquisar colaborador</span>
+                <input
+                  list="collab-user-autocomplete"
+                  value={userFilters.query}
+                  onChange={(event) => setUserFilter('query')(event.target.value)}
+                  placeholder="Digite nome, usuário, departamento ou cargo"
+                  className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
+                />
+                <datalist id="collab-user-autocomplete">
+                  {userAutocomplete.map((value) => <option key={value} value={value} />)}
+                </datalist>
+              </label>
+              <SelectField label="Estado" value={userFilters.active} onChange={setUserFilter('active')}>
+                <option value="all">Todos os estados</option>
+                <option value="active">Somente ativos</option>
+                <option value="inactive">Somente inativos</option>
+              </SelectField>
+              <SelectField label="Departamento" value={userFilters.department} onChange={setUserFilter('department')}>
+                <option value="all">Todos os departamentos</option>
+                {departments.map((department) => <option key={department} value={department}>{department}</option>)}
+              </SelectField>
+            </div>
+          </Surface>
+
           <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
             <Surface className="p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h2 className="text-sm font-black uppercase text-on-surface">Colaboradores</h2>
-                <StatusChip tone={loading ? 'warning' : 'success'}>{loading ? 'Carregando' : `${users.length} registros`}</StatusChip>
+                <StatusChip tone={loading ? 'warning' : 'success'}>{loading ? 'Carregando' : `${filteredUsers.length} de ${users.length}`}</StatusChip>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-xs">
@@ -848,7 +918,7 @@ export default function Collaborators() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline/10">
-                    {users.map((user) => (
+                    {filteredUsers.map((user) => (
                       <tr key={user.id} className="text-on-surface/78">
                         <td className="whitespace-nowrap px-3 py-3 font-bold">{user.full_name}</td>
                         <td className="whitespace-nowrap px-3 py-3 font-mono">{user.username}</td>
@@ -864,7 +934,7 @@ export default function Collaborators() {
                         </td>
                       </tr>
                     ))}
-                    {!users.length ? <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={5}>Nenhum colaborador cadastrado.</td></tr> : null}
+                    {!filteredUsers.length ? <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={5}>Nenhum colaborador encontrado para os filtros selecionados.</td></tr> : null}
                   </tbody>
                 </table>
               </div>

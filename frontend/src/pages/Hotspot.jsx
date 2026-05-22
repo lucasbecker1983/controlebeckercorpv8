@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity, BarChart2, Clock, Edit3, Eye, EyeOff, FileText, Filter, Network, Plus,
-  Printer, RefreshCw, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
+  Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
@@ -80,6 +80,17 @@ function translateAuthMethod(method) {
     mac_confirm: 'Retorno confirmado',
     password_recovery: 'Recuperação de senha',
   }[method] || method || '-');
+}
+
+function matchesText(row, query, fields) {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase('pt-BR');
+  if (!normalizedQuery) return true;
+  const numericQuery = normalizedQuery.replace(/\D/g, '');
+  return fields.some((field) => {
+    const value = String(row[field] || '').toLocaleLowerCase('pt-BR');
+    if (value.includes(normalizedQuery)) return true;
+    return numericQuery && value.replace(/\D/g, '').includes(numericQuery);
+  });
 }
 
 // ── shared UI ─────────────────────────────────────────────────────────────────
@@ -810,6 +821,35 @@ export default function Hotspot() {
   const [cleaningSessions, setCleaningSessions] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [visitorFilters, setVisitorFilters] = useState({ query: '', active: 'all', device: 'all' });
+
+  const filteredVisitors = useMemo(() => visitors.filter((visitor) => {
+    const activeMatch = visitorFilters.active === 'all'
+      || (visitorFilters.active === 'active' && visitor.active !== false)
+      || (visitorFilters.active === 'inactive' && visitor.active === false);
+    const deviceCount = Number(visitor.devices) || 0;
+    const deviceMatch = visitorFilters.device === 'all'
+      || (visitorFilters.device === 'linked' && (visitor.mac_address || deviceCount > 0))
+      || (visitorFilters.device === 'unlinked' && !visitor.mac_address && deviceCount === 0);
+    return activeMatch
+      && deviceMatch
+      && matchesText(visitor, visitorFilters.query, ['full_name', 'cpf', 'cpf_raw', 'phone', 'phone_raw', 'mac_address']);
+  }), [visitors, visitorFilters]);
+
+  const visitorAutocomplete = useMemo(() => (
+    [...new Set(visitors
+      .flatMap((visitor) => [
+        formatPersonName(visitor.full_name),
+        visitor.cpf,
+        visitor.phone,
+        visitor.mac_address,
+      ])
+      .filter(Boolean))]
+      .slice(0, 80)
+  ), [visitors]);
+
+  const setVisitorFilter = (key) => (value) => setVisitorFilters((current) => ({ ...current, [key]: value }));
+  const clearVisitorFilters = () => setVisitorFilters({ query: '', active: 'all', device: 'all' });
 
   const load = async () => {
     setLoading(true);
@@ -994,10 +1034,53 @@ export default function Hotspot() {
             ]}
           />
 
+          <Surface className="p-5">
+            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <Search className="mt-0.5 shrink-0 text-primary" size={20} />
+                <div>
+                  <h2 className="text-sm font-black uppercase text-on-surface">Pesquisa de visitantes</h2>
+                  <p className="mt-1 text-xs text-on-surface/55">Use nome, CPF, celular ou MAC. O campo sugere visitantes já cadastrados.</p>
+                </div>
+              </div>
+              <ActionButton tone="ghost" icon={Filter} onClick={clearVisitorFilters}>Limpar filtros</ActionButton>
+            </div>
+            <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.8fr]">
+              <label className="block">
+                <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">Pesquisar visitante</span>
+                <input
+                  list="hotspot-visitor-autocomplete"
+                  value={visitorFilters.query}
+                  onChange={(event) => setVisitorFilter('query')(event.target.value)}
+                  placeholder="Digite nome, CPF, celular ou MAC"
+                  className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
+                />
+                <datalist id="hotspot-visitor-autocomplete">
+                  {visitorAutocomplete.map((value) => <option key={value} value={value} />)}
+                </datalist>
+              </label>
+              <SelectField label="Estado" value={visitorFilters.active} onChange={setVisitorFilter('active')}>
+                <option value="all">Todos os estados</option>
+                <option value="active">Somente ativos</option>
+                <option value="inactive">Somente inativos</option>
+              </SelectField>
+              <SelectField label="Dispositivo" value={visitorFilters.device} onChange={setVisitorFilter('device')}>
+                <option value="all">Todos os dispositivos</option>
+                <option value="linked">Com dispositivo</option>
+                <option value="unlinked">Sem dispositivo</option>
+              </SelectField>
+            </div>
+          </Surface>
+
           <TableShell
             title="Visitantes"
-            rows={visitors}
-            empty="Nenhum visitante cadastrado."
+            rows={filteredVisitors}
+            empty="Nenhum visitante encontrado para os filtros selecionados."
+            actions={(
+              <span className="text-[10px] font-black uppercase text-on-surface/45">
+                {filteredVisitors.length} de {visitors.length}
+              </span>
+            )}
             columns={[
               { key: 'full_name', label: 'Nome', render: (row) => (
                 <div className="flex min-w-[260px] items-center justify-between gap-3">
