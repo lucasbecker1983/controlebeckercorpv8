@@ -1744,6 +1744,26 @@ const QUICK_VLAN_CATEGORIES = [
   },
 ];
 
+const SCHEDULE_CATEGORIES = QUICK_VLAN_CATEGORIES
+  .filter((category) => ['youtube', 'redes_sociais', 'pornografia'].includes(category.key))
+  .map((category) => category.label);
+
+const WEEKDAY_OPTIONS = [
+  { value: 0, label: 'Dom' },
+  { value: 1, label: 'Seg' },
+  { value: 2, label: 'Ter' },
+  { value: 3, label: 'Qua' },
+  { value: 4, label: 'Qui' },
+  { value: 5, label: 'Sex' },
+  { value: 6, label: 'Sáb' },
+];
+
+const DATE_MODE_LABELS = {
+  weekly: 'Toda semana',
+  single: 'Somente um dia',
+  range: 'Vários dias',
+};
+
 const SPORADIC_DURATIONS = [
   { value: 30, label: '30 minutos' },
   { value: 60, label: '1 hora' },
@@ -2121,6 +2141,7 @@ function useModuleData() {
     health: null,
     contingency: null,
     contingencyAudit: [],
+    scheduledPolicyWindows: [],
   });
   const [loading, setLoading] = useState(true);
   const [loadingState, setLoadingState] = useState({ critical: true, secondary: false });
@@ -2187,6 +2208,7 @@ function useModuleData() {
       { key: 'health', endpoint: 'health', timeoutMs: 15000 },
       { key: 'contingency', endpoint: 'contingency/status', timeoutMs: 12000 },
       { key: 'contingencyAudit', endpoint: 'contingency/audit', timeoutMs: 12000 },
+      { key: 'scheduledPolicyWindows', endpoint: 'scheduled-policy-windows', timeoutMs: 12000 },
     ];
     const secondary = await Promise.allSettled(
       secondaryRequests.map((request) => fetchJson(request.endpoint, request.timeoutMs)),
@@ -2207,6 +2229,7 @@ function useModuleData() {
         else if (key === 'auditEvents') next.auditEvents = value?.events ? value : current.auditEvents;
         else if (key === 'realtimeRadar') next.realtimeRadar = value?.events ? value : current.realtimeRadar;
         else if (key === 'contingencyAudit') next.contingencyAudit = Array.isArray(value) ? value : current.contingencyAudit;
+        else if (key === 'scheduledPolicyWindows') next.scheduledPolicyWindows = Array.isArray(value) ? value : current.scheduledPolicyWindows;
         else next[key] = value ?? current[key];
       });
       return next;
@@ -2255,6 +2278,20 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const [working, setWorking] = useState({ policy: false, vip: false, sporadic: false, contingency: false, engine: false, audit: false });
   const [operationProgress, setOperationProgress] = useState({ vip: 0, sporadic: 0 });
   const [quickVlanRule, setQuickVlanRule] = useState({ policy_type: 'allow', category: 'youtube', vlan_ids: [], notes: '' });
+  const [scheduleDraft, setScheduleDraft] = useState({
+    id: '',
+    name: '',
+    vlan_ids: [],
+    categories: ['YouTube'],
+    start_time: '08:00',
+    end_time: '17:00',
+    date_mode: 'weekly',
+    weekdays: [5],
+    start_date: '',
+    end_date: '',
+    notes: '',
+    active: true,
+  });
   const [policySearch, setPolicySearch] = useState('');
   const [policyFilters, setPolicyFilters] = useState({ type: 'all', status: 'all', scope: 'all' });
   const [vlanSearch, setVlanSearch] = useState('');
@@ -2381,6 +2418,25 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     () => QUICK_VLAN_CATEGORIES.find((item) => item.key === quickVlanRule.category) || QUICK_VLAN_CATEGORIES[0],
     [quickVlanRule.category],
   );
+  const scheduledPolicyWindows = data.scheduledPolicyWindows || [];
+  const scheduleDraftReady = Boolean(
+    scheduleDraft.name.trim()
+    && scheduleDraft.vlan_ids.length
+    && scheduleDraft.categories.length
+    && scheduleDraft.start_time
+    && scheduleDraft.end_time
+    && (scheduleDraft.date_mode !== 'weekly' || scheduleDraft.weekdays.length)
+    && (scheduleDraft.date_mode !== 'single' || scheduleDraft.start_date)
+    && (scheduleDraft.date_mode !== 'range' || (scheduleDraft.start_date && scheduleDraft.end_date && scheduleDraft.weekdays.length)),
+  );
+  const describeScheduleDateMode = (schedule) => {
+    if (schedule.date_mode === 'single') return schedule.start_date ? `Somente ${schedule.start_date}` : 'Somente um dia';
+    if (schedule.date_mode === 'range') return `${schedule.start_date || 'início aberto'} até ${schedule.end_date || 'fim aberto'}`;
+    const labels = (schedule.weekdays || [])
+      .map((weekday) => WEEKDAY_OPTIONS.find((option) => option.value === Number(weekday))?.label)
+      .filter(Boolean);
+    return labels.length ? labels.join(', ') : 'Sem dia definido';
+  };
 
   const namedPolicies = useMemo(
     () => [...(data.domainPolicies || [])].sort((a, b) => Number(Boolean(b.enabled)) - Number(Boolean(a.enabled)) || String(a.name || '').localeCompare(String(b.name || ''))),
@@ -2632,6 +2688,205 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         </div>
       </div>
     </ThemeAwareSurface>
+  );
+
+  const scheduledPolicyPanel = (
+    <SectionCard
+      title="Agendamentos por VLAN"
+      subtitle="Cards visuais para liberar ou pausar categorias por VLAN, com horário e recorrência explícitos."
+      actions={<StateBadge label={`${scheduledPolicyWindows.length} card(s)`} tone={scheduledPolicyWindows.length ? 'primary' : 'neutral'} />}
+    >
+      <div className="grid gap-4 2xl:grid-cols-[0.95fr_1.05fr]">
+        <ThemeAwareSurface tone="primary" className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">Criar janela visual</div>
+              <div className="mt-2 text-xl font-black text-on-surface">{scheduleDraft.id ? 'Editando agendamento' : 'Nova regra por horário'}</div>
+            </div>
+            {scheduleDraft.id ? (
+              <ActionButton
+                tone="ghost"
+                icon={RotateCcw}
+                onClick={() => setScheduleDraft({
+                  id: '',
+                  name: '',
+                  vlan_ids: [],
+                  categories: ['YouTube'],
+                  start_time: '08:00',
+                  end_time: '17:00',
+                  date_mode: 'weekly',
+                  weekdays: [5],
+                  start_date: '',
+                  end_date: '',
+                  notes: '',
+                  active: true,
+                })}
+              >
+                Novo
+              </ActionButton>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <label className="space-y-2 md:col-span-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome</span>
+              <TextInput value={scheduleDraft.name} onChange={(event) => setScheduleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ex: Sexta livre na VLAN 30" />
+            </label>
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Início</span>
+              <TextInput type="time" value={scheduleDraft.start_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_time: event.target.value }))} />
+            </label>
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Final</span>
+              <TextInput type="time" value={scheduleDraft.end_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_time: event.target.value }))} />
+            </label>
+            <label className="space-y-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Validade</span>
+              <SelectInput value={scheduleDraft.date_mode} onChange={(event) => setScheduleDraft((current) => ({
+                ...current,
+                date_mode: event.target.value,
+                weekdays: event.target.value === 'single' ? [] : (current.weekdays.length ? current.weekdays : [5]),
+              }))}>
+                <option value="weekly">Toda semana</option>
+                <option value="single">Somente um dia</option>
+                <option value="range">Vários dias</option>
+              </SelectInput>
+            </label>
+            {scheduleDraft.date_mode !== 'weekly' ? (
+              <label className="space-y-2">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">{scheduleDraft.date_mode === 'single' ? 'Dia' : 'Data inicial'}</span>
+                <TextInput type="date" value={scheduleDraft.start_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_date: event.target.value }))} />
+              </label>
+            ) : null}
+            {scheduleDraft.date_mode === 'range' ? (
+              <label className="space-y-2">
+                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Data final</span>
+                <TextInput type="date" value={scheduleDraft.end_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_date: event.target.value }))} />
+              </label>
+            ) : null}
+            <label className="space-y-2 md:col-span-2">
+              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Observação</span>
+              <TextInput value={scheduleDraft.notes} onChange={(event) => setScheduleDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
+            </label>
+          </div>
+
+          <div className="mt-4 space-y-3">
+            <div>
+              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLANs</div>
+              <div className="flex flex-wrap gap-2">
+                {quickSelectableVlans.map((vlan) => (
+                  <button
+                    key={`schedule-vlan-${vlan.vlan_id}`}
+                    type="button"
+                    onClick={() => toggleScheduleVlan(vlan.vlan_id)}
+                    aria-pressed={scheduleDraft.vlan_ids.includes(vlan.vlan_id)}
+                    className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      scheduleDraft.vlan_ids.includes(vlan.vlan_id)
+                        ? 'border-primary/20 bg-primary text-on-primary shadow-md shadow-primary/20'
+                        : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
+                    }`}
+                  >
+                    VLAN {vlan.vlan_id}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Categorias</div>
+              <div className="flex flex-wrap gap-2">
+                {SCHEDULE_CATEGORIES.map((label) => (
+                  <button
+                    key={`schedule-category-${label}`}
+                    type="button"
+                    onClick={() => toggleScheduleCategory(label)}
+                    aria-pressed={scheduleDraft.categories.includes(label)}
+                    className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      scheduleDraft.categories.includes(label)
+                        ? 'border-success/20 bg-success text-on-primary shadow-md shadow-success/20'
+                        : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-success/20 hover:text-success'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {scheduleDraft.date_mode !== 'single' ? (
+              <div>
+                <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Dias</div>
+                <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                  {WEEKDAY_OPTIONS.map((weekday) => (
+                    <button
+                      key={`schedule-day-${weekday.value}`}
+                      type="button"
+                      onClick={() => toggleScheduleWeekday(weekday.value)}
+                      aria-pressed={scheduleDraft.weekdays.includes(weekday.value)}
+                      className={`min-h-10 rounded-2xl border px-2 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                        scheduleDraft.weekdays.includes(weekday.value)
+                          ? 'border-info/20 bg-info text-on-primary shadow-md shadow-info/20'
+                          : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-info/20 hover:text-info'
+                      }`}
+                    >
+                      {weekday.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap gap-2">
+              <StateBadge label={scheduleDraft.vlan_ids.length ? `VLAN ${scheduleDraft.vlan_ids.join(', ')}` : 'Selecione VLAN'} tone={scheduleDraft.vlan_ids.length ? 'primary' : 'warning'} />
+              <StateBadge label={`${scheduleDraft.start_time || '--:--'}-${scheduleDraft.end_time || '--:--'}`} tone="success" />
+              <StateBadge label={DATE_MODE_LABELS[scheduleDraft.date_mode] || 'Agenda'} tone="neutral" />
+            </div>
+            <ActionButton tone="primary" icon={Clock3} onClick={saveScheduleWindow} disabled={working.policy || !scheduleDraftReady}>
+              {working.policy ? 'Salvando...' : (scheduleDraft.id ? 'Atualizar card' : 'Salvar card')}
+            </ActionButton>
+          </div>
+        </ThemeAwareSurface>
+
+        <div className="grid content-start gap-3 md:grid-cols-2">
+          {scheduledPolicyWindows.length ? scheduledPolicyWindows.map((schedule) => (
+            <ThemeAwareSurface key={schedule.id} tone={schedule.active === false ? 'neutral' : 'success'} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-base font-black text-on-surface">{schedule.name}</span>
+                    <StateBadge label={schedule.active === false ? 'Pausado' : 'Ativo'} tone={schedule.active === false ? 'neutral' : 'success'} />
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {(schedule.vlan_ids || []).map((vlanId) => <StateBadge key={`${schedule.id}-vlan-${vlanId}`} label={`VLAN ${vlanId}`} tone="primary" />)}
+                    {(schedule.categories || []).map((category) => <StateBadge key={`${schedule.id}-cat-${category}`} label={category} tone="success" />)}
+                  </div>
+                </div>
+                <Timer size={18} className="mt-1 shrink-0 text-on-surface/42" />
+              </div>
+              <div className="mt-4 grid gap-2 text-sm text-on-surface/66">
+                <div className="flex items-center gap-2"><Clock3 size={15} />{schedule.start_time || '--:--'} até {schedule.end_time || '--:--'}</div>
+                <div className="flex items-center gap-2"><Network size={15} />{DATE_MODE_LABELS[schedule.date_mode] || 'Agenda'} • {describeScheduleDateMode(schedule)}</div>
+                {schedule.notes ? <div className="line-clamp-2 text-on-surface/54">{schedule.notes}</div> : null}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <ActionButton tone="primary" icon={Pencil} onClick={() => editScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">Editar</ActionButton>
+                <ActionButton tone={schedule.active === false ? 'success' : 'neutral'} icon={Power} onClick={() => toggleScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">
+                  {schedule.active === false ? 'Ativar' : 'Pausar'}
+                </ActionButton>
+                <ActionButton tone="danger" icon={Trash2} onClick={() => deleteScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">Excluir</ActionButton>
+              </div>
+            </ThemeAwareSurface>
+          )) : (
+            <EmptyStateBlock
+              icon={Timer}
+              title="Nenhum card de agenda"
+              description="Crie a primeira janela visual escolhendo VLANs, categorias, horário e validade."
+              action={<ActionButton tone="primary" icon={Plus} onClick={() => setScheduleDraft((current) => ({ ...current, name: 'Sexta livre na VLAN 30', vlan_ids: [30], categories: ['YouTube', 'Redes Sociais'], weekdays: [5] }))}>Preencher exemplo</ActionButton>}
+            />
+          )}
+        </div>
+      </div>
+    </SectionCard>
   );
 
   const quickActionGroups = [
@@ -2931,7 +3186,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     setWorking((current) => ({ ...current, policy: true }));
     try {
       for (const vlanId of vlanIds) {
-        await requestAction('category-policy', 'POST', {
+        await requestAction('category-policies', 'PUT', {
           policy_type: quickVlanRule.policy_type,
           category: category.label,
           label: category.label,
@@ -2961,6 +3216,112 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       setWorking((current) => ({ ...current, policy: false }));
     }
   }
+
+  const toggleScheduleVlan = (vlanId) => {
+    setScheduleDraft((current) => ({
+      ...current,
+      vlan_ids: current.vlan_ids.includes(vlanId)
+        ? current.vlan_ids.filter((item) => item !== vlanId)
+        : [...current.vlan_ids, vlanId].sort((left, right) => left - right),
+    }));
+  };
+
+  const toggleScheduleCategory = (label) => {
+    setScheduleDraft((current) => ({
+      ...current,
+      categories: current.categories.includes(label)
+        ? current.categories.filter((item) => item !== label)
+        : [...current.categories, label],
+    }));
+  };
+
+  const toggleScheduleWeekday = (weekday) => {
+    setScheduleDraft((current) => ({
+      ...current,
+      weekdays: current.weekdays.includes(weekday)
+        ? current.weekdays.filter((item) => item !== weekday)
+        : [...current.weekdays, weekday].sort((left, right) => left - right),
+    }));
+  };
+
+  const saveScheduleWindow = async () => {
+    setWorking((current) => ({ ...current, policy: true }));
+    try {
+      const payload = {
+        ...scheduleDraft,
+        start_date: scheduleDraft.start_date || null,
+        end_date: scheduleDraft.date_mode === 'single' ? scheduleDraft.start_date || null : scheduleDraft.end_date || null,
+      };
+      if (payload.id) {
+        await requestAction(`scheduled-policy-windows/${payload.id}`, 'PATCH', payload);
+      } else {
+        await requestAction('scheduled-policy-windows', 'POST', payload);
+      }
+      setScheduleDraft({
+        id: '',
+        name: '',
+        vlan_ids: [],
+        categories: ['YouTube'],
+        start_time: '08:00',
+        end_time: '17:00',
+        date_mode: 'weekly',
+        weekdays: [5],
+        start_date: '',
+        end_date: '',
+        notes: '',
+        active: true,
+      });
+      await loadAll();
+      flash('Agendamento visual salvo. O reconciliador aplica a janela automaticamente.', 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao salvar agendamento.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, policy: false }));
+    }
+  };
+
+  const editScheduleWindow = (schedule) => {
+    setScheduleDraft({
+      id: schedule.id || '',
+      name: schedule.name || '',
+      vlan_ids: (schedule.vlan_ids || []).map(Number).filter(Number.isFinite),
+      categories: schedule.categories || [],
+      start_time: schedule.start_time || '08:00',
+      end_time: schedule.end_time || '17:00',
+      date_mode: schedule.date_mode || 'weekly',
+      weekdays: (schedule.weekdays || []).map(Number).filter(Number.isFinite),
+      start_date: schedule.start_date || '',
+      end_date: schedule.end_date || '',
+      notes: schedule.notes || '',
+      active: schedule.active !== false,
+    });
+  };
+
+  const toggleScheduleWindow = async (schedule) => {
+    setWorking((current) => ({ ...current, policy: true }));
+    try {
+      await requestAction(`scheduled-policy-windows/${schedule.id}`, 'PATCH', { ...schedule, active: schedule.active === false });
+      await loadAll();
+      flash(schedule.active === false ? 'Agendamento ativado.' : 'Agendamento pausado.', 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao alterar agendamento.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, policy: false }));
+    }
+  };
+
+  const deleteScheduleWindow = async (schedule) => {
+    setWorking((current) => ({ ...current, policy: true }));
+    try {
+      await requestAction(`scheduled-policy-windows/${schedule.id}`, 'DELETE');
+      await loadAll();
+      flash('Agendamento removido.', 'success');
+    } catch (error) {
+      flash(error.message || 'Falha ao remover agendamento.', 'danger');
+    } finally {
+      setWorking((current) => ({ ...current, policy: false }));
+    }
+  };
 
   const scopeEditorLabel = scopeEditor.scopeType === 'vlan'
     ? `VLAN ${scopeEditor.scopeValue}`
@@ -3869,6 +4230,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
       {!loading && activeTab === 'policies' ? (
         <div className="space-y-5 xl:space-y-6">
+          {scheduledPolicyPanel}
+
           <SectionCard
             title="Políticas Institucionais"
             subtitle="Regras de bloqueio e liberação por domínio, organizadas por escopo e status."

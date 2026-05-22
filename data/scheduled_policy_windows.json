@@ -1,0 +1,17 @@
+[
+  {
+    "id": "vlan30-friday-social-youtube",
+    "name": "VLAN 30 - YouTube e Redes Sociais na sexta",
+    "active": true,
+    "policy_type": "allow",
+    "vlan_ids": [30],
+    "categories": ["YouTube", "Redes Sociais"],
+    "start_time": "08:00",
+    "end_time": "17:00",
+    "date_mode": "weekly",
+    "weekdays": [5],
+    "start_date": null,
+    "end_date": null,
+    "notes": "Regra visual: toda sexta-feira das 08:00 as 17:00."
+  }
+]

@@ -1,0 +1,11 @@
+[Unit]
+Description=Executa a reconciliacao visual de politicas por VLAN a cada minuto
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=sgcg-policy-window-reconcile.service
+
+[Install]
+WantedBy=timers.target

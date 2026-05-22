@@ -1,0 +1,9 @@
+[Unit]
+Description=SGCG reconcilia agendamentos visuais de politicas por VLAN
+Wants=network-online.target
+After=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/controlebeckercorp-v8
+ExecStart=/usr/bin/node /opt/controlebeckercorp-v8/scripts/reconcile_scheduled_policy_windows.js

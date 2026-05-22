@@ -5785,3 +5785,50 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `dig @127.0.0.1 youtube.com A +short` retornou IP publico
   - `dig @127.0.0.1 instagram.com A +short` retornou IP publico
   - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta
+
+## Bloqueios e Liberacoes - agendamentos visuais por VLAN - 2026-05-22
+
+- motivo:
+  - a liberacao por VLAN precisava deixar de depender de pedido manual e virar fluxo visual direto
+  - a regra desejada e escolher VLAN, categorias, horario inicial, horario final e validade em cards
+- frontend:
+  - `frontend/src/pages/BlockingReleases.jsx` ganhou o bloco `Agendamentos por VLAN` na aba `Politicas & Escopos`
+  - o operador cria cards com nome, VLANs, categorias, hora inicial, hora final e validade
+  - modos de validade: `Toda semana`, `Somente um dia` e `Varios dias`
+  - cards existentes podem ser editados, pausados/ativados ou excluidos sem procurar a politica espalhada
+  - a antiga acao rapida por VLAN tambem foi corrigida para usar `PUT /category-policies`
+- backend:
+  - `backend-proxy/src/routes/blocking-release-routes.ts` agora expoe:
+    - `GET /api/bloqueios-liberacoes/scheduled-policy-windows`
+    - `POST /api/bloqueios-liberacoes/scheduled-policy-windows`
+    - `PATCH /api/bloqueios-liberacoes/scheduled-policy-windows/:id`
+    - `DELETE /api/bloqueios-liberacoes/scheduled-policy-windows/:id`
+  - os agendamentos ficam em `data/scheduled_policy_windows.json`
+  - ao salvar/editar/remover um card, o backend tenta acionar `sgcg-policy-window-reconcile.service` para aplicar imediatamente
+- runtime:
+  - criado `scripts/reconcile_scheduled_policy_windows.js`
+  - criado `systemd/sgcg-policy-window-reconcile.service`
+  - criado `systemd/sgcg-policy-window-reconcile.timer`
+  - timer instalado em `/etc/systemd/system/` e habilitado a cada minuto
+  - os timers antigos especificos da VLAN 30 (`sgcg-vlan30-social-youtube-open.timer` e `sgcg-vlan30-social-youtube-close.timer`) foram desabilitados; a regra agora mora no card visual
+  - o reconciliador tambem limpa os marcadores antigos `SGCG FRIDAY VLAN30 ...` para evitar liberacao fora da agenda visual
+- regra cadastrada:
+  - `VLAN 30 - YouTube e Redes Sociais na sexta`
+  - `VLAN 30`
+  - categorias `YouTube` e `Redes Sociais`
+  - toda sexta-feira, das `08:00` as `17:00`
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluido sem erro
+  - `node scripts/reconcile_scheduled_policy_windows.js` retornou `ok=true`, `schedules=1`, `changed=0`, `vlan30_media_active=true` apos estabilizar
+  - `systemctl is-enabled sgcg-policy-window-reconcile.timer` retornou `enabled`
+  - `systemctl is-active sgcg-policy-window-reconcile.timer` retornou `active`
+  - `systemctl is-enabled sgcg-vlan30-social-youtube-open.timer sgcg-vlan30-social-youtube-close.timer` retornou `disabled`
+  - `iptables-save -t filter` mostrou `SGCG SCHEDULED VLAN30 SOCIAL ALLOW` antes de `SGCG SOCIAL BLOCK VLAN30`
+  - `/etc/unbound/becker/allowed.rpz` contem `SGCG SCHEDULED VLAN30 YOUTUBE ALLOW START/END`
+  - banco confirmou `Redes Sociais=50` e `YouTube=9` para `scope_type='vlan'`, `scope_value='30'`, `notes='SGCG-SCHEDULE:vlan30-friday-social-youtube'`, `origin_rule='scheduled-window'`
+  - `unbound-checkconf` retornou sem erros
+  - `dig @127.0.0.1 youtube.com A +short` e `dig @127.0.0.1 instagram.com A +short` retornaram IP publico
+  - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta
+  - `curl -k https://127.0.0.1:6777/bloqueios-liberacoes` retornou HTTP `200`

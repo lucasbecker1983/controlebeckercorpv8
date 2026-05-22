@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import fs from 'fs';
+import path from 'path';
 import { blockingReleaseService } from '../services/blocking-release-service';
 import { blockingAuditService } from '../services/blocking-audit-service';
 import { dnsContingencyService } from '../services/dns-contingency-service';
@@ -9,6 +11,55 @@ import { runCommand } from '../utils/process';
 import { env } from '../config/env';
 
 const router = Router();
+const scheduleStorePath = path.join(env.projectRoot, 'data', 'scheduled_policy_windows.json');
+const readScheduledPolicyWindows = () => {
+    try {
+        return JSON.parse(fs.readFileSync(scheduleStorePath, 'utf8'));
+    } catch {
+        return [];
+    }
+};
+const writeScheduledPolicyWindows = (items: any[]) => {
+    fs.mkdirSync(path.dirname(scheduleStorePath), { recursive: true });
+    fs.writeFileSync(scheduleStorePath, `${JSON.stringify(items, null, 2)}\n`);
+};
+const triggerScheduledPolicyReconcile = async () => {
+    await runCommand('systemctl', ['start', 'sgcg-policy-window-reconcile.service'], { allowFailure: true });
+};
+const normalizeScheduleWindow = (payload: any, fallback: any = {}) => {
+    const id = String(payload?.id || fallback.id || payload?.name || `schedule-${Date.now()}`)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+    const vlanIds = (Array.isArray(payload?.vlan_ids ?? payload?.vlanIds) ? (payload?.vlan_ids ?? payload?.vlanIds) : String(payload?.vlan_ids ?? payload?.vlanIds ?? fallback.vlan_ids ?? '').split(','))
+        .map((value: any) => Number(value))
+        .filter((value: number) => Number.isFinite(value) && value > 0);
+    const categories = Array.from(new Set((Array.isArray(payload?.categories) ? payload.categories : fallback.categories || []).map((value: any) => String(value || '').trim()).filter(Boolean)));
+    const weekdays = Array.from(new Set((Array.isArray(payload?.weekdays) ? payload.weekdays : fallback.weekdays || []).map((value: any) => Number(value)).filter((value: number) => Number.isFinite(value) && value >= 0 && value <= 6))).sort();
+    if (!id) throw new Error('Identificador do agendamento obrigatório');
+    if (!String(payload?.name ?? fallback.name ?? '').trim()) throw new Error('Nome do agendamento obrigatório');
+    if (!vlanIds.length) throw new Error('Selecione ao menos uma VLAN');
+    if (!categories.length) throw new Error('Selecione ao menos uma categoria');
+    return {
+        ...fallback,
+        id,
+        name: String(payload?.name ?? fallback.name).trim(),
+        active: Boolean(payload?.active ?? fallback.active ?? true),
+        policy_type: 'allow',
+        vlan_ids: vlanIds,
+        categories,
+        start_time: String(payload?.start_time ?? payload?.startTime ?? fallback.start_time ?? '08:00').slice(0, 5),
+        end_time: String(payload?.end_time ?? payload?.endTime ?? fallback.end_time ?? '17:00').slice(0, 5),
+        date_mode: ['single', 'range', 'weekly'].includes(String(payload?.date_mode ?? payload?.dateMode ?? fallback.date_mode)) ? String(payload?.date_mode ?? payload?.dateMode ?? fallback.date_mode) : 'weekly',
+        weekdays,
+        start_date: payload?.start_date ?? payload?.startDate ?? fallback.start_date ?? null,
+        end_date: payload?.end_date ?? payload?.endDate ?? fallback.end_date ?? null,
+        notes: String(payload?.notes ?? fallback.notes ?? '').trim(),
+        updated_at: new Date().toISOString(),
+    };
+};
 const clientIp = (req: any) => {
     const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
     return String(req.headers['x-client-ip'] || forwarded || req.ip || req.socket?.remoteAddress || '').trim();
@@ -42,6 +93,56 @@ router.get('/health', async (_req, res) => {
         res.json(await blockingReleaseService.getHealth());
     } catch (error: any) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/scheduled-policy-windows', async (_req, res) => {
+    try {
+        res.json(readScheduledPolicyWindows());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/scheduled-policy-windows', async (req, res) => {
+    try {
+        const items = readScheduledPolicyWindows();
+        const next = normalizeScheduleWindow(req.body);
+        if (items.some((item: any) => item.id === next.id)) throw new Error('Ja existe um agendamento com esse identificador');
+        items.push({ ...next, created_by: requestedBy(req), created_at: new Date().toISOString() });
+        writeScheduledPolicyWindows(items);
+        await triggerScheduledPolicyReconcile();
+        res.json(next);
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.patch('/scheduled-policy-windows/:id', async (req, res) => {
+    try {
+        const items = readScheduledPolicyWindows();
+        const index = items.findIndex((item: any) => item.id === req.params.id);
+        if (index < 0) throw new Error('Agendamento nao encontrado');
+        const next = normalizeScheduleWindow({ ...items[index], ...req.body, id: req.params.id }, items[index]);
+        items[index] = next;
+        writeScheduledPolicyWindows(items);
+        await triggerScheduledPolicyReconcile();
+        res.json(next);
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.delete('/scheduled-policy-windows/:id', async (req, res) => {
+    try {
+        const items = readScheduledPolicyWindows();
+        const next = items.filter((item: any) => item.id !== req.params.id);
+        if (next.length === items.length) throw new Error('Agendamento nao encontrado');
+        writeScheduledPolicyWindows(next);
+        await triggerScheduledPolicyReconcile();
+        res.json({ ok: true });
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
     }
 });
 
