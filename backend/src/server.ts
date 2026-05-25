@@ -178,6 +178,8 @@ app.listen(PORT, '0.0.0.0', () => {
     // Iniciando Sentinelas
     try { startMonitor(); } catch(e) {}
     try { startBackupScanner(); } catch(e) {}
-    try { startLinkMonitor(); } catch(e) {}
+    startLinkMonitor().catch((error) => {
+        console.error('[LINK-SENTINEL] Falha ao iniciar sentinela de link:', error);
+    });
     try { startCftvRetentionMonitor(); } catch(e) {}
 });

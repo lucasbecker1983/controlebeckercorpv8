@@ -16,6 +16,12 @@ const LEGACY_VLAN_GATEWAYS: Record<string, string> = {
     'enp6s0.50': INTERNAL_DNS_BY_VLAN[50],
     'enp6s0.70': INTERNAL_DNS_BY_VLAN[70],
 };
+const LEGACY_VLAN_SUBNETS: Record<string, string> = {
+    'enp6s0.10': '192.168.10.0/24',
+    'enp6s0.30': '192.168.30.0/24',
+    'enp6s0.50': '192.168.50.0/24',
+    'enp6s0.70': '192.168.70.0/24',
+};
 
 const activePortsForMode = (mode: EngineMode) => {
     if (mode === 'test-http-only') return [80];
@@ -226,12 +232,19 @@ export class InterceptionService {
 
     async clearLegacyRuntimeRules() {
         for (const [iface, gateway] of Object.entries(LEGACY_VLAN_GATEWAYS)) {
+            const subnet = LEGACY_VLAN_SUBNETS[iface];
             await this.deleteNatRule(['-s', `${gateway}/32`, '-i', iface, '-j', 'RETURN']);
             await this.deleteNatRule(['-i', iface, '-p', 'udp', '--dport', '53', '-j', 'RETURN']);
             await this.deleteNatRule(['-i', iface, '-p', 'tcp', '--dport', '53', '-j', 'RETURN']);
             await this.deleteNatRule(['-d', `${gateway}/32`, '-i', iface, '-j', 'RETURN']);
             await this.deleteNatRule(['-i', iface, '-p', 'tcp', '--dport', '80', '-j', 'REDIRECT', '--to-ports', String(env.proxyInterceptHttpPort)]);
             await this.deleteNatRule(['-i', iface, '-p', 'tcp', '--dport', '443', '-j', 'REDIRECT', '--to-ports', String(env.proxyInterceptHttpsPort)]);
+            if (subnet) {
+                await this.deleteNatRule(['-s', subnet, '-i', iface, '-p', 'udp', '--dport', '53', '-j', 'RETURN']);
+                await this.deleteNatRule(['-s', subnet, '-i', iface, '-p', 'tcp', '--dport', '53', '-j', 'RETURN']);
+                await this.deleteNatRule(['-s', subnet, '-i', iface, '-p', 'tcp', '--dport', '80', '-j', 'REDIRECT', '--to-ports', String(env.proxyInterceptHttpPort)]);
+                await this.deleteNatRule(['-s', subnet, '-i', iface, '-p', 'tcp', '--dport', '443', '-j', 'REDIRECT', '--to-ports', String(env.proxyInterceptHttpsPort)]);
+            }
             await this.deleteFilterRule(['-i', iface, '-p', 'udp', '--dport', '443', '-j', 'REJECT', '--reject-with', 'icmp-port-unreachable']);
         }
 

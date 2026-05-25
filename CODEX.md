@@ -5832,3 +5832,86 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `dig @127.0.0.1 youtube.com A +short` e `dig @127.0.0.1 instagram.com A +short` retornaram IP publico
   - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta
   - `curl -k https://127.0.0.1:6777/bloqueios-liberacoes` retornou HTTP `200`
+
+## Sentinela do link Nicknetwork com contra-prova externa - 2026-05-25
+
+- objetivo:
+  - separar a leitura `Secretaria -> Provedor` da leitura real `Secretaria -> Provedor -> Internet`
+  - evitar falso positivo quando o gateway da Nicknetwork responde, mas a internet externa caiu
+- backend:
+  - `backend/src/modules/connectivity/downtime-monitor.ts` passou a monitorar dois alvos ICMP via `enp8s0`:
+    - gateway Nicknetwork `186.251.14.25` como caminho `Secretaria -> Provedor`
+    - Google DNS `8.8.8.8` como caminho `Secretaria -> Provedor -> Internet`
+  - a sentinela grava indisponibilidade em `net_link_downtime` somente apos 10 falhas consecutivas, com amostragem a cada 2 segundos
+  - a tabela `net_link_downtime` recebeu campos de classificacao do alvo, caminho, interface WAN e ultima verificacao
+  - no boot do backend, incidentes abertos legados sao hidratados e fechados automaticamente se o ping voltar a responder
+  - `GET /api/dashboard/metrics` passou a considerar `internet.online` pelo ping externo, mantendo `provider_gateway_online` separado
+  - `GET /api/downtime/summary` passou a expor snapshot da sentinela e metricas por alvo
+- frontend:
+  - o topo agora mostra `Nicknetwork` e `Internet` como sinais separados
+  - o alerta visual de internet passa a disparar quando o ping externo ao Google DNS falhar, mesmo que o gateway do provedor responda
+  - o modulo `Controle de Rede` recebeu a aba `Link Nicknetwork`, com:
+    - estado atual da internet externa
+    - estado atual do gateway Nicknetwork
+    - quedas e tempo fora do ar no dia
+    - historico de indisponibilidade por alvo
+- limpeza operacional:
+  - a tabela `net_link_downtime` foi limpa com `TRUNCATE TABLE net_link_downtime RESTART IDENTITY` para remover dados legados incorretos
+  - nenhum reboot foi executado
+- validacao:
+  - `ping -4 -c 1 -W 1 -I enp8s0 186.251.14.25` respondeu com `0% packet loss`
+  - `ping -4 -c 1 -W 1 -I enp8s0 8.8.8.8` respondeu com `0% packet loss`
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` executados; ambos ficaram `online`
+  - `GET /api/downtime/summary` autenticado retornou `provider=Nicknetwork`, `interface=enp8s0`, gateway `online=true` e externo `online=true`
+  - `GET /api/dashboard/metrics` autenticado retornou `internet.online=true`, `provider_gateway_online=true`, `external_online=true`, `alert=false`
+  - `SELECT COUNT(*) FROM net_link_downtime` retornou `0`
+  - `curl -k https://127.0.0.1:6777/network` retornou HTTP `200` servindo o bundle `dist/assets/index-BTr-M4KN.js`
+
+## Auditoria runtime de seguranca - DNS/RPZ/ACL/UFW - 2026-05-25
+
+- objetivo:
+  - validar se as camadas de seguranca do SGCG estavam operacionais em runtime, incluindo `RPZ`, `DNS`, `ACL`, `Firewall/UFW`, proxy complementar e precedencia real de regras
+- estado validado:
+  - `ufw`, `unbound`, `squid`, `clamav-daemon` e `fail2ban` estavam `active`
+  - PM2 confirmou `backend-proxy`, `backend-proxy-ingester`, `bcc-backend` e `bcc-frontend` `online`
+  - `unbound-checkconf` retornou `ok`
+  - `squid -k parse` retornou `ok`
+  - `UFW` permaneceu ativo como firewall oficial, com politica `deny incoming`, `allow outgoing` e `allow routed`
+  - `iptables-legacy-save` mostrou tabelas legacy vazias, sem regra operacional residual
+- DNS/RPZ:
+  - Unbound principal responde em `0.0.0.0:53`
+  - resolvedor limpo de VIP responde em `0.0.0.0:5355`
+  - `dig @127.0.0.1 google.com A` retornou `NOERROR`
+  - `dig @127.0.0.1 console.interno.jacarezinho A` retornou `192.168.10.1`
+  - `dig @127.0.0.1 pornhub.com A` retornou `NXDOMAIN`
+  - `dig @127.0.0.1 youtube.com A` retornou `NXDOMAIN`
+  - `dig @127.0.0.1 chrome.cloudflare-dns.com A` retornou `NXDOMAIN`
+  - `dig @127.0.0.1 -p 5355 console.interno.jacarezinho A` retornou `192.168.10.1`, preservando nomes internos tambem para VIP
+- PontoRH/OpenDNS:
+  - `iptables-save -t nat` confirmou `RETURN` para `208.67.222.222` e `208.67.220.220` em VLANs gerenciadas antes do redirect global de DNS
+  - a excecao permanente PontoRH/OpenDNS foi preservada
+- ACL/Squid:
+  - Squid opera explicitamente em `3129`
+  - listas ACL existem e foram carregadas:
+    - `/etc/squid/acl/proxy_blocklist.acl`
+    - `/etc/squid/acl/proxy_whitelist.acl`
+    - `/etc/squid/acl/blocklist-vlan-10.acl`
+    - `/etc/squid/acl/blocklist-vlan-50.acl`
+    - `/etc/squid/acl/blocklist-vlan-70.acl`
+  - `curl` via proxy `127.0.0.1:3129` para `example.com` retornou HTTP `200`
+  - `curl` via proxy `127.0.0.1:3129` para `pornhub.com` retornou bloqueio/falha controlada HTTP `503`, coerente com DNS/RPZ bloqueado
+- correcao aplicada:
+  - havia uma regra NAT residual:
+    - `-A PREROUTING -s 192.168.70.0/24 -i enp6s0.70 -p tcp --dport 80 -j REDIRECT --to-ports 3128`
+  - essa regra era incoerente com o estado atual do motor (`interception_active=false`, `active_ports=[3129]`) e com o Squid ouvindo apenas `3129`
+  - a regra residual foi removida em runtime com `iptables -t nat -D PREROUTING -s 192.168.70.0/24 -i enp6s0.70 -p tcp --dport 80 -j REDIRECT --to-ports 3128`
+  - `backend-proxy/src/services/interception-service.ts` passou a limpar tambem os redirects antigos com `-s <subnet>` por VLAN, evitando que esse residual fique fora da reconciliacao
+- validacao pos-correcao:
+  - `cd backend-proxy && npm run build` concluiu com sucesso
+  - `pm2 restart backend-proxy --update-env` e `pm2 restart backend-proxy-ingester --update-env` executados; ambos ficaram `online`
+  - `iptables-save -t nat | rg '3128|3129|sgcg-total-vlan-block'` nao mostrou mais redirect `3128`
+  - `ss -lntup` confirmou Squid ouvindo em `3129`
+  - `curl -sk -i https://127.0.0.1:6779/health` retornou `401 Token ausente`, confirmando backend-proxy vivo atras de autenticacao
+  - log de erro do backend-proxy nao foi atualizado na rodada; ultimos erros sobre `ufw command not found` eram historicos de `2026-05-21`

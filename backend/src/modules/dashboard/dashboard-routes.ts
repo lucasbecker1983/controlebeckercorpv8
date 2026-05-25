@@ -3,6 +3,7 @@ import { execCmd } from '../../utils/sys';
 import fs from 'fs';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
+import { getLinkSentinelSnapshot } from '../connectivity/downtime-monitor';
 
 const router = Router();
 
@@ -160,7 +161,9 @@ router.get('/metrics', async (req, res) => {
         } catch(e) {}
 
         // --- STATUS DE INTERNET E MÓDULOS ---
-        const isOnline = await execCmd(`ping -c 1 -W 1 ${env.gatewayIp} > /dev/null 2>&1 && echo true || echo false`).then(r => r.trim() === 'true').catch(() => false);
+        const linkSentinel = await getLinkSentinelSnapshot().catch(() => null);
+        const gatewayOnline = Boolean(linkSentinel?.gateway?.online);
+        const externalOnline = Boolean(linkSentinel?.external?.online);
         const checkSvc = async (svc: string) => await execCmd(`systemctl is-active ${svc}`).then(r => r.trim() === 'active').catch(() => false);
 
         // --- REDE: IPs ---
@@ -190,7 +193,18 @@ router.get('/metrics', async (req, res) => {
                 ram_text: ramText
             },
             internet: {
-                online: isOnline
+                online: externalOnline,
+                provider_gateway_online: gatewayOnline,
+                external_online: externalOnline,
+                gateway_ip: env.gatewayIp,
+                external_ip: env.externalPingIp,
+                external_label: env.externalPingLabel,
+                provider: env.wanProviderName,
+                interface: env.wanInterface,
+                path_gateway: 'Secretaria -> Provedor',
+                path_external: 'Secretaria -> Provedor -> Internet',
+                alert: gatewayOnline && !externalOnline,
+                sentinel: linkSentinel
             },
             threats: {
                 total: totalThreats,

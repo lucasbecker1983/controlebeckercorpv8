@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, Clock3, Menu, Moon, Network as NetworkIcon, ShieldCheck, Sun } from 'lucide-react';
+import { Activity, Clock3, Globe2, Menu, Moon, Network as NetworkIcon, ShieldAlert, ShieldCheck, Sun } from 'lucide-react';
 import { api } from '../../services/api';
 import SupportBell from '../SupportBell';
 
@@ -29,6 +29,8 @@ export default function Topbar({
   onOpenMenu,
 }) {
   const [gatewayOnline, setGatewayOnline] = useState(true);
+  const [externalOnline, setExternalOnline] = useState(true);
+  const [linkAlert, setLinkAlert] = useState(false);
   const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
   const [uptimeStr, setUptimeStr] = useState('0 dias, 0 horas');
 
@@ -42,7 +44,9 @@ export default function Topbar({
       try {
         const res = await api.get('/api/dashboard/metrics');
         if (!res.data) return;
-        setGatewayOnline(Boolean(res.data.internet?.online));
+        setGatewayOnline(Boolean(res.data.internet?.provider_gateway_online ?? res.data.internet?.online));
+        setExternalOnline(Boolean(res.data.internet?.external_online ?? res.data.internet?.online));
+        setLinkAlert(Boolean(res.data.internet?.alert));
         const uptimeSeconds = Number(res.data.system?.uptime || 0);
         const days = Math.floor(uptimeSeconds / 86400);
         const hours = Math.floor((uptimeSeconds % 86400) / 3600);
@@ -50,6 +54,8 @@ export default function Topbar({
         setUptimeStr(`${days} dias, ${hours} horas e ${minutes} min`);
       } catch {
         setGatewayOnline(false);
+        setExternalOnline(false);
+        setLinkAlert(true);
       }
     };
 
@@ -63,6 +69,7 @@ export default function Topbar({
   }, []);
 
   const headerTone = gatewayOnline ? 'success' : 'danger';
+  const internetTone = externalOnline ? 'success' : 'danger';
 
   return (
     <header className="sticky top-0 z-30 border-b border-outline/10 bg-surface-low/78 px-[var(--app-shell-gutter-x)] py-2.5 backdrop-blur-[18px]">
@@ -80,9 +87,10 @@ export default function Topbar({
             <div className="text-[11px] font-semibold tracking-tight text-primary">SGCG</div>
             <div className="mt-1 truncate text-sm font-semibold text-on-surface">Sistema de governança e controle governamental</div>
           </div>
-          <div className="hidden min-w-0 flex-1 grid-cols-4 items-stretch gap-2 lg:grid">
-            <HeaderChip icon={NetworkIcon} label="Gateway" value="186.251.14.25" tone={headerTone} />
-            <HeaderChip icon={ShieldCheck} label="Status" value={gatewayOnline ? 'Online' : 'Offline'} tone={headerTone} />
+          <div className="hidden min-w-0 flex-1 grid-cols-5 items-stretch gap-2 lg:grid">
+            <HeaderChip icon={NetworkIcon} label="Nicknetwork" value={gatewayOnline ? 'Gateway OK' : 'Gateway OFF'} tone={headerTone} />
+            <HeaderChip icon={linkAlert ? ShieldAlert : Globe2} label="Internet" value={externalOnline ? 'Google DNS OK' : 'Fora do ar'} tone={internetTone} />
+            <HeaderChip icon={ShieldCheck} label="Status" value={externalOnline ? 'Online' : 'Offline'} tone={internetTone} />
             <HeaderChip icon={Clock3} label="Hora" value={currentTime} />
             <HeaderChip icon={Activity} label="Uptime" value={uptimeStr} />
           </div>

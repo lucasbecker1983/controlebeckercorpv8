@@ -6,6 +6,7 @@ import QosLimiter from '../components/QosLimiter';
 import { Clock } from 'lucide-react';
 import VlanManagerMD3 from './VlanManagerMD3';
 import { ModuleHeader, SegmentedTabs, StatusChip } from '../components/ui/primitives';
+import DowntimeLog from '../components/DowntimeLog';
 
 const fetchErrorMessage = (error, fallback) => error?.response?.data?.error || error?.message || fallback;
 
@@ -660,6 +661,7 @@ export default function NetworkPage() {
     const [activeTab, setActiveTab] = useState('connect');
     const tabs = [
         { id: 'connect', label: 'Conectividade', icon: Globe, color: 'text-purple-500' },
+        { id: 'link', label: 'Link Nicknetwork', icon: ShieldAlert, color: 'text-red-500' },
         { id: 'vlans', label: 'Escopos VLAN', icon: Activity, color: 'text-blue-500' },
         { id: 'qos', label: 'QoS', icon: Gauge, color: 'text-yellow-500' },
         { id: 'dns', label: 'DNS Institucional', icon: Server, color: 'text-info' },
@@ -690,6 +692,7 @@ export default function NetworkPage() {
             <div className="min-h-[500px]">
                 <AnimatePresence mode="wait">
                     {activeTab === 'connect' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="connect"><ConnectivityTab/></motion.div>}
+                    {activeTab === 'link' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="link"><DowntimeLog/></motion.div>}
                     {activeTab === 'vlans' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="vlans"><VlanTab/></motion.div>}
                     {activeTab === 'qos' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="qos"><QosLimiter/></motion.div>}
                     {activeTab === 'dns' && <motion.div initial={{opacity:0, y:10}} animate={{opacity:1, y:0}} exit={{opacity:0}} key="dns"><DnsTab/></motion.div>}
