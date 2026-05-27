@@ -32,7 +32,6 @@ const CATALOG = {
     'graph.instagram.com', 'i.instagram.com', 'scontent-gru1-1.cdninstagram.com',
     'test-gateway.instagram.com', 'z-m-gateway.facebook.com',
   ],
-  'Pornografia': ['pornhub.com', 'xvideos.com', 'xnxx.com', 'xhamster.com', 'redtube.com', 'youporn.com', 'tube8.com', 'spankbang.com'],
 };
 
 function run(command, args) {
@@ -90,7 +89,21 @@ function scheduleDomains(schedule) {
   return Array.from(new Set((schedule.categories || []).flatMap((category) => CATALOG[category] || [])));
 }
 
+function categoryKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function hasForbiddenCategory(schedule) {
+  return (schedule.categories || []).some((category) => /(pornograf|adulto|conteudo-adulto)/.test(categoryKey(category)));
+}
+
 async function openSchedule(schedule) {
+  if (hasForbiddenCategory(schedule)) return closeSchedule(schedule);
   const domains = scheduleDomains(schedule);
   if (!domains.length) return 0;
   let changed = 0;
@@ -163,16 +176,20 @@ function ensureFirewall(active) {
 
 function ensureRpz(active) {
   if (!fs.existsSync(RPZ_FILE)) return;
-  const current = fs.readFileSync(RPZ_FILE, 'utf8')
+  const original = fs.readFileSync(RPZ_FILE, 'utf8');
+  const current = original
     .replace(new RegExp(`\\n?${RPZ_START}[\\s\\S]*?${RPZ_END}\\n?`, 'g'), '\n')
     .replace(new RegExp(`\\n?${LEGACY_RPZ_START}[\\s\\S]*?${LEGACY_RPZ_END}\\n?`, 'g'), '\n')
     .trimEnd();
+  let next;
   if (active) {
     const entries = CATALOG.YouTube.flatMap((domain) => [`${domain} CNAME rpz-passthru.`, `*.${domain} CNAME rpz-passthru.`]);
-    fs.writeFileSync(RPZ_FILE, `${current}\n${RPZ_START}\n${entries.join('\n')}\n${RPZ_END}\n`);
+    next = `${current}\n${RPZ_START}\n${entries.join('\n')}\n${RPZ_END}\n`;
   } else {
-    fs.writeFileSync(RPZ_FILE, `${current}\n`);
+    next = `${current}\n`;
   }
+  if (next === original) return;
+  fs.writeFileSync(RPZ_FILE, next);
   if (run('unbound-checkconf', []).status === 0) run('systemctl', ['reload', 'unbound']);
 }
 
@@ -181,6 +198,10 @@ async function main() {
   let changed = 0;
   let vlan30MediaActive = false;
   for (const schedule of schedules) {
+    if (hasForbiddenCategory(schedule)) {
+      changed += await closeSchedule(schedule);
+      continue;
+    }
     const open = isScheduleOpen(schedule);
     if (open) changed += await openSchedule(schedule);
     else changed += await closeSchedule(schedule);

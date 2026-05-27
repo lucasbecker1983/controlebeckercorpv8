@@ -5946,3 +5946,59 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
     - `storage.root.layout='4 SSDs em volume unificado'`
     - `storage.physical_ssds` com 4 itens (`sda`, `sdb`, `sdc`, `sdd`)
   - bundle gerado em `frontend/dist` contem `Disco ROOT (SISTEMA)` e `Placa Mae`
+## Incidente pos-merge/reboot - VLAN 50, UFW e reload indevido do Unbound - 2026-05-27
+
+- contexto:
+  - apos troca de 2 HDs por 2 SSDs, merge e reboot do servidor, as VLANs ficaram sem navegacao para usuarios comuns e maquinas em `VIP` continuavam funcionando
+  - durante a emergencia, regras foram liberadas diretamente no `iptables` e o UFW foi desabilitado
+- achados runtime:
+  - interfaces e rotas estavam presentes: `enp6s0.50` com `192.168.50.1/24`, WAN `enp8s0` com rota default via `186.251.14.25`
+  - `net.ipv4.ip_forward=1`
+  - havia `MASQUERADE` para `192.168.50.0/24` em `POSTROUTING`
+  - `FORWARD` tinha trafego real aceito para `enp6s0.50 -> enp8s0` e retorno `enp8s0 -> enp6s0.50`
+  - `conntrack` mostrou sessoes estabelecidas da VLAN 50 para destinos externos em `443`, `5222`, `5228` e UDP
+  - captura em `enp6s0.50` confirmou trafego bidirecional de `192.168.50.12`, `192.168.50.26` e `192.168.50.30`, incluindo HTTPS externo e check-in interno `HTTP 200`
+  - DNS da VLAN 50 respondeu `NOERROR` em `dig @192.168.50.1 google.com A`
+- causa operacional identificada:
+  - o UFW estava com `/etc/ufw/ufw.conf` em `ENABLED=no`, apesar do servico systemd aparecer como `active (exited)`
+  - `ufw status` falhava por `ip6tables`, pois a carga IPv6 impedia o UFW de listar/recarregar corretamente
+  - o timer `sgcg-policy-window-reconcile.timer` executava a cada minuto e `scripts/reconcile_scheduled_policy_windows.js` reescrevia `/etc/unbound/becker/allowed.rpz` e recarregava o `unbound` mesmo quando o conteudo nao mudava
+  - isso causava reload DNS recorrente e desnecessario durante o periodo de instabilidade
+- correcao aplicada:
+  - `scripts/reconcile_scheduled_policy_windows.js` agora compara o conteudo calculado de `allowed.rpz` com o conteudo original e so grava/recarrega o Unbound quando existe alteracao real
+  - `/etc/default/ufw` foi ajustado temporariamente para `IPV6=no`, isolando a falha de `ip6tables` sem impedir a protecao IPv4 das VLANs
+  - `ufw --force enable` reativou o UFW como camada oficial; `/etc/ufw/ufw.conf` voltou para `ENABLED=yes`
+- validacao:
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
+  - `systemctl start sgcg-policy-window-reconcile.service` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=true`
+  - apos nova execucao do timer, `journalctl -u unbound --since '2026-05-27 12:17:00'` nao mostrou novo `Reloading`, `Restart`, `service stopped` ou `start of service`
+  - `ufw status verbose` voltou a responder `Status: active`, `Default: deny (incoming), allow (outgoing), allow (routed)`
+  - `systemctl is-active ufw unbound sgcg-vip-dns.service squid isc-dhcp-server nginx` retornou `active` para todos
+  - `dig @192.168.50.1 google.com A` retornou `NOERROR`
+  - `ping -4 -c 3 -W 1 -I 192.168.50.1 8.8.8.8` teve `0% packet loss`
+  - `iptables -L FORWARD -n -v` confirmou counters ativos para `192.168.50.0/24`
+  - `iptables -t nat -L POSTROUTING -n -v` confirmou `MASQUERADE` ativo para `192.168.50.0/24`
+- pendencias:
+  - reconstruir com calma o caminho IPv6 do UFW antes de voltar `IPV6=yes`
+  - revisar e remover os bypasses emergenciais de `iptables` quando a rede estiver confirmada pelos usuarios
+  - auditar o restante do reconciliador/firewall para reduzir dependencia de regras runtime aplicadas fora do UFW
+
+## Ajuste do timer de agendamentos por VLAN - 2026-05-27
+
+- contexto:
+  - apos validar que os agendamentos por VLAN estavam funcionando, foi reduzida a frequencia do `sgcg-policy-window-reconcile.timer` para evitar execucoes desnecessarias a cada minuto
+  - a precisao de inicio/fim dos agendamentos continua suficiente para janelas operacionais como horario de almoco e sexta-feira
+- alteracao aplicada:
+  - `/etc/systemd/system/sgcg-policy-window-reconcile.timer` passou de `OnUnitActiveSec=60s` para `OnUnitActiveSec=5min`
+  - `AccuracySec` passou de `5s` para `30s`
+  - a descricao da unit foi atualizada para `a cada 5 minutos`
+  - executados `systemctl daemon-reload` e `systemctl restart sgcg-policy-window-reconcile.timer`
+- validacao:
+  - `systemctl status sgcg-policy-window-reconcile.timer` mostrou `active (waiting)` e proximo disparo em aproximadamente 5 minutos
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
+  - `node scripts/reconcile_scheduled_policy_windows.js` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=false`
+  - `journalctl -u unbound --since '5 minutes ago'` nao mostrou novo `Reloading`, `Restart`, `stopped`, `start of service`, `error`, `failed` ou `fatal`
+- impacto esperado:
+  - reducao de carga e ruido operacional sem perder confiabilidade pratica dos agendamentos
+  - atraso maximo esperado para aplicar ou remover uma janela passa a ser de cerca de 5 minutos
+
