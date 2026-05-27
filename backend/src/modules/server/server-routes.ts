@@ -75,6 +75,78 @@ const getCpuClock = async () => {
     return clock > 100 ? (clock / 1000).toFixed(1) : (clock > 0 ? clock.toFixed(1) : "3.9");
 };
 
+const formatBytes = (bytes: number) => {
+    if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+    if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1024).toFixed(1) + ' KB';
+};
+
+const readDmiValue = (file: string) => {
+    try {
+        return fs.readFileSync(`/sys/devices/virtual/dmi/id/${file}`, 'utf-8').trim();
+    } catch {
+        return '';
+    }
+};
+
+const readSysValue = (path: string) => {
+    try {
+        return fs.readFileSync(path, 'utf-8').trim();
+    } catch {
+        return '';
+    }
+};
+
+const getMotherboard = () => {
+    const vendor = readDmiValue('board_vendor');
+    const name = readDmiValue('board_name');
+    const version = readDmiValue('board_version');
+    return {
+        vendor: vendor || 'Fabricante não identificado',
+        model: [name, version && !/default|string|none/i.test(version) ? version : ''].filter(Boolean).join(' ') || 'Modelo não identificado',
+    };
+};
+
+const getPhysicalSsds = async () => {
+    try {
+        const rootSlaves = fs.existsSync('/sys/block/dm-0/slaves')
+            ? fs.readdirSync('/sys/block/dm-0/slaves').map((name) => name.replace(/\d+$/, ''))
+            : [];
+        const rootDevices = new Set(rootSlaves);
+        const byIdEntries = fs.existsSync('/dev/disk/by-id') ? fs.readdirSync('/dev/disk/by-id') : [];
+        const serialByDevice = byIdEntries.reduce((acc, entry) => {
+            if (!entry.startsWith('ata-') || entry.includes('-part')) return acc;
+            try {
+                const target = fs.realpathSync(`/dev/disk/by-id/${entry}`);
+                const device = target.split('/').pop() || '';
+                const serial = entry.split('_').pop() || '';
+                if (device && serial && /[0-9A-Fa-f]{6,}/.test(serial)) acc[device] = serial;
+            } catch {}
+            return acc;
+        }, {} as Record<string, string>);
+        return fs.readdirSync('/sys/block')
+            .filter((name) => name.startsWith('sd') && (rootDevices.size === 0 || rootDevices.has(name)))
+            .filter((name) => readSysValue(`/sys/block/${name}/queue/rotational`) === '0')
+            .map((name, index) => {
+                const sizeBlocks = Number(readSysValue(`/sys/block/${name}/size`) || 0);
+                const model = readSysValue(`/sys/block/${name}/device/model`) || 'SSD';
+                const serial = readSysValue(`/sys/block/${name}/device/serial`) || serialByDevice[name] || '';
+                return {
+                    id: name,
+                    label: `SSD ${index + 1}`,
+                    device: `/dev/${name}`,
+                    model,
+                    serial,
+                    size: formatBytes(sizeBlocks * 512),
+                    transport: 'SATA',
+                    role: 'Membro do ROOT (SISTEMA)',
+                };
+            });
+    } catch {
+        return [];
+    }
+};
+
 // FORMATADOR ABSOLUTO DOS DISCOS
 const getDisk = async (path: string) => {
     try {
@@ -92,18 +164,11 @@ const getDisk = async (path: string) => {
             pcentStr = parts[2];
         }
 
-        // Converte pra MB ou GB dinamicamente
-        const formatSize = (bytes: number) => {
-            if (bytes > 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
-            if (bytes > 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
-            return (bytes / 1024).toFixed(1) + ' KB';
-        };
-
         return {
             status: 'OK',
             type: path === '/' ? 'SSD' : 'HDD',
-            size: formatSize(sizeNum), // UI ESPERAVA SIZE!
-            used: formatSize(usedNum), // Formatado com GB/MB!
+            size: formatBytes(sizeNum), // UI ESPERAVA SIZE!
+            used: formatBytes(usedNum), // Formatado com GB/MB!
             percent: pcentStr.includes('%') ? pcentStr : pcentStr + '%', // % Obrigatório!
             mount: path
         };
@@ -160,8 +225,7 @@ router.get('/hardware', async (req, res) => {
 
         // CÁLCULO DE DISCOS
         const d1 = await getDisk('/');
-        const d2 = await getDisk(env.cftvMount);
-        const d3 = await getDisk(env.nextcloudMount);
+        const physicalSsds = await getPhysicalSsds();
 
         const cpuClockFixed = await getCpuClock();
         
@@ -175,15 +239,20 @@ router.get('/hardware', async (req, res) => {
             percent_used: Math.round((usedMem/totalMem)*100) + '%' 
         };
         
-        const disksData = { system: d1, cftv: d2, nextcloud: d3 };
+        const disksData = { system: d1 };
         const insights = generateInsights(cpuData, memData, disksData, netData);
 
         res.json({
             os: { hostname, distro, kernel, arch: os.arch() },
             cpu: cpuData,
+            motherboard: getMotherboard(),
             mem: memData, 
             net: netData,
             disks: disksData,
+            storage: {
+                root: { ...d1, label: 'Disco ROOT (SISTEMA)', layout: `${physicalSsds.length || 4} SSDs em volume unificado` },
+                physical_ssds: physicalSsds,
+            },
             insights: insights
         });
 
@@ -192,9 +261,11 @@ router.get('/hardware', async (req, res) => {
         res.json({
              os: { hostname: 'Error', distro: 'Linux', kernel: '', arch: '' },
              cpu: { load: 0, temp: 0, model: '', cores: 0, speed: 0 },
+             motherboard: { vendor: '', model: '' },
              mem: { percent_used: '0%', total: '0 GB', used: '0 GB' },
              net: { wan: {rx:0, tx:0}, lan: {rx:0, tx:0} },
-             disks: { system: {percent:'0%', size:'0 GB', used:'0 GB'}, cftv: {percent:'0%', size:'0 GB', used:'0 GB'}, nextcloud: {percent:'0%', size:'0 GB', used:'0 GB'} },
+             disks: { system: {percent:'0%', size:'0 GB', used:'0 GB'} },
+             storage: { root: {percent:'0%', size:'0 GB', used:'0 GB', label: 'Disco ROOT (SISTEMA)', layout: '4 SSDs em volume unificado'}, physical_ssds: [] },
              insights: []
         });
     }

@@ -5915,3 +5915,34 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `ss -lntup` confirmou Squid ouvindo em `3129`
   - `curl -sk -i https://127.0.0.1:6779/health` retornou `401 Token ausente`, confirmando backend-proxy vivo atras de autenticacao
   - log de erro do backend-proxy nao foi atualizado na rodada; ultimos erros sobre `ufw command not found` eram historicos de `2026-05-21`
+## Infraestrutura - armazenamento fisico ROOT e placa mae - 2026-05-27
+
+- objetivo:
+  - ajustar `Infraestrutura > Armazenamento Fisico` para refletir o ROOT real do servidor: 4 SSDs unidos no volume do sistema
+  - remover da tela os cards separados de `CFTV` e `Dados`
+  - exibir os SSDs fisicos separadamente dentro do conjunto do ROOT
+  - incluir `Placa Mae` junto de Sistema Operacional, Processador e Memoria RAM, com cards menores na mesma linha em desktop
+- backend:
+  - `backend/src/modules/server/server-routes.ts` passou a expor `motherboard` lendo DMI local em `/sys/devices/virtual/dmi/id`
+  - a resposta de hardware passou a expor `storage.root` com `label='Disco ROOT (SISTEMA)'` e `layout='4 SSDs em volume unificado'`
+  - `storage.physical_ssds` agora lista os membros reais do volume ROOT a partir de `/sys/block/dm-0/slaves`, sem usar `lsblk` via shell
+  - a leitura atual detecta:
+    - `SSD 1` `/dev/sda` `HUSKY SSD 128GB` serial `GSMB2230380404`
+    - `SSD 2` `/dev/sdb` `KINGSTON SA400S3` serial `50026B7782F25F8A`
+    - `SSD 3` `/dev/sdc` `KINGSTON SA400S3` serial `50026B7685FB9364`
+    - `SSD 4` `/dev/sdd` `KEEPDATA M2 NGFF` serial `2022102002444`
+- frontend:
+  - `frontend/src/pages/Server.jsx` passou a mostrar quatro cards compactos no topo: Sistema Operacional, Processador, Memoria RAM e Placa Mae
+  - a secao de armazenamento passou a mostrar apenas `Disco ROOT (SISTEMA)` como volume consolidado e abaixo os quatro SSDs individuais
+  - os textos antigos `Storage (CFTV)` e `Storage (Dados)` foram removidos dessa tela
+- validacao:
+  - `cd backend && npm run build` concluiu com sucesso
+  - `cd frontend && npm run build` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` executados; ambos ficaram `online`
+  - chamada autenticada para `GET /api/server/hardware` retornou:
+    - `motherboard.vendor='Gigabyte Technology Co., Ltd.'`
+    - `motherboard.model='A320M-S2H V2-CF'`
+    - `storage.root.label='Disco ROOT (SISTEMA)'`
+    - `storage.root.layout='4 SSDs em volume unificado'`
+    - `storage.physical_ssds` com 4 itens (`sda`, `sdb`, `sdc`, `sdd`)
+  - bundle gerado em `frontend/dist` contem `Disco ROOT (SISTEMA)` e `Placa Mae`
