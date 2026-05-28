@@ -14,11 +14,11 @@ import {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const TABS = [
-  { key: 'painel',     label: 'Painel Executivo',        icon: LayoutDashboard },
-  { key: 'inventario', label: 'Inventário (Art. 37)',     icon: ClipboardList },
-  { key: 'titulares',  label: 'Titulares (Art. 18)',      icon: UserRoundSearch },
-  { key: 'incidentes', label: 'Incidentes (Art. 48)',     icon: AlertTriangle },
-  { key: 'auditoria',  label: 'Auditoria LGPD',           icon: ScrollText },
+  { key: 'painel',     label: 'Painel de Gestão',      icon: LayoutDashboard },
+  { key: 'inventario', label: 'Dados sob Responsabilidade', icon: ClipboardList },
+  { key: 'titulares',  label: 'Pedidos de Pessoas',    icon: UserRoundSearch },
+  { key: 'incidentes', label: 'Incidentes e Riscos',   icon: AlertTriangle },
+  { key: 'auditoria',  label: 'Evidências e Auditoria', icon: ScrollText },
 ];
 
 const REQUEST_TYPE_OPTIONS = [
@@ -49,6 +49,7 @@ const STATUS_REQ_TONE = { recebido: 'neutral', 'em-analise': 'primary', atendido
 const STATUS_REQ_LABEL = { recebido: 'Recebido', 'em-analise': 'Em análise', atendido: 'Atendido', indeferido: 'Indeferido', encerrado: 'Encerrado' };
 const STATUS_INC_TONE = { aberto: 'danger', investigacao: 'warning', contido: 'primary', comunicado: 'success', encerrado: 'neutral' };
 const STATUS_INC_LABEL = { aberto: 'Aberto', investigacao: 'Em investigação', contido: 'Contido', comunicado: 'Comunicado', encerrado: 'Encerrado' };
+const PRIVACY_NOTICE_URL = '/aviso-de-privacidade';
 
 const defaultProcessing = {
   process_name: '', purpose: '', legal_basis: '', controller_name: '',
@@ -71,7 +72,7 @@ const defaultIncident = {
 const defaultProgram = {
   controller_name: '', controller_unit: '', controller_email: '',
   dpo_name: '', dpo_email: '', dpo_phone: '', data_subject_channel: '',
-  privacy_notice_url: '', review_frequency_days: 180, last_review_at: '', notes: '',
+  privacy_notice_url: PRIVACY_NOTICE_URL, review_frequency_days: 180, last_review_at: '', notes: '',
 };
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -88,6 +89,46 @@ const fmtDate = (d) => {
 const splitList = (v) => String(v || '').split(/[\n,;]+/).map((s) => s.trim()).filter(Boolean);
 const joinList = (v) => (Array.isArray(v) ? v.join(', ') : '');
 const rtLabel = (v) => REQUEST_TYPE_OPTIONS.find((o) => o.value === v)?.label || v || '—';
+const num = (v) => Number(v || 0) || 0;
+
+const ENTITY_LABELS = {
+  processing: 'Dados sob responsabilidade',
+  request: 'Pedido de pessoa',
+  incident: 'Incidente ou risco',
+  program: 'Estrutura de governança',
+  domain_policy: 'Política institucional',
+};
+
+const ACTION_LABELS = {
+  create: { label: 'Registro criado', description: 'Um novo controle foi incluído no módulo.' },
+  update: { label: 'Registro atualizado', description: 'Informações existentes foram revisadas.' },
+  delete: { label: 'Registro removido', description: 'Um registro foi retirado da gestão ativa.' },
+  'program.update': { label: 'Estrutura institucional atualizada', description: 'Dados do controlador, encarregado ou canal de atendimento foram alterados.' },
+};
+
+const AUTH_ACTION_LABELS = {
+  'auth.login': 'Entrada no sistema',
+  'auth.logout': 'Saída do sistema',
+  login: 'Entrada no sistema',
+  logout: 'Saída do sistema',
+  refresh: 'Renovação de sessão',
+};
+
+function auditTypeLabel(value) {
+  return ENTITY_LABELS[value] || String(value || 'Registro do sistema').replace(/[_-]+/g, ' ');
+}
+
+function auditActionInfo(action, entityType) {
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
+  const fallback = String(action || '').replace(/[_-]+/g, ' ');
+  if (action === 'create') return { label: 'Registro criado', description: `Novo item em ${auditTypeLabel(entityType)}.` };
+  if (action === 'update') return { label: 'Registro atualizado', description: `Item de ${auditTypeLabel(entityType)} revisado.` };
+  return { label: fallback || 'Ação registrada', description: 'Evento preservado para conferência institucional.' };
+}
+
+function authActionLabel(action) {
+  return AUTH_ACTION_LABELS[action] || String(action || 'Evento de acesso').replace(/[_-]+/g, ' ');
+}
 
 // ─── Form primitives ──────────────────────────────────────────────────────────
 
@@ -134,7 +175,14 @@ function ProgramDialog({ open, item, saving, onClose, onSubmit }) {
   const [f, setF] = useState(defaultProgram);
   useEffect(() => {
     if (!open) return;
-    setF(item ? { ...defaultProgram, ...item, last_review_at: item.last_review_at ? String(item.last_review_at).slice(0, 10) : '' } : defaultProgram);
+    setF(item
+      ? {
+          ...defaultProgram,
+          ...item,
+          privacy_notice_url: item.privacy_notice_url || PRIVACY_NOTICE_URL,
+          last_review_at: item.last_review_at ? String(item.last_review_at).slice(0, 10) : '',
+        }
+      : defaultProgram);
   }, [open, item]);
   if (!open) return null;
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
@@ -454,8 +502,58 @@ export default function Lgpd() {
     finally { setPdfLoading(false); }
   };
 
-  const s = dashboard?.summary || {};
+  const localSummary = useMemo(() => {
+    const openRequestStatuses = ['recebido', 'em-analise'];
+    const closedRequestStatuses = ['atendido', 'indeferido', 'encerrado'];
+    const today = new Date();
+    const rights = requests.reduce((acc, item) => {
+      const key = String(item.request_type || '').replace(/-/g, '_');
+      if (key) acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+
+    return {
+      processing: {
+        total: activities.length,
+        approved: activities.filter((item) => item.status === 'aprovado').length,
+        high_risk: activities.filter((item) => ['alto', 'critico'].includes(item.risk_level)).length,
+        transfers: activities.filter((item) => item.international_transfer === true).length,
+        missing_safeguards: activities.filter((item) => !item.retention_period || !item.security_measures || !item.controller_name).length,
+      },
+      requests: {
+        total: requests.length,
+        open: requests.filter((item) => openRequestStatuses.includes(item.status)).length,
+        overdue: requests.filter((item) => item.due_date && new Date(item.due_date) < today && !closedRequestStatuses.includes(item.status)).length,
+      },
+      incidents: {
+        total: incidents.length,
+        open: incidents.filter((item) => item.status !== 'encerrado').length,
+        notified: incidents.filter((item) => item.authority_notified === true).length,
+        pending_notification: incidents.filter((item) => item.status !== 'encerrado' && ['alto', 'critico'].includes(item.severity) && item.authority_notified !== true).length,
+      },
+      rights,
+    };
+  }, [activities, requests, incidents]);
+
+  const mergeSummary = (server = {}, local = {}) => {
+    const keys = new Set([...Object.keys(server || {}), ...Object.keys(local || {})]);
+    return Array.from(keys).reduce((acc, key) => {
+      acc[key] = Math.max(num(server?.[key]), num(local?.[key]));
+      return acc;
+    }, {});
+  };
+
+  const serverSummary = dashboard?.summary || {};
+  const s = {
+    processing: mergeSummary(serverSummary.processing, localSummary.processing),
+    requests: mergeSummary(serverSummary.requests, localSummary.requests),
+    incidents: mergeSummary(serverSummary.incidents, localSummary.incidents),
+    auth: serverSummary.auth || {},
+    rights: mergeSummary(serverSummary.rights, localSummary.rights),
+  };
+  const hasGovernanceData = num(s.processing.total) + num(s.requests.total) + num(s.incidents.total) > 0;
   const highRiskList = useMemo(() => activities.filter((a) => ['alto', 'critico'].includes(a.risk_level)), [activities]);
+  const privacyNoticeUrl = program.privacy_notice_url || PRIVACY_NOTICE_URL;
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
@@ -469,25 +567,25 @@ export default function Lgpd() {
       {/* Header */}
       <ModuleHeader
         eyebrow="Governança"
-        title="LGPD & Proteção de Dados"
-        description="Programa institucional de proteção de dados pessoais alinhado à Lei nº 13.709/2018: inventário de tratamento, direitos do titular, incidentes e auditoria."
+        title="Proteção de Dados e Responsabilidade Pública"
+        description="Visão de gestão sobre os dados pessoais sob responsabilidade da Prefeitura: onde existem dados, quais pedidos precisam de resposta, quais riscos exigem providência e quais evidências comprovam a atuação institucional."
         badges={<>
-          <StatusChip label="Art. 18 — Direitos do titular" tone="primary" />
-          <StatusChip label="Art. 37 — Inventário de tratamento" tone="success" />
-          <StatusChip label="Art. 41 — Encarregado (DPO)" tone="warning" />
-          <StatusChip label="Art. 48 — Comunicação de incidentes" tone="danger" />
+          <StatusChip label="Gestão governamental" tone="primary" />
+          <StatusChip label="Dados pessoais" tone="success" />
+          <StatusChip label="Risco e resposta" tone="warning" />
+          <StatusChip label="Evidência auditável" tone="danger" />
         </>}
         actions={<>
           <ActionButton tone="ghost" icon={RefreshCcw} onClick={() => load().catch(() => null)}>Atualizar</ActionButton>
-          <ActionButton tone="ghost" icon={FileCheck2} onClick={() => setProgramDialog(true)}>Estrutura LGPD</ActionButton>
+          <ActionButton tone="ghost" icon={FileCheck2} onClick={() => setProgramDialog(true)}>Estrutura de governança</ActionButton>
         </>}
       />
 
-      {/* LGPD Legal Bar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline/20 bg-surface-high px-4 py-3 shadow-sm">
+      {/* Legal support */}
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline/12 bg-surface-high/70 px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2 text-on-surface">
           <Shield size={14} className="shrink-0 text-primary" />
-          <span className="text-[11px] font-bold uppercase tracking-wider">Fundamento Legal — Lei nº 13.709/2018 (LGPD)</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider">Base legal de sustentação</span>
         </div>
         <div className="flex flex-wrap gap-2">
           {LGPD_REFS.map((r) => (
@@ -498,7 +596,7 @@ export default function Lgpd() {
         </div>
         <div className="ml-auto flex items-center gap-1.5 text-[10px] text-on-surface/60">
           <Lock size={10} />
-          Registros imutáveis por trigger de banco de dados
+          Evidências preservadas para controle interno
         </div>
       </div>
 
@@ -517,11 +615,28 @@ export default function Lgpd() {
         <div className="space-y-6">
           {/* KPIs */}
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard icon={ClipboardList}  label="Tratamentos mapeados"  value={s.processing?.total ?? 0}     sub={`${s.processing?.approved ?? 0} aprovados formalmente`} />
-            <KpiCard icon={ShieldAlert}    label="Alto risco / Crítico"  value={s.processing?.high_risk ?? 0} sub="Exigem leitura reforçada" tone="danger" alert />
-            <KpiCard icon={UserRoundSearch} label="Solicitações abertas" value={s.requests?.open ?? 0}        sub={`${s.requests?.overdue ?? 0} vencidas`} tone={s.requests?.overdue > 0 ? 'danger' : 'primary'} alert={s.requests?.overdue > 0} />
-            <KpiCard icon={AlertTriangle}   label="Incidentes abertos"   value={s.incidents?.open ?? 0}       sub={`${s.incidents?.pending_notification ?? 0} sem comunicação formal`} tone="warning" alert />
+            <KpiCard icon={ClipboardList}  label="Áreas com dados pessoais" value={s.processing?.total ?? 0} sub={`${s.processing?.approved ?? 0} com responsabilidade validada`} />
+            <KpiCard icon={ShieldAlert}    label="Riscos relevantes" value={s.processing?.high_risk ?? 0} sub="Precisam de acompanhamento gestor" tone="danger" alert />
+            <KpiCard icon={UserRoundSearch} label="Pedidos em andamento" value={s.requests?.open ?? 0} sub={`${s.requests?.overdue ?? 0} fora do prazo`} tone={s.requests?.overdue > 0 ? 'danger' : 'primary'} alert={s.requests?.overdue > 0} />
+            <KpiCard icon={AlertTriangle}   label="Incidentes em aberto" value={s.incidents?.open ?? 0} sub={`${s.incidents?.pending_notification ?? 0} graves sem comunicação`} tone="warning" alert />
           </div>
+
+          {!hasGovernanceData && !loading && (
+            <Surface stripe={false} className="p-6">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="max-w-3xl">
+                  <div className="text-sm font-black text-on-surface">Painel ainda sem registros de gestão</div>
+                  <p className="mt-2 text-sm leading-6 text-on-surface/62">
+                    O painel não deve parecer quebrado quando está vazio: ele está aguardando o cadastro das áreas que tratam dados pessoais, pedidos de pessoas ou incidentes. Comece pelo mapa de responsabilidades.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <ActionButton tone="primary" icon={Plus} onClick={() => { setActiveTab('inventario'); setProcessingDialog({ open: true, item: null }); }}>Mapear dados</ActionButton>
+                  <ActionButton tone="ghost" icon={UserRoundSearch} onClick={() => { setActiveTab('titulares'); setRequestDialog({ open: true, item: null }); }}>Registrar pedido</ActionButton>
+                </div>
+              </div>
+            </Surface>
+          )}
 
           {/* Program + Compliance */}
           <div className="grid gap-4 xl:grid-cols-3">
@@ -533,7 +648,7 @@ export default function Lgpd() {
                     <Building2 size={18} />
                   </div>
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-wider text-on-surface/50">Programa Institucional LGPD</div>
+                    <div className="text-xs font-semibold uppercase tracking-wider text-on-surface/50">Responsabilidade institucional</div>
                     <div className="mt-0.5 text-lg font-black text-on-surface">{program.controller_name || 'Controlador não definido'}</div>
                   </div>
                 </div>
@@ -543,10 +658,10 @@ export default function Lgpd() {
                 {[
                   { label: 'Unidade responsável', value: program.controller_unit || '—' },
                   { label: 'E-mail do controlador', value: program.controller_email || '—' },
-                  { label: 'Encarregado (DPO)', value: program.dpo_name || 'Não definido' },
-                  { label: 'E-mail do DPO', value: program.dpo_email || '—' },
-                  { label: 'Canal do titular', value: program.data_subject_channel || '—' },
-                  { label: 'Revisão programada', value: `A cada ${program.review_frequency_days || 180} dias` },
+                  { label: 'Responsável por dados', value: program.dpo_name || 'Não definido' },
+                  { label: 'Contato do responsável', value: program.dpo_email || '—' },
+                  { label: 'Canal de atendimento', value: program.data_subject_channel || '—' },
+                  { label: 'Revisão da governança', value: `A cada ${program.review_frequency_days || 180} dias` },
                 ].map((item) => (
                   <div key={item.label} className="rounded-xl border border-outline/10 bg-surface p-3">
                     <div className="text-[10px] font-semibold uppercase tracking-wider text-on-surface/45">{item.label}</div>
@@ -554,14 +669,12 @@ export default function Lgpd() {
                   </div>
                 ))}
               </div>
-              {program.privacy_notice_url && (
-                <div className="mt-4 rounded-xl border border-primary/12 bg-primary/6 px-4 py-2.5 text-sm text-on-surface/70">
-                  Aviso de privacidade:{' '}
-                  <a href={program.privacy_notice_url} target="_blank" rel="noreferrer" className="font-semibold text-primary underline-offset-4 hover:underline">
-                    {program.privacy_notice_url}
-                  </a>
-                </div>
-              )}
+              <div className="mt-4 rounded-xl border border-primary/12 bg-primary/6 px-4 py-2.5 text-sm text-on-surface/70">
+                Aviso de privacidade publicado:{' '}
+                <a href={privacyNoticeUrl} target="_blank" rel="noreferrer" className="font-semibold text-primary underline-offset-4 hover:underline">
+                  {privacyNoticeUrl}
+                </a>
+              </div>
               {program.last_review_at && (
                 <div className="mt-2 text-xs text-on-surface/45">Última revisão registrada: {fmtDate(program.last_review_at)}</div>
               )}
@@ -569,12 +682,12 @@ export default function Lgpd() {
 
             {/* Compliance gaps */}
             <Surface stripe={false} className="p-6">
-              <div className="mb-4 text-sm font-black text-on-surface">Situação de Conformidade</div>
+              <div className="mb-4 text-sm font-black text-on-surface">Providências que exigem atenção</div>
               <div className="space-y-3">
                 {[
-                  { label: 'Inventários com lacunas', value: s.processing?.missing_safeguards ?? 0, desc: 'Sem retenção, medidas ou controlador', tone: 'danger' },
-                  { label: 'Solicitações vencidas', value: s.requests?.overdue ?? 0, desc: 'Demandas do titular em atraso', tone: 'danger' },
-                  { label: 'Incidentes sem comunicação', value: s.incidents?.pending_notification ?? 0, desc: 'Graves e ainda não comunicados', tone: 'warning' },
+                  { label: 'Áreas sem responsabilidade completa', value: s.processing?.missing_safeguards ?? 0, desc: 'Falta responsável, retenção ou segurança declarada', tone: 'danger' },
+                  { label: 'Pedidos fora do prazo', value: s.requests?.overdue ?? 0, desc: 'Demandas de pessoas aguardando resposta', tone: 'danger' },
+                  { label: 'Incidentes graves pendentes', value: s.incidents?.pending_notification ?? 0, desc: 'Precisam de decisão sobre comunicação formal', tone: 'warning' },
                 ].map((item) => (
                   <div key={item.label} className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${item.value > 0 ? 'border-danger/20 bg-danger/6' : 'border-outline/12 bg-surface'}`}>
                     {item.value > 0
@@ -595,8 +708,8 @@ export default function Lgpd() {
           <Surface stripe={false} className="p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <div className="text-sm font-black text-on-surface">Direitos do Titular — Art. 18 LGPD</div>
-                <div className="mt-0.5 text-xs text-on-surface/50">Distribuição de solicitações por tipo de direito exercido</div>
+                <div className="text-sm font-black text-on-surface">Pedidos de pessoas</div>
+                <div className="mt-0.5 text-xs text-on-surface/50">Que tipo de demanda a Prefeitura está recebendo sobre dados pessoais</div>
               </div>
               <ActionButton tone="ghost" icon={Plus} onClick={() => { setActiveTab('titulares'); setRequestDialog({ open: true, item: null }); }}>Nova solicitação</ActionButton>
             </div>
@@ -825,8 +938,8 @@ export default function Lgpd() {
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             {[
-              { key: 'lgpd',   label: 'Alterações no módulo LGPD' },
-              { key: 'acesso', label: 'Evidência de Acesso ao Sistema' },
+              { key: 'lgpd',   label: 'Evidências de gestão' },
+              { key: 'acesso', label: 'Acessos ao sistema' },
             ].map((t) => (
               <button key={t.key} onClick={() => setAudSubTab(t.key)}
                 className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition-all ${audSubTab === t.key ? 'border-primary/18 bg-primary text-on-primary' : 'border-outline/16 text-on-surface/60 hover:text-on-surface'}`}>
@@ -837,29 +950,38 @@ export default function Lgpd() {
 
           {audSubTab === 'lgpd' && (
             <>
-              <div className="text-xs text-on-surface/50">Trilha de auditoria exclusiva do módulo LGPD — registra criação, edição e exclusão de atividades, solicitações e incidentes.</div>
+              <div className="text-xs text-on-surface/50">Evidência de gestão: mostra quem mexeu, qual área foi afetada e o que mudou em linguagem operacional.</div>
               {loading ? <Spinner /> : auditLogs.length === 0
-                ? <EmptyState icon={ScrollText} title="Nenhum evento de auditoria LGPD" description="As alterações feitas no módulo aparecerão aqui." />
+                ? <EmptyState icon={ScrollText} title="Nenhuma evidência registrada" description="Quando uma responsabilidade, pedido ou incidente for criado ou revisado, a evidência aparecerá aqui." />
                 : (
-                  <TableWrap minW="720px">
+                  <TableWrap minW="980px">
                     <thead>
                       <tr className="border-b border-outline/10 bg-surface">
-                        <Th>Data / Hora</Th><Th>Tipo</Th><Th>Ação</Th><Th>Operador</Th><Th>IP</Th><Th>Resultado</Th>
+                        <Th>Data / Hora</Th><Th>Área afetada</Th><Th>O que aconteceu</Th><Th>Detalhes</Th><Th>Operador</Th><Th>IP</Th><Th>Resultado</Th>
                       </tr>
                     </thead>
                     <tbody>
-                      {auditLogs.map((ev, i) => (
-                        <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                          <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
-                          <Td><StatusChip label={ev.entity_type || '—'} tone="primary" /></Td>
-                          <Td className="text-xs font-medium text-on-surface">{ev.action || '—'}</Td>
-                          <Td className="text-xs text-on-surface/70">{ev.actor_username || 'sistema'}</Td>
-                          <Td className="font-mono text-xs text-on-surface/50">{ev.actor_ip || '—'}</Td>
-                          <Td>
-                            <StatusChip label={ev.success !== false ? 'Sucesso' : 'Falha'} tone={ev.success !== false ? 'success' : 'danger'} />
-                          </Td>
-                        </tr>
-                      ))}
+                      {auditLogs.map((ev, i) => {
+                        const action = auditActionInfo(ev.action, ev.entity_type);
+                        return (
+                          <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
+                            <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
+                            <Td><StatusChip label={auditTypeLabel(ev.entity_type)} tone="primary" /></Td>
+                            <Td>
+                              <div className="text-xs font-black text-on-surface">{action.label}</div>
+                              <div className="mt-0.5 text-[11px] text-on-surface/48">Código: {ev.action || '—'}</div>
+                            </Td>
+                            <Td className="max-w-[300px]">
+                              <div className="text-xs text-on-surface/70">{ev.message || action.description}</div>
+                            </Td>
+                            <Td className="text-xs text-on-surface/70">{ev.actor_username || 'sistema'}</Td>
+                            <Td className="font-mono text-xs text-on-surface/50">{ev.actor_ip || '—'}</Td>
+                            <Td>
+                              <StatusChip label={ev.success !== false ? 'Registrado' : 'Falhou'} tone={ev.success !== false ? 'success' : 'danger'} />
+                            </Td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </TableWrap>
                 )}
@@ -868,14 +990,14 @@ export default function Lgpd() {
 
           {audSubTab === 'acesso' && (
             <>
-              <div className="text-xs text-on-surface/50">Evidência complementar de acesso ao sistema — apoia a conformidade com o Art. 46 (medidas de segurança e rastreabilidade).</div>
+              <div className="text-xs text-on-surface/50">Evidência complementar de acesso ao sistema: entradas, recusas e rotas sensíveis com autoria e IP.</div>
               {loading ? <Spinner /> : authEvents.length === 0
-                ? <EmptyState icon={KeyRound} title="Nenhum evento de acesso registrado" description="Os acessos ao sistema aparecerão aqui conforme são realizados." />
+                ? <EmptyState icon={KeyRound} title="Nenhuma evidência de acesso" description="Os acessos ao sistema aparecerão aqui conforme são realizados." />
                 : (
                   <TableWrap minW="760px">
                     <thead>
                       <tr className="border-b border-outline/10 bg-surface">
-                        <Th>Data / Hora</Th><Th>Usuário</Th><Th>Ação</Th><Th>IP</Th><Th>Rota</Th><Th>Resultado</Th>
+                        <Th>Data / Hora</Th><Th>Usuário</Th><Th>Evento</Th><Th>IP</Th><Th>Rota</Th><Th>Resultado</Th>
                       </tr>
                     </thead>
                     <tbody>
@@ -883,7 +1005,10 @@ export default function Lgpd() {
                         <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
                           <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
                           <Td className="text-xs font-semibold text-on-surface">{ev.username || 'anônimo'}</Td>
-                          <Td className="text-xs text-on-surface/70">{ev.action || '—'}</Td>
+                          <Td>
+                            <div className="text-xs font-semibold text-on-surface">{authActionLabel(ev.action)}</div>
+                            <div className="mt-0.5 text-[11px] text-on-surface/45">Código: {ev.action || '—'}</div>
+                          </Td>
                           <Td className="font-mono text-xs text-on-surface/50">{ev.ip_address || '—'}</Td>
                           <Td className="max-w-[180px]">
                             <span className="block truncate text-xs text-on-surface/50" title={ev.route}>{ev.route || '—'}</span>

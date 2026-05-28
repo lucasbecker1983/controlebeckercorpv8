@@ -48,6 +48,26 @@ router.get('/navigation/by-ip', async (req: Request, res: Response) => {
         await reportsService.ensureSchema();
         const rows = await reportsService.getNavigationByIp({
             period: String(req.query.period || '24h'),
+            ip: req.query.ip as string,
+            vlan: req.query.vlan as string,
+            domain: req.query.domain as string,
+            source: req.query.source as 'all' | 'dns' | 'proxy' | 'ufw',
+            action: req.query.action as 'block' | 'allow' | 'all',
+            date_from: req.query.date_from as string,
+            date_to: req.query.date_to as string,
+        });
+        res.json(rows);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/navigation/by-site', async (req: Request, res: Response) => {
+    try {
+        await reportsService.ensureSchema();
+        const rows = await reportsService.getNavigationBySite({
+            period: String(req.query.period || '24h'),
+            ip: req.query.ip as string,
             vlan: req.query.vlan as string,
             domain: req.query.domain as string,
             source: req.query.source as 'all' | 'dns' | 'proxy' | 'ufw',
@@ -98,6 +118,28 @@ router.get('/navigation/export.pdf', async (req: Request, res: Response) => {
         const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="relatorio-navegacao-${now}.pdf"`);
+        res.send(buf);
+    } catch (e: any) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/navigation/export-clean.pdf', async (req: Request, res: Response) => {
+    try {
+        await reportsService.ensureSchema();
+        const buf = await reportsService.exportNavigationCleanPdf({
+            period: String(req.query.period || '24h'),
+            ip: req.query.ip as string,
+            vlan: req.query.vlan as string,
+            domain: req.query.domain as string,
+            source: req.query.source as 'all' | 'dns' | 'proxy' | 'ufw',
+            action: req.query.action as 'block' | 'allow' | 'all',
+            date_from: req.query.date_from as string,
+            date_to: req.query.date_to as string,
+        });
+        const now = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="relatorio-navegacao-limpo-${now}.pdf"`);
         res.send(buf);
     } catch (e: any) {
         res.status(500).json({ error: e.message });

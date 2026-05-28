@@ -8,7 +8,6 @@ const INSTITUTION = 'Prefeitura Municipal de Jacarezinho — PR';
 const ENTITY = 'Secretaria de Comércio, Indústria, Serviços e Inovação';
 const SYSTEM = 'SGCG — Sistema de Governança e Controle Governamental';
 
-const LOGO_PATH = '/opt/controlebeckercorp-v8/frontend/public/jmb-logo-clean.png';
 const UFW_LOG_PATH = '/var/log/ufw.log';
 
 const LGPD_REFS = [
@@ -112,7 +111,7 @@ export type NavFilters = {
     limit?: number;
     date_from?: string;
     date_to?: string;
-    view?: 'events' | 'by_ip';
+    view?: 'events' | 'by_ip' | 'by_site';
 };
 
 export type AuditFilters = {
@@ -243,6 +242,16 @@ const proxyVlanSql = `
         ELSE NULL
     END
 `;
+
+const siteDomainSql = (expr: string) => `sgcg_site_domain(${expr})`;
+
+const navigationBaseWhere = (alias = 'ne') => {
+    const prefix = alias ? `${alias}.` : '';
+    return [
+        `${prefix}client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)`,
+        `(${prefix}domain IS NULL OR (${prefix}domain NOT LIKE '%.local' AND ${prefix}domain NOT LIKE '%.arpa'))`,
+    ];
+};
 
 async function syncUfwNavigationEvents(filters: NavFilters = {}) {
     if (filters.source && filters.source !== 'all' && filters.source !== 'ufw') {
@@ -591,6 +600,62 @@ export const reportsService = {
                 END;
                 $$;
 
+                CREATE OR REPLACE FUNCTION sgcg_site_domain(raw_domain TEXT)
+                RETURNS TEXT LANGUAGE plpgsql IMMUTABLE AS $$
+                DECLARE
+                    normalized TEXT;
+                    labels TEXT[];
+                    label_count INTEGER;
+                    br_second_level TEXT[] := ARRAY[
+                        'adm','adv','agr','am','arq','art','ato','bio','blog','bmd','cim','cng','cnt','com',
+                        'coop','ecn','edu','eng','esp','etc','eti','far','flog','fm','fnd','fot','fst','g12',
+                        'geo','gov','imb','ind','inf','jor','jus','leg','lel','mat','med','mil','mus','net',
+                        'not','ntr','odo','org','ppg','pro','psc','psi','qsl','rec','slg','srv','tax','teo',
+                        'tmp','trd','tur','tv','vet','vlog','wiki','zlg'
+                    ];
+                    br_state_labels TEXT[] := ARRAY[
+                        'ac','al','am','ap','ba','ce','df','es','go','ma','mg','ms','mt','pa','pb','pe',
+                        'pi','pr','rj','rn','ro','rr','rs','sc','se','sp','to'
+                    ];
+                BEGIN
+                    normalized := lower(trim(both '.' from regexp_replace(coalesce(raw_domain, ''), '^https?://', '', 'i')));
+                    normalized := split_part(normalized, '/', 1);
+                    normalized := split_part(normalized, ':', 1);
+                    normalized := regexp_replace(normalized, '^www[0-9]*\\.', '', 'i');
+
+                    IF normalized = '' THEN
+                        RETURN NULL;
+                    END IF;
+
+                    IF normalized ~ '^\\d{1,3}(\\.\\d{1,3}){3}$' THEN
+                        RETURN normalized;
+                    END IF;
+
+                    labels := string_to_array(normalized, '.');
+                    label_count := array_length(labels, 1);
+
+                    IF label_count IS NULL OR label_count <= 2 THEN
+                        RETURN normalized;
+                    END IF;
+
+                    IF labels[label_count] = 'br' THEN
+                        IF label_count >= 4
+                           AND labels[label_count - 1] = 'gov'
+                           AND labels[label_count - 2] = ANY(br_state_labels) THEN
+                            RETURN labels[label_count - 3] || '.' || labels[label_count - 2] || '.gov.br';
+                        END IF;
+
+                        IF label_count >= 3 AND labels[label_count - 1] = ANY(br_second_level) THEN
+                            RETURN labels[label_count - 2] || '.' || labels[label_count - 1] || '.br';
+                        END IF;
+
+                        RETURN labels[label_count - 1] || '.br';
+                    END IF;
+
+                    RETURN labels[label_count - 1] || '.' || labels[label_count];
+                END;
+                $$;
+
                 DO $outer$ BEGIN
                     IF NOT EXISTS (
                         SELECT 1 FROM pg_trigger
@@ -736,10 +801,7 @@ export const reportsService = {
         const offset = (page - 1) * limit;
         const params: unknown[] = [];
 
-        const where: string[] = [
-            "ne.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
-            "(ne.domain IS NULL OR (ne.domain NOT LIKE '%.local' AND ne.domain NOT LIKE '%.arpa'))",
-        ];
+        const where: string[] = navigationBaseWhere('ne');
 
         where.push(buildTimeFilter('ne.event_at', params, filters));
 
@@ -751,7 +813,8 @@ export const reportsService = {
             where.push(`ne.vlan_id = ${p(params, vnum)}`);
         }
         if (filters.domain?.trim()) {
-            where.push(`COALESCE(ne.domain, ne.url, '') ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
+            const needle = p(params, `%${filters.domain.trim()}%`);
+            where.push(`(COALESCE(ne.domain, ne.url, '') ILIKE ${needle} OR COALESCE(${siteDomainSql('ne.domain')}, '') ILIKE ${needle})`);
         }
         if (filters.source && filters.source !== 'all') {
             where.push(`ne.source_type = ${p(params, filters.source)}`);
@@ -780,6 +843,8 @@ export const reportsService = {
                     ne.identity_username AS identity_user,
                     ne.session_type,
                     ne.session_id,
+                    ${siteDomainSql('ne.domain')} AS site_domain,
+                    ne.domain AS technical_domain,
                     ne.domain,
                     ne.url,
                     ne.method,
@@ -806,6 +871,7 @@ export const reportsService = {
                     COUNT(*) FILTER (WHERE NOT ne.blocked)::bigint  AS allowed,
                     COUNT(DISTINCT ne.client_ip)::int   AS unique_ips,
                     COUNT(DISTINCT ne.domain)::int  AS unique_domains,
+                    COUNT(DISTINCT ${siteDomainSql('ne.domain')})::int AS unique_sites,
                     COUNT(*) FILTER (WHERE ne.source_type = 'dns')::bigint AS dns_events,
                     COUNT(*) FILTER (WHERE ne.source_type = 'proxy')::bigint AS proxy_events,
                     COUNT(*) FILTER (WHERE ne.source_type = 'ufw')::bigint AS ufw_events,
@@ -827,13 +893,71 @@ export const reportsService = {
         };
     },
 
+    async getNavigationBySite(filters: NavFilters) {
+        const sync = await syncNavigationEvents(filters);
+        const params: unknown[] = [];
+        const where: string[] = navigationBaseWhere('');
+
+        where.push(buildTimeFilter('event_at', params, filters));
+
+        if (filters.ip?.trim()) {
+            where.push(`client_ip = ${p(params, filters.ip.trim())}::inet`);
+        }
+        if (filters.vlan) {
+            const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
+            if (Number.isFinite(vnum)) where.push(`vlan_id = ${p(params, vnum)}`);
+        }
+        if (filters.domain?.trim()) {
+            const needle = p(params, `%${filters.domain.trim()}%`);
+            where.push(`(COALESCE(domain, url, '') ILIKE ${needle} OR COALESCE(${siteDomainSql('domain')}, '') ILIKE ${needle})`);
+        }
+        if (filters.source && filters.source !== 'all') {
+            where.push(`source_type = ${p(params, filters.source)}`);
+        }
+        if (filters.action === 'block') where.push(`blocked = true`);
+        else if (filters.action === 'allow') where.push(`blocked = false`);
+
+        const wc = where.join(' AND ');
+        const { rows } = await pool.query(
+            `WITH grouped AS (
+                SELECT
+                    COALESCE(${siteDomainSql('domain')}, domain, url, 'sem dominio') AS site_domain,
+                    COUNT(*)::bigint AS total,
+                    COUNT(*) FILTER (WHERE blocked)::bigint AS blocked,
+                    COUNT(*) FILTER (WHERE NOT blocked)::bigint AS allowed,
+                    COUNT(DISTINCT client_ip)::bigint AS unique_ips,
+                    COUNT(DISTINCT domain)::bigint AS technical_domains,
+                    COUNT(*) FILTER (WHERE source_type = 'dns')::bigint AS dns_events,
+                    COUNT(*) FILTER (WHERE source_type = 'proxy')::bigint AS proxy_events,
+                    COUNT(*) FILTER (WHERE source_type = 'ufw')::bigint AS ufw_events,
+                    MAX(event_at) AS last_seen,
+                    MIN(event_at) AS first_seen,
+                    ARRAY_REMOVE(ARRAY_AGG(DISTINCT domain), NULL) AS raw_domains,
+                    ARRAY_AGG(DISTINCT host(client_ip)) AS sample_ips
+                FROM navigation_events
+                WHERE ${wc}
+                GROUP BY COALESCE(${siteDomainSql('domain')}, domain, url, 'sem dominio')
+            )
+            SELECT *
+            FROM grouped
+            ORDER BY total DESC, site_domain ASC
+            LIMIT 300`,
+            params,
+        );
+        return {
+            rows: rows.map((row) => ({
+                ...row,
+                raw_domains: Array.isArray(row.raw_domains) ? row.raw_domains.slice(0, 12) : [],
+                sample_ips: Array.isArray(row.sample_ips) ? row.sample_ips.slice(0, 8) : [],
+            })),
+            sync,
+        };
+    },
+
     async getNavigationByIp(filters: NavFilters) {
         const sync = await syncNavigationEvents(filters);
         const params: unknown[] = [];
-        const where: string[] = [
-            "client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
-            "(domain IS NULL OR (domain NOT LIKE '%.local' AND domain NOT LIKE '%.arpa'))",
-        ];
+        const where: string[] = navigationBaseWhere('');
 
         where.push(buildTimeFilter('event_at', params, filters));
 
@@ -845,7 +969,8 @@ export const reportsService = {
             where.push(`vlan_id = ${p(params, vnum)}`);
         }
         if (filters.domain?.trim()) {
-            where.push(`COALESCE(domain, url, '') ILIKE ${p(params, `%${filters.domain.trim()}%`)}`);
+            const needle = p(params, `%${filters.domain.trim()}%`);
+            where.push(`(COALESCE(domain, url, '') ILIKE ${needle} OR COALESCE(${siteDomainSql('domain')}, '') ILIKE ${needle})`);
         }
         if (filters.source && filters.source !== 'all') {
             where.push(`source_type = ${p(params, filters.source)}`);
@@ -863,6 +988,7 @@ export const reportsService = {
                 COUNT(*) FILTER (WHERE blocked)::bigint  AS blocked,
                 COUNT(*) FILTER (WHERE NOT blocked)::bigint AS allowed,
                 COUNT(DISTINCT domain)::bigint AS unique_domains,
+                COUNT(DISTINCT ${siteDomainSql('domain')})::bigint AS unique_sites,
                 COUNT(*) FILTER (WHERE source_type = 'dns')::bigint AS dns_events,
                 COUNT(*) FILTER (WHERE source_type = 'proxy')::bigint AS proxy_events,
                 COUNT(*) FILTER (WHERE source_type = 'ufw')::bigint AS ufw_events,
@@ -894,17 +1020,15 @@ export const reportsService = {
         };
         const sync = await syncNavigationEvents(effectiveFilters);
         const params: unknown[] = [];
-        const where: string[] = [
-            "ne.client_ip NOT IN ('127.0.0.1'::inet, '::1'::inet)",
-            "(ne.domain IS NULL OR (ne.domain NOT LIKE '%.local' AND ne.domain NOT LIKE '%.arpa'))",
-        ];
+        const where: string[] = navigationBaseWhere('ne');
         where.push(buildTimeFilter('ne.event_at', params, effectiveFilters));
         if (effectiveFilters.vlan) {
             const vnum = parseInt(String(effectiveFilters.vlan).replace(/\D/g, ''), 10);
             if (Number.isFinite(vnum)) where.push(`ne.vlan_id = ${p(params, vnum)}`);
         }
         if (effectiveFilters.domain?.trim()) {
-            where.push(`COALESCE(ne.domain, ne.url, '') ILIKE ${p(params, `%${effectiveFilters.domain.trim()}%`)}`);
+            const needle = p(params, `%${effectiveFilters.domain.trim()}%`);
+            where.push(`(COALESCE(ne.domain, ne.url, '') ILIKE ${needle} OR COALESCE(${siteDomainSql('ne.domain')}, '') ILIKE ${needle})`);
         }
         if (effectiveFilters.ip?.trim()) {
             where.push(`ne.client_ip = ${p(params, effectiveFilters.ip.trim())}::inet`);
@@ -938,6 +1062,7 @@ export const reportsService = {
                     COUNT(*) FILTER (WHERE NOT ne.blocked)::bigint AS allowed,
                     COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
                     COUNT(DISTINCT ne.domain)::int AS unique_domains,
+                    COUNT(DISTINCT ${siteDomainSql('ne.domain')})::int AS unique_sites,
                     COUNT(*) FILTER (WHERE ne.session_id IS NOT NULL)::bigint AS session_linked,
                     COUNT(*) FILTER (WHERE ne.source_type = 'dns')::bigint AS dns_events,
                     COUNT(*) FILTER (WHERE ne.source_type = 'proxy')::bigint AS proxy_events,
@@ -964,7 +1089,8 @@ export const reportsService = {
                     COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked,
                     COUNT(*) FILTER (WHERE NOT ne.blocked)::int AS allowed,
                     COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
-                    COUNT(DISTINCT ne.domain)::int AS unique_domains
+                    COUNT(DISTINCT ne.domain)::int AS unique_domains,
+                    COUNT(DISTINCT ${siteDomainSql('ne.domain')})::int AS unique_sites
                 FROM navigation_events ne
                 WHERE ${wc}
                 GROUP BY COALESCE(ne.vlan_id::text, 'n/d')
@@ -984,26 +1110,28 @@ export const reportsService = {
             `, baseParams),
             pool.query(`
                 SELECT
-                    COALESCE(ne.domain, ne.url, 'sem dominio') AS domain,
+                    COALESCE(${siteDomainSql('ne.domain')}, ne.domain, ne.url, 'sem dominio') AS domain,
                     COUNT(*)::int AS total,
                     COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    COUNT(DISTINCT ne.domain)::int AS technical_domains,
                     MAX(ne.event_at) AS last_seen,
                     MAX(ne.policy_source) FILTER (WHERE ne.policy_source IS NOT NULL) AS policy_source
                 FROM navigation_events ne
                 WHERE ${wc} AND ne.blocked
-                GROUP BY COALESCE(ne.domain, ne.url, 'sem dominio')
+                GROUP BY COALESCE(${siteDomainSql('ne.domain')}, ne.domain, ne.url, 'sem dominio')
                 ORDER BY total DESC
                 LIMIT 12
             `, baseParams),
             pool.query(`
                 SELECT
-                    COALESCE(ne.domain, ne.url, 'sem dominio') AS domain,
+                    COALESCE(${siteDomainSql('ne.domain')}, ne.domain, ne.url, 'sem dominio') AS domain,
                     COUNT(*)::int AS total,
                     COUNT(DISTINCT ne.client_ip)::int AS unique_ips,
+                    COUNT(DISTINCT ne.domain)::int AS technical_domains,
                     MAX(ne.event_at) AS last_seen
                 FROM navigation_events ne
                 WHERE ${wc} AND NOT ne.blocked
-                GROUP BY COALESCE(ne.domain, ne.url, 'sem dominio')
+                GROUP BY COALESCE(${siteDomainSql('ne.domain')}, ne.domain, ne.url, 'sem dominio')
                 ORDER BY total DESC
                 LIMIT 12
             `, baseParams),
@@ -1016,6 +1144,7 @@ export const reportsService = {
                     COUNT(*) FILTER (WHERE ne.blocked)::int AS blocked,
                     COUNT(*) FILTER (WHERE NOT ne.blocked)::int AS allowed,
                     COUNT(DISTINCT ne.domain)::int AS unique_domains,
+                    COUNT(DISTINCT ${siteDomainSql('ne.domain')})::int AS unique_sites,
                     MAX(ne.event_at) AS last_seen
                 FROM navigation_events ne
                 WHERE ${wc}
@@ -1247,6 +1376,211 @@ export const reportsService = {
         };
     },
 
+    async exportNavigationCleanPdf(filters: NavFilters) {
+        const sync = await syncNavigationEvents(filters);
+        const params: unknown[] = [];
+        const where: string[] = navigationBaseWhere('');
+
+        where.push(buildTimeFilter('event_at', params, filters));
+
+        if (filters.ip?.trim()) {
+            where.push(`client_ip = ${p(params, filters.ip.trim())}::inet`);
+        }
+        if (filters.vlan) {
+            const vnum = parseInt(String(filters.vlan).replace(/\D/g, ''), 10);
+            if (Number.isFinite(vnum)) where.push(`vlan_id = ${p(params, vnum)}`);
+        }
+        if (filters.domain?.trim()) {
+            const needle = p(params, `%${filters.domain.trim()}%`);
+            where.push(`(COALESCE(domain, url, '') ILIKE ${needle} OR COALESCE(${siteDomainSql('domain')}, '') ILIKE ${needle})`);
+        }
+        if (filters.source && filters.source !== 'all') {
+            where.push(`source_type = ${p(params, filters.source)}`);
+        }
+        if (filters.action === 'block') where.push(`blocked = true`);
+        else if (filters.action === 'allow') where.push(`blocked = false`);
+
+        const wc = where.join(' AND ');
+        const [rowsRes, summaryRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    host(client_ip) AS client_ip,
+                    vlan_id,
+                    COALESCE(MAX(identity_name), MAX(identity_username), 'Sem identidade') AS identity_label,
+                    COALESCE(${siteDomainSql('domain')}, domain, url, 'sem dominio') AS site_domain,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE blocked)::int AS blocked,
+                    COUNT(*) FILTER (WHERE NOT blocked)::int AS allowed,
+                    COUNT(DISTINCT domain)::int AS technical_domains,
+                    MIN(event_at) AS first_seen,
+                    MAX(event_at) AS last_seen,
+                    ARRAY_REMOVE(ARRAY_AGG(DISTINCT domain), NULL) AS raw_domains
+                FROM navigation_events
+                WHERE ${wc}
+                GROUP BY client_ip, vlan_id, COALESCE(${siteDomainSql('domain')}, domain, url, 'sem dominio')
+                ORDER BY MAX(event_at) DESC, COUNT(*) DESC
+                LIMIT 800
+            `, params),
+            pool.query(`
+                SELECT
+                    COUNT(*)::bigint AS total,
+                    COUNT(*) FILTER (WHERE blocked)::bigint AS blocked,
+                    COUNT(*) FILTER (WHERE NOT blocked)::bigint AS allowed,
+                    COUNT(DISTINCT client_ip)::int AS unique_ips,
+                    COUNT(DISTINCT ${siteDomainSql('domain')})::int AS unique_sites,
+                    COUNT(DISTINCT domain)::int AS unique_technical_domains
+                FROM navigation_events
+                WHERE ${wc}
+            `, params),
+        ]);
+
+        const data = {
+            rows: rowsRes.rows.map((row) => ({
+                ...row,
+                raw_domains: Array.isArray(row.raw_domains) ? row.raw_domains.slice(0, 6) : [],
+            })),
+            summary: summaryRes.rows[0] || {},
+            sync,
+        };
+
+        return new Promise<Buffer>((resolve, reject) => {
+            const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+            const chunks: Buffer[] = [];
+            doc.on('data', (c) => chunks.push(c));
+            doc.on('end', () => resolve(Buffer.concat(chunks)));
+            doc.on('error', reject);
+
+            let y = 36;
+            let pageNum = 1;
+            const W = 769;
+            const M = 36;
+
+            const drawHeader = () => {
+                doc.rect(M, y, W, 64).fillColor('#0f172a').fill();
+                doc.fillColor('#f1f5f9').font('Helvetica-Bold').fontSize(12)
+                    .text('PREFEITURA MUNICIPAL DE JACAREZINHO — PARANÁ', M + 12, y + 8, { width: W - 24 });
+                doc.fillColor('#cbd5e1').font('Helvetica').fontSize(8.5)
+                    .text(ENTITY, M + 12, y + 27, { width: W - 24 });
+                doc.fillColor('#7dd3fc').font('Helvetica-Bold').fontSize(9)
+                    .text('Relatório Limpo de Navegação — agrupado por usuário, IP e site principal', M + 12, y + 45, { width: W - 24 });
+                y += 76;
+            };
+
+            const drawFooter = (pn: number) => {
+                const footerY = doc.page.height - 64;
+                doc.moveTo(M, footerY).lineTo(M + W, footerY).strokeColor('#e2e8f0').stroke();
+                doc.fillColor('#64748b').font('Helvetica').fontSize(7)
+                    .text(`Gerado em ${fmt(new Date())} • Documento de uso institucional restrito`, M, footerY + 6, { width: 370, lineBreak: false });
+                doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7)
+                    .text('JMB Tecnologia', M + W - 82, footerY + 7, { width: 82, align: 'right', lineBreak: false });
+                doc.fillColor('#64748b').font('Helvetica').fontSize(6.5)
+                    .text(`Página ${pn}`, M + W - 82, footerY + 18, { width: 82, align: 'right', lineBreak: false });
+            };
+
+            const drawTableHeader = () => {
+                doc.rect(M, y, W, 20).fillColor('#334155').fill();
+                const cols = [
+                    { label: 'IP / usuário', w: 184 },
+                    { label: 'Site principal', w: 154 },
+                    { label: 'Acessos', w: 52 },
+                    { label: 'Situação', w: 74 },
+                    { label: 'Primeiro acesso', w: 94 },
+                    { label: 'Último acesso', w: 94 },
+                    { label: 'Evidência técnica', w: 117 },
+                ];
+                let cx = M;
+                for (const c of cols) {
+                    doc.fillColor('#e2e8f0').font('Helvetica-Bold').fontSize(7)
+                        .text(c.label, cx + 4, y + 6, { width: c.w - 8, lineBreak: false });
+                    cx += c.w;
+                }
+                y += 24;
+                return cols;
+            };
+
+            drawHeader();
+
+            const stats = [
+                ['Acessos', data.summary.total || 0],
+                ['Sites', data.summary.unique_sites || 0],
+                ['IPs', data.summary.unique_ips || 0],
+                ['Bloqueados', data.summary.blocked || 0],
+                ['Domínios técnicos', data.summary.unique_technical_domains || 0],
+            ];
+            let sx = M;
+            for (const [label, val] of stats) {
+                const cw = W / stats.length - 4;
+                doc.roundedRect(sx, y, cw, 38, 4).fillAndStroke('#f8fafc', '#e2e8f0');
+                doc.fillColor('#64748b').font('Helvetica').fontSize(7).text(String(label).toUpperCase(), sx + 8, y + 7, { width: cw - 16 });
+                doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(14).text(String(val), sx + 8, y + 18, { width: cw - 16, lineBreak: false });
+                sx += cw + 4;
+            }
+            y += 48;
+
+            const filterStr = Object.entries(filters)
+                .filter(([, v]) => v !== undefined && v !== null && String(v) !== '' && !['page', 'limit'].includes(String(v)))
+                .map(([k, v]) => `${k}: ${v}`)
+                .join('   |   ') || 'período: 24h';
+            doc.fillColor('#475569').font('Helvetica').fontSize(8)
+                .text(`Filtros: ${filterStr}`, M, y, { width: W, lineBreak: false });
+            y += 18;
+
+            let cols = drawTableHeader();
+            let row = 0;
+            for (const ev of data.rows) {
+                if (y > 522) {
+                    drawFooter(pageNum);
+                    doc.addPage({ size: 'A4', layout: 'landscape', margin: 36 });
+                    pageNum++;
+                    y = 36;
+                    drawHeader();
+                    cols = drawTableHeader();
+                }
+
+                const blocked = Number(ev.blocked || 0);
+                const allowed = Number(ev.allowed || 0);
+                const status = blocked > 0 && allowed > 0 ? `${blocked} bloq. / ${allowed} lib.`
+                    : blocked > 0 ? `${blocked} bloqueado(s)`
+                        : 'Liberado';
+                const technical = Array.isArray(ev.raw_domains) && ev.raw_domains.length
+                    ? `${Number(ev.technical_domains || 0)}: ${ev.raw_domains.join(', ')}`
+                    : `${Number(ev.technical_domains || 0)} domínio(s)`;
+                const bg = row % 2 === 0 ? '#f8fafc' : '#ffffff';
+                doc.rect(M, y, W, 18).fillColor(bg).fill();
+                doc.rect(M, y, 3, 18).fillColor(blocked > 0 ? '#ef4444' : '#22c55e').fill();
+
+                const cells = [
+                    `${ev.client_ip || '—'} • ${ev.identity_label || 'Sem identidade'}`,
+                    String(ev.site_domain || '—'),
+                    String(ev.total || 0),
+                    status,
+                    fmt(ev.first_seen),
+                    fmt(ev.last_seen),
+                    technical,
+                ];
+
+                let cx = M;
+                for (let i = 0; i < cols.length; i++) {
+                    const color = i === 3 ? (blocked > 0 ? '#dc2626' : '#16a34a') : '#1e293b';
+                    doc.fillColor(color).font(i === 3 ? 'Helvetica-Bold' : 'Helvetica').fontSize(7)
+                        .text(cells[i], cx + 4, y + 5, { width: cols[i].w - 8, ellipsis: true, lineBreak: false });
+                    cx += cols[i].w;
+                }
+
+                y += 18;
+                row++;
+            }
+
+            if (!data.rows.length) {
+                doc.fillColor('#64748b').font('Helvetica').fontSize(10)
+                    .text('Nenhum registro encontrado para os filtros aplicados.', M, y + 16, { width: W, align: 'center' });
+            }
+
+            drawFooter(pageNum);
+            doc.end();
+        });
+    },
+
     async exportNavigationPdf(filters: NavFilters) {
         const data = await this.getNavigation({ ...filters, limit: 1000, page: 1 });
         return new Promise<Buffer>((resolve, reject) => {
@@ -1281,14 +1615,14 @@ export const reportsService = {
             };
 
             const drawFooter = (pn: number, _total: number) => {
-                doc.moveTo(M, 543).lineTo(M + W, 543).strokeColor('#e2e8f0').stroke();
+                const footerY = doc.page.height - 64;
+                doc.moveTo(M, footerY).lineTo(M + W, footerY).strokeColor('#e2e8f0').stroke();
                 doc.fillColor('#64748b').font('Helvetica').fontSize(7)
-                    .text(`Gerado em ${fmt(new Date())} • Documento de uso institucional restrito`, M, 549, { width: 370 });
-                try { doc.image(LOGO_PATH, M + W - 132, 540, { width: 46, height: 20 }); } catch (_) {}
+                    .text(`Gerado em ${fmt(new Date())} • Documento de uso institucional restrito`, M, footerY + 6, { width: 370, lineBreak: false });
                 doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7)
-                    .text('JMB Tecnologia', M + W - 82, 546, { width: 82, align: 'right' });
+                    .text('JMB Tecnologia', M + W - 82, footerY + 7, { width: 82, align: 'right', lineBreak: false });
                 doc.fillColor('#64748b').font('Helvetica').fontSize(6.5)
-                    .text(`Página ${pn}`, M + W - 82, 557, { width: 82, align: 'right' });
+                    .text(`Página ${pn}`, M + W - 82, footerY + 18, { width: 82, align: 'right', lineBreak: false });
             };
 
             drawHeader();
@@ -1299,7 +1633,7 @@ export const reportsService = {
                 ['Bloqueados', data.summary.blocked],
                 ['Liberados', data.summary.allowed],
                 ['IPs únicos', data.summary.unique_ips],
-                ['Domínios únicos', data.summary.unique_domains],
+                ['Sites únicos', data.summary.unique_sites ?? data.summary.unique_domains],
             ];
             let sx = M;
             for (const [label, val] of stats) {
@@ -1324,7 +1658,7 @@ export const reportsService = {
                 { label: 'Data / Hora', w: 108 },
                 { label: 'Origem', w: 164 },
                 { label: 'VLAN', w: 48 },
-                { label: 'Domínio consultado', w: 170 },
+                { label: 'Site principal', w: 170 },
                 { label: 'Tipo', w: 44 },
                 { label: 'Ação', w: 68 },
                 { label: 'Resposta DNS', w: 72 },
@@ -1364,7 +1698,7 @@ export const reportsService = {
                     fmt(ev.occurred_at),
                     `${ev.client_ip || '—'} ${ev.identity_display_user || ev.identity_user || ev.identity_computer ? '• ' + (ev.identity_display_user || ev.identity_user || ev.identity_computer) : ''}`,
                     String(ev.vlan_id ?? '—'),
-                    String(ev.domain || '—').substring(0, 55),
+                    String(ev.site_domain || ev.domain || '—').substring(0, 55),
                     String(ev.query_type || '—'),
                     isBlock ? 'BLOQUEADO' : (ev.action === 'bypassed' ? 'BYPASS' : 'LIBERADO'),
                     String(ev.response_code || '—'),
@@ -1419,14 +1753,14 @@ export const reportsService = {
             };
 
             const drawFooter = (pn: number) => {
-                doc.moveTo(M, 775).lineTo(M + W, 775).strokeColor('#e2e8f0').stroke();
+                const footerY = doc.page.height - 76;
+                doc.moveTo(M, footerY).lineTo(M + W, footerY).strokeColor('#e2e8f0').stroke();
                 doc.fillColor('#64748b').font('Helvetica').fontSize(7)
-                    .text(`Gerado em ${fmt(new Date())} • Documento de uso institucional restrito`, M, 780, { width: 300 });
-                try { doc.image(LOGO_PATH, M + W - 132, 772, { width: 46, height: 20 }); } catch (_) {}
+                    .text(`Gerado em ${fmt(new Date())} • Documento de uso institucional restrito`, M, footerY + 6, { width: 300, lineBreak: false });
                 doc.fillColor('#334155').font('Helvetica-Bold').fontSize(7)
-                    .text('JMB Tecnologia', M + W - 82, 777, { width: 82, align: 'right' });
+                    .text('JMB Tecnologia', M + W - 82, footerY + 7, { width: 82, align: 'right', lineBreak: false });
                 doc.fillColor('#64748b').font('Helvetica').fontSize(6.5)
-                    .text(`Página ${pn}`, M + W - 82, 787, { width: 82, align: 'right' });
+                    .text(`Página ${pn}`, M + W - 82, footerY + 18, { width: 82, align: 'right', lineBreak: false });
             };
 
             drawHeader();

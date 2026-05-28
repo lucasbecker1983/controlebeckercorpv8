@@ -52,4 +52,7 @@ export const env = {
     hotspotSmsApiKey: process.env.HOTSPOT_SMS_API_KEY || '',
     hotspotSmsDeviceId: process.env.HOTSPOT_SMS_DEVICE_ID || '',
     hotspotOtpMinutes: toNumber(process.env.HOTSPOT_OTP_MINUTES, 5),
+    aiProvider: process.env.AI_PROVIDER || 'local',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    geminiApiKey: process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '',
 };

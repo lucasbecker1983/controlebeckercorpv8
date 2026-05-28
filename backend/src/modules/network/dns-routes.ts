@@ -11,6 +11,11 @@ const respondDnsError = (res: any, area: string, error: unknown) => {
     return res.status(500).json({ error: `Falha ao processar ${area}.` });
 };
 
+const splitForwardAddrs = (value: string) => value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 const syncUnboundConfig = async () => {
     try {
         const res = await pool.query("SELECT * FROM net_dns_rules ORDER BY id ASC");
@@ -25,9 +30,13 @@ const syncUnboundConfig = async () => {
                 serverBlock += `    local-data: "${r.domain} A ${r.target_ip}"\n`;
                 hasServerRules = true;
             } else if (r.type === 'FWD') {
+                const forwardAddrs = splitForwardAddrs(String(r.target_ip || ''));
+                if (!forwardAddrs.length) return;
                 forwardBlocks += `\nforward-zone:\n`;
                 forwardBlocks += `    name: "${r.domain}"\n`;
-                forwardBlocks += `    forward-addr: ${r.target_ip}\n`;
+                forwardAddrs.forEach((addr) => {
+                    forwardBlocks += `    forward-addr: ${addr}\n`;
+                });
             }
         });
 

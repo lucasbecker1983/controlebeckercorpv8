@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan, Eraser, WifiOff, LockKeyhole, Wrench } from 'lucide-react';
+import { ShieldAlert, Router, Database, Server, Radio, Zap, CheckCircle, Activity, LayoutGrid, Play, Square, RefreshCw, ShieldCheck, Bug, ScanSearch, X, Archive, Trash2, ShieldBan, Eraser, WifiOff, LockKeyhole, Wrench, BrainCircuit, AlertTriangle, ClipboardCheck, SearchCheck, BookOpenCheck, Send, FileSearch } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
@@ -31,15 +31,27 @@ export default function ControlPage() {
     const [clamavError, setClamavError] = useState('');
     const [emergencyError, setEmergencyError] = useState('');
     const [totalBlockError, setTotalBlockError] = useState('');
+    const [aiInsights, setAiInsights] = useState(null);
+    const [aiInsightsError, setAiInsightsError] = useState('');
+    const [selectedInsight, setSelectedInsight] = useState(null);
+    const [aiReanalysisLoading, setAiReanalysisLoading] = useState(false);
+    const [aiReanalysisError, setAiReanalysisError] = useState('');
+    const [ragStatus, setRagStatus] = useState(null);
+    const [ragQuestion, setRagQuestion] = useState('Como está a observabilidade do SGCG?');
+    const [ragAnswer, setRagAnswer] = useState(null);
+    const [ragLoading, setRagLoading] = useState(false);
+    const [ragError, setRagError] = useState('');
     const [emergencyDialog, setEmergencyDialog] = useState({ open: false, mode: 'activate', vlan: null });
     const [emergencyForm, setEmergencyForm] = useState({ duration_minutes: '30', reason: '' });
     const [totalBlockDialog, setTotalBlockDialog] = useState({ open: false, mode: 'activate', vlan: null });
     const [totalBlockForm, setTotalBlockForm] = useState({ reason: '' });
     
     const loadData = async () => {
-        const [servicesRes, clamavRes] = await Promise.allSettled([
+        const [servicesRes, clamavRes, aiInsightsRes, ragStatusRes] = await Promise.allSettled([
             api.get('/api/control/services'),
             api.get('/api/control/clamav'),
+            api.get('/api/control/ai-insights'),
+            api.get('/api/control/ai-rag/status'),
         ]);
         const emergencyRes = await api.get('/api/bloqueios-liberacoes/emergency-vlan-bypass').catch((error) => error);
         const totalBlockRes = await api.get('/api/bloqueios-liberacoes/total-vlan-blocks').catch((error) => error);
@@ -58,6 +70,22 @@ export default function ControlPage() {
         } else {
             setClamav(null);
             setClamavError('Falha ao carregar a telemetria do ClamAV.');
+        }
+
+        if (aiInsightsRes.status === 'fulfilled') {
+            setAiInsights(aiInsightsRes.value.data || null);
+            setAiInsightsError('');
+        } else {
+            setAiInsights(null);
+            setAiInsightsError('Falha ao gerar os insights de IA operacional.');
+        }
+
+        if (ragStatusRes.status === 'fulfilled') {
+            setRagStatus(ragStatusRes.value.data || null);
+            setRagError('');
+        } else {
+            setRagStatus(null);
+            setRagError('Falha ao carregar o estado do RAG operacional.');
         }
 
         if (emergencyRes?.data && Array.isArray(emergencyRes.data)) {
@@ -232,6 +260,80 @@ export default function ControlPage() {
     };
 
     const failed = services.filter(s => s.status !== 'active');
+    const insightTone = (severity) => {
+        if (severity === 'critical') return 'danger';
+        if (severity === 'warning') return 'warning';
+        if (severity === 'success') return 'success';
+        return 'primary';
+    };
+    const insightIcon = (severity) => {
+        if (severity === 'critical' || severity === 'warning') return AlertTriangle;
+        if (severity === 'success') return ClipboardCheck;
+        return SearchCheck;
+    };
+    const handleInsightAction = (insight) => {
+        setSelectedInsight(insight);
+        setAiReanalysisError('');
+        const targetByInsight = {
+            'daemon-health': 'control-daemons',
+            'exception-state': 'control-vlan-exceptions',
+            'malware-pending': 'control-clamav',
+        };
+        const targetId = targetByInsight[insight?.id];
+        if (targetId) {
+            window.setTimeout(() => {
+                document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 120);
+        }
+    };
+    const reanalyzeSelectedInsight = async () => {
+        if (!selectedInsight) return;
+        setAiReanalysisLoading(true);
+        setAiReanalysisError('');
+        try {
+            const response = await api.get('/api/control/ai-insights');
+            const nextPayload = response.data || null;
+            const nextInsights = Array.isArray(nextPayload?.insights) ? nextPayload.insights : [];
+            const nextSelected = nextInsights.find((item) => item.id === selectedInsight.id) || nextInsights[0] || selectedInsight;
+            setAiInsights(nextPayload);
+            setSelectedInsight(nextSelected);
+            setAiInsightsError('');
+        } catch (error) {
+            setAiReanalysisError(error?.response?.data?.error || 'Falha ao reanalisar os sinais agora.');
+        } finally {
+            setAiReanalysisLoading(false);
+        }
+    };
+    const askRag = async () => {
+        const question = String(ragQuestion || '').trim();
+        if (question.length < 3) {
+            setRagError('Digite uma pergunta operacional para consultar o RAG.');
+            return;
+        }
+        setRagLoading(true);
+        setRagError('');
+        try {
+            const response = await api.post('/api/control/ai-rag/ask', { question });
+            setRagAnswer(response.data || null);
+        } catch (error) {
+            setRagAnswer(null);
+            setRagError(error?.response?.data?.error || 'Falha ao consultar o RAG operacional.');
+        } finally {
+            setRagLoading(false);
+        }
+    };
+    const reindexRag = async () => {
+        setRagLoading(true);
+        setRagError('');
+        try {
+            const response = await api.post('/api/control/ai-rag/reindex');
+            setRagStatus(response.data || null);
+        } catch (error) {
+            setRagError(error?.response?.data?.error || 'Falha ao reindexar a base RAG.');
+        } finally {
+            setRagLoading(false);
+        }
+    };
 
     return (
         <div className="space-y-8 pb-10 animate-in fade-in duration-500">
@@ -262,6 +364,186 @@ export default function ControlPage() {
                         {failed.length > 0 ? `Os seguintes serviços falharam: ${failed.map(s=>s.label || s.name).join(', ')}. Clique neles abaixo para intervir.` : 'Os daemons vitais permanecem estáveis neste momento.'}
                     </p>
                 </div>
+            </Surface>
+
+            <Surface id="control-ai-insights" className="p-6 space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 text-[11px] font-semibold tracking-tight text-primary">
+                            <BrainCircuit size={15} />
+                            IA em Operações Técnicas
+                        </div>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Insights operacionais acionáveis</h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/66">
+                            Leitura somente consulta dos sinais do gateway, cruzando daemons, NAT, bloqueios, exceções de VLAN, Hotspot e ClamAV para orientar investigação sem aplicar mudanças automaticamente.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <StatusChip label={aiInsights?.mode === 'read-only' ? 'Somente leitura' : 'Sem automação'} tone="primary" />
+                        <StatusChip label={`${aiInsights?.summary?.critical || 0} crítico(s)`} tone={(aiInsights?.summary?.critical || 0) ? 'danger' : 'success'} />
+                        <StatusChip label={`${aiInsights?.summary?.warning || 0} atenção`} tone={(aiInsights?.summary?.warning || 0) ? 'warning' : 'success'} />
+                        <ActionButton tone="ghost" icon={RefreshCw} onClick={loadData}>Atualizar</ActionButton>
+                    </div>
+                </div>
+
+                {aiInsightsError ? (
+                    <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                        {aiInsightsError}
+                    </div>
+                ) : null}
+
+                <div className="grid gap-3 lg:grid-cols-4">
+                    <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                        <div className="text-[11px] font-semibold text-on-surface/58">NAT runtime</div>
+                        <div className="mt-2 text-2xl font-black text-on-surface">{aiInsights?.summary?.nat_rules ?? '—'}</div>
+                        <div className="mt-1 text-xs text-on-surface/62">{aiInsights?.summary?.nat_duplicates ?? '—'} duplicidade(s)</div>
+                    </div>
+                    <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                        <div className="text-[11px] font-semibold text-on-surface/58">Bloqueios 24h</div>
+                        <div className="mt-2 text-2xl font-black text-on-surface">{aiInsights?.summary?.blocked_24h ?? '—'}</div>
+                        <div className="mt-1 text-xs text-on-surface/62">{aiInsights?.summary?.blocked_5m ?? '—'} nos últimos 5 min</div>
+                    </div>
+                    <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                        <div className="text-[11px] font-semibold text-on-surface/58">Serviços lidos</div>
+                        <div className="mt-2 text-2xl font-black text-on-surface">{aiInsights?.summary?.services_checked ?? services.length}</div>
+                        <div className="mt-1 text-xs text-on-surface/62">systemd + telemetria local</div>
+                    </div>
+                    <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                        <div className="text-[11px] font-semibold text-on-surface/58">Última análise</div>
+                        <div className="mt-2 text-sm font-black text-on-surface">{aiInsights?.generated_at ? new Date(aiInsights.generated_at).toLocaleString('pt-BR') : 'Aguardando'}</div>
+                        <div className="mt-1 text-xs text-on-surface/62">{aiInsights?.model || 'SGCG IA operacional'}</div>
+                    </div>
+                </div>
+
+                <div className="grid gap-3 xl:grid-cols-2">
+                    {(aiInsights?.insights || []).map((insight) => {
+                        const Icon = insightIcon(insight.severity);
+                        return (
+                            <div key={insight.id} className="rounded-[22px] border border-outline/12 bg-surface-high/58 p-5">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                    <div className="flex min-w-0 items-start gap-3">
+                                        <div className={`mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border ${insight.severity === 'critical' ? 'border-danger/20 bg-danger/10 text-danger' : insight.severity === 'warning' ? 'border-orange-500/20 bg-orange-500/12 text-orange-700 dark:text-orange-300' : insight.severity === 'success' ? 'border-info/18 bg-info/10 text-info' : 'border-primary/16 bg-primary/12 text-primary'}`}>
+                                            <Icon size={18} />
+                                        </div>
+                                        <div className="min-w-0">
+                                            <h4 className="text-base font-black leading-tight text-on-surface">{insight.title}</h4>
+                                            <p className="mt-2 text-sm leading-6 text-on-surface/66">{insight.probable_cause}</p>
+                                        </div>
+                                    </div>
+                                    <StatusChip label={insight.severity} tone={insightTone(insight.severity)} />
+                                </div>
+
+                                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                                    <div>
+                                        <div className="text-[11px] font-bold uppercase text-on-surface/50">Impacto</div>
+                                        <p className="mt-1 text-sm leading-6 text-on-surface/70">{insight.impact}</p>
+                                    </div>
+                                    <div>
+                                        <div className="text-[11px] font-bold uppercase text-on-surface/50">Ação recomendada</div>
+                                        <p className="mt-1 text-sm leading-6 text-on-surface/70">{insight.recommendation}</p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 space-y-2">
+                                    {(insight.evidence || []).slice(0, 4).map((item, index) => (
+                                        <div key={`${insight.id}-${index}`} className="rounded-2xl border border-outline/10 bg-surface/70 px-3 py-2 text-xs font-medium leading-5 text-on-surface/68">
+                                            {item}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="mt-4 flex justify-end">
+                                    <ActionButton tone="ghost" icon={SearchCheck} onClick={() => handleInsightAction(insight)}>
+                                        {insight.action}
+                                    </ActionButton>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </Surface>
+
+            <Surface id="control-rag" className="p-6 space-y-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                        <div className="flex items-center gap-2 text-[11px] font-semibold tracking-tight text-primary">
+                            <BookOpenCheck size={15} />
+                            RAG operacional
+                        </div>
+                        <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Base de conhecimento com fontes</h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/66">
+                            Consulta local sobre documentação, continuidade, configuração Prometheus/Grafana e sinais atuais do gateway. A resposta vem com fontes para auditoria.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                        <StatusChip label={`${ragStatus?.chunks ?? '—'} trechos`} tone="primary" />
+                        <StatusChip label={`${ragStatus?.sources ?? '—'} fontes`} tone="primary" />
+                        <StatusChip label={`Prometheus ${ragStatus?.runtime?.prometheus_ready ? 'pronto' : 'verificar'}`} tone={ragStatus?.runtime?.prometheus_ready ? 'success' : 'warning'} />
+                        <ActionButton tone="ghost" icon={RefreshCw} disabled={ragLoading} onClick={reindexRag}>
+                            {ragLoading ? 'Atualizando...' : 'Reindexar'}
+                        </ActionButton>
+                    </div>
+                </div>
+
+                {ragError ? (
+                    <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                        {ragError}
+                    </div>
+                ) : null}
+
+                <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+                    <textarea
+                        value={ragQuestion}
+                        onChange={(event) => setRagQuestion(event.target.value)}
+                        rows={3}
+                        placeholder="Pergunte sobre VLAN, Prometheus, Grafana, Hotspot, bloqueios, DNS, QoS ou algum sintoma operacional."
+                        className="min-h-[92px] w-full rounded-2xl border border-outline/16 bg-surface px-4 py-3 text-sm leading-6 text-on-surface focus:border-primary/45 focus:outline-none"
+                    />
+                    <div className="flex items-end">
+                        <ActionButton tone="primary" icon={Send} disabled={ragLoading} onClick={askRag}>
+                            {ragLoading ? 'Consultando...' : 'Perguntar'}
+                        </ActionButton>
+                    </div>
+                </div>
+
+                {ragAnswer ? (
+                    <div className="grid gap-4 xl:grid-cols-[1fr_0.85fr]">
+                        <Surface stripe={false} className="p-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <StatusChip label={ragAnswer.mode || 'RAG local'} tone="primary" />
+                                <StatusChip label={ragAnswer.external_ai_used ? `IA externa: ${ragAnswer.model || 'Gemini'}` : 'IA externa: fallback local'} tone={ragAnswer.external_ai_used ? 'success' : 'warning'} />
+                                <StatusChip label={`Confiança ${ragAnswer.confidence || '—'}`} tone={ragAnswer.confidence === 'high' ? 'success' : ragAnswer.confidence === 'low' ? 'warning' : 'primary'} />
+                                <StatusChip label={`${ragAnswer.runtime?.prometheus_targets_up ?? 0} alvos Prometheus up`} tone="success" />
+                            </div>
+                            {ragAnswer.external_ai_error ? (
+                                <div className="mt-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                                    Gemini indisponível nesta consulta: {ragAnswer.external_ai_error}. A resposta abaixo veio do RAG local.
+                                </div>
+                            ) : null}
+                            <div className="mt-4 whitespace-pre-wrap text-sm leading-7 text-on-surface/74">
+                                {ragAnswer.answer}
+                            </div>
+                        </Surface>
+
+                        <Surface stripe={false} className="p-4">
+                            <div className="flex items-center gap-2 text-sm font-black text-on-surface">
+                                <FileSearch size={18} className="text-primary" />
+                                Fontes recuperadas
+                            </div>
+                            <div className="mt-3 space-y-3">
+                                {(ragAnswer.sources || []).map((source, index) => (
+                                    <div key={`${source.source}-${index}`} className="rounded-2xl border border-outline/12 bg-surface-high/60 p-3">
+                                        <div className="text-xs font-black text-on-surface">{source.title || 'Fonte operacional'}</div>
+                                        <div className="mt-1 break-all text-[11px] font-semibold text-primary">
+                                            {source.source}:{source.line_start}-{source.line_end}
+                                        </div>
+                                        <p className="mt-2 line-clamp-4 text-xs leading-5 text-on-surface/64">{source.excerpt}</p>
+                                    </div>
+                                ))}
+                            </div>
+                        </Surface>
+                    </div>
+                ) : null}
             </Surface>
 
             {/* AÇÕES TÁTICAS GLOBAIS */}
@@ -299,7 +581,7 @@ export default function ControlPage() {
                 </div>
             </div>
 
-            <Surface className="p-6 space-y-5">
+            <Surface id="control-vlan-exceptions" className="p-6 space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
                         <div className="text-[11px] font-semibold tracking-tight text-primary">Resposta emergencial</div>
@@ -439,7 +721,7 @@ export default function ControlPage() {
                 </div>
             </Surface>
 
-            <Surface className="p-6 space-y-5">
+            <Surface id="control-clamav" className="p-6 space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
                     <div>
                         <div className="text-[11px] font-semibold tracking-tight text-primary">Proteção antimalware</div>
@@ -619,7 +901,7 @@ export default function ControlPage() {
             </Surface>
 
             {/* DAEMONS INTERATIVOS */}
-            <div>
+            <div id="control-daemons">
                 <h3 className="text-xl font-bold text-on-surface mb-4 mt-8 flex items-center gap-2"><Server className="text-primary"/> Daemons do Sistema (Clique para gerir)</h3>
                 {servicesError ? (
                     <div className="mb-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
@@ -652,6 +934,81 @@ export default function ControlPage() {
             </div>
 
             <AnimatePresence>
+                {selectedInsight && (
+                    <DialogShell
+                        open={Boolean(selectedInsight)}
+                        title={selectedInsight.id === 'steady-state' ? 'Observação técnica ativa' : selectedInsight.action}
+                        subtitle={selectedInsight.title}
+                        onClose={() => setSelectedInsight(null)}
+                        size="max-w-3xl"
+                    >
+                        <div className="space-y-5">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <StatusChip label={selectedInsight.severity} tone={insightTone(selectedInsight.severity)} />
+                                <StatusChip label={aiInsights?.mode === 'read-only' ? 'Somente leitura' : 'Diagnóstico'} tone="primary" />
+                                <StatusChip label={aiInsights?.generated_at ? new Date(aiInsights.generated_at).toLocaleString('pt-BR') : 'Sem horário'} tone="neutral" />
+                                {aiReanalysisLoading ? <StatusChip label="Reanalisando..." tone="warning" /> : null}
+                            </div>
+
+                            {aiReanalysisError ? (
+                                <div className="rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-sm text-danger">
+                                    {aiReanalysisError}
+                                </div>
+                            ) : null}
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                                <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                                    <div className="text-[11px] font-bold uppercase text-on-surface/50">Causa provável</div>
+                                    <p className="mt-2 text-sm leading-6 text-on-surface/72">{selectedInsight.probable_cause}</p>
+                                </div>
+                                <div className="rounded-[20px] border border-outline/12 bg-surface-high/60 p-4">
+                                    <div className="text-[11px] font-bold uppercase text-on-surface/50">Impacto</div>
+                                    <p className="mt-2 text-sm leading-6 text-on-surface/72">{selectedInsight.impact}</p>
+                                </div>
+                            </div>
+
+                            <div>
+                                <div className="text-sm font-black text-on-surface">Evidências lidas agora</div>
+                                <div className="mt-3 space-y-2">
+                                    {(selectedInsight.evidence || []).map((item, index) => (
+                                        <div key={`selected-${selectedInsight.id}-${index}`} className="rounded-2xl border border-outline/10 bg-surface/70 px-3 py-2 text-sm font-medium leading-6 text-on-surface/72">
+                                            {item}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="rounded-[20px] border border-primary/14 bg-primary/8 p-4">
+                                <div className="text-sm font-black text-on-surface">Próximo passo operacional</div>
+                                <p className="mt-2 text-sm leading-6 text-on-surface/72">{selectedInsight.recommendation}</p>
+                            </div>
+
+                            {selectedInsight.id === 'steady-state' ? (
+                                <div className="rounded-[20px] border border-info/18 bg-info/10 p-4">
+                                    <div className="text-sm font-black text-on-surface">Para que serve esta observação</div>
+                                    <p className="mt-2 text-sm leading-6 text-on-surface/72">
+                                        Ela deixa registrado que a IA conferiu os sinais básicos e não achou anomalia crítica naquele instante. Não libera mudança, não reinicia serviço e não substitui validação em caso de reclamação de usuário; serve como ponto de controle para continuar monitorando sem inventar incidente.
+                                    </p>
+                                </div>
+                            ) : null}
+
+                            <div className="flex flex-wrap justify-end gap-3">
+                                <ActionButton
+                                    tone="ghost"
+                                    icon={RefreshCw}
+                                    disabled={aiReanalysisLoading}
+                                    onClick={reanalyzeSelectedInsight}
+                                >
+                                    {aiReanalysisLoading ? 'Reanalisando...' : 'Reanalisar sinais'}
+                                </ActionButton>
+                                <ActionButton tone="primary" icon={ClipboardCheck} onClick={() => setSelectedInsight(null)}>
+                                    Entendido
+                                </ActionButton>
+                            </div>
+                        </div>
+                    </DialogShell>
+                )}
+
                 {emergencyDialog.open && emergencyDialog.vlan && (
                     <DialogShell
                         open={Boolean(emergencyDialog.open)}

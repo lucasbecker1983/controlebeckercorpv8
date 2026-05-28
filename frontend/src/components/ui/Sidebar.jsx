@@ -7,6 +7,19 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose })
   const userRole = user?.role || user?.perfil || 'Operador institucional';
   const userInitial = String(userLabel).trim().charAt(0).toUpperCase() || 'U';
   const currentUrl = `${location.pathname}${location.search}`;
+  const isItemActive = (item) => {
+    const itemPath = item.path || '';
+    const matchPaths = [itemPath, ...(item.matchPaths || [])].filter(Boolean);
+
+    return matchPaths.some((path) => {
+      if (path === '/') return location.pathname === '/';
+      if (path.includes('?')) {
+        const [pathname] = path.split('?');
+        return currentUrl === path || location.pathname === pathname;
+      }
+      return location.pathname === path || location.pathname.startsWith(`${path}/`);
+    });
+  };
   const sectionToneMap = {
     governance: {
       pill: 'border-primary/16 bg-primary/10 text-primary',
@@ -61,11 +74,7 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose })
                 </div>
                 <div className="space-y-1">
                   {group.items.map((item) => {
-                    const active = item.path === '/'
-                      ? location.pathname === '/'
-                      : item.path.includes('?')
-                        ? currentUrl === item.path || location.pathname === item.path.split('?')[0]
-                        : location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+                    const active = isItemActive(item);
                     const Icon = item.icon;
 
                     return (

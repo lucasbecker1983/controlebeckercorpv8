@@ -112,7 +112,7 @@ const normalizeIpv4Cidrs = (entries: string[]) => {
 
 const sha256 = (content: string) => crypto.createHash('sha256').update(content).digest('hex');
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const UNBOUND_TAGGED_RPZ_SUSPENDED = true;
+const UNBOUND_TAGGED_RPZ_SUSPENDED = false;
 const UNBOUND_TAGGED_RPZ_SUSPENDED_MARKER = '# SGCG safe-mode: tagged RPZ suspended to preserve recursive DNS stability.';
 const UNBOUND_GLOBAL_RPZ_ACTIVE_MARKER = '# SGCG safe-mode: global RPZ remains active while tagged VLAN/VIP RPZ stays suspended.';
 const urlLiteralToRegex = (value: string) => {

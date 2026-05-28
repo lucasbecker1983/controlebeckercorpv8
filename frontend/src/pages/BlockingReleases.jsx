@@ -93,6 +93,7 @@ const CONTINGENCY_PROVIDERS = [
   { key: 'google', label: 'Google DNS' },
   { key: 'cloudflare', label: 'Cloudflare' },
   { key: 'quad9', label: 'Quad9' },
+  { key: 'opendns', label: 'OpenDNS' },
 ];
 
 const PONTORH_OPENDNS_RESOLVERS = ['208.67.222.222', '208.67.220.220'];
@@ -293,7 +294,7 @@ function DnsIgnoredTab() {
 
 const VIP_RUNTIME_BADGES = [
   { label: 'Firewall livre', tone: 'success' },
-  { label: 'DNS sem RPZ', tone: 'warning' },
+  { label: 'DNS auditável', tone: 'warning' },
   { label: 'Sem proxy', tone: 'neutral' },
 ];
 
@@ -364,11 +365,16 @@ function policyTypeTone(type) {
   return type === 'allow' ? 'success' : 'danger';
 }
 
-function isPornographyPolicyDraft(form) {
-  const text = [form?.name, form?.description, form?.category]
-    .map((value) => String(value || '').toLocaleLowerCase('pt-BR'))
+function textMentionsPornography(...values) {
+  const text = values
+    .map((value) => normalizeText(value))
+    .filter(Boolean)
     .join(' ');
-  return form?.policy_type === 'block' && /pornograf|adulto|conteudo-adulto|conteúdo-adulto/.test(text);
+  return /pornograf|adulto|conteudo-adulto|conteúdo-adulto/.test(text);
+}
+
+function isPornographyPolicyDraft(form) {
+  return form?.policy_type === 'block' && textMentionsPornography(form?.name, form?.description, form?.category);
 }
 
 function actionTone(action) {
@@ -982,7 +988,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
                   <option value="allow">Liberar</option>
                   <option value="block">Bloquear</option>
                 </SelectInput>
-                <p className="text-xs leading-5 text-on-surface/58">`Liberar` cria exceção positiva. `Bloquear` força bloqueio mesmo que o domínio seja recorrente.</p>
+                <p className="text-xs leading-5 text-on-surface/58">`Liberar` cria exceção positiva. Pornografia nunca pode ser liberada; apenas bloqueada.</p>
               </label>
 
               <label className="flex flex-col gap-2.5">
@@ -1243,6 +1249,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
     expires_at: '',
     revoked_by: '',
     revoked_at: '',
+    dns_audit_enabled: true,
   });
 
   useEffect(() => {
@@ -1263,6 +1270,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
       expires_at: governance.expires_at || '',
       revoked_by: governance.revoked_by || '',
       revoked_at: governance.revoked_at || '',
+      dns_audit_enabled: item?.dns_audit_enabled !== false,
     });
   }, [open, item]);
 
@@ -1270,7 +1278,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
     <DialogShell
       open={open}
       title={item ? 'Editar VIP' : 'Adicionar VIP'}
-      subtitle="VIP é bypass total real: sai direto pelo firewall e pode usar qualquer DNS configurado na máquina, público, externo ou Unbound recursivo local, sem bloqueios de RPZ, proxy ou interceptação."
+      subtitle="VIP mantém navegação livre, sem RPZ, ACL ou proxy, e registra DNS clássico quando a auditoria estiver ativa."
       onClose={onClose}
       size="max-w-3xl"
       footer={(
@@ -1299,6 +1307,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
               expires_at: form.expires_at || null,
               revoked_by: form.revoked_by.trim(),
               revoked_at: form.revoked_at || null,
+              dns_audit_enabled: form.dns_audit_enabled,
             })}
             disabled={saving || !form.ip.trim()}
           >
@@ -1318,7 +1327,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
           <div>
             <div className="text-sm font-black text-on-surface">Exceção forte de navegação</div>
             <p className="mt-1 text-sm leading-5 text-on-surface/62">
-              O IP fica fora dos bloqueios comuns e a sincronização técnica ocorre ao salvar.
+              O IP fica fora dos bloqueios comuns; consultas DNS clássicas podem ser registradas como bypass para evidência.
             </p>
           </div>
           <div className="flex flex-wrap gap-2 sm:justify-end">
@@ -1338,6 +1347,20 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
         <label className="space-y-2">
           <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} placeholder="Justificativa operacional do VIP." />
+        </label>
+        <label className="flex items-start gap-3 rounded-2xl border border-outline/12 bg-surface-high/46 p-4">
+          <input
+            type="checkbox"
+            checked={form.dns_audit_enabled}
+            onChange={(event) => setForm((current) => ({ ...current, dns_audit_enabled: event.target.checked }))}
+            className="mt-1 h-4 w-4 accent-warning"
+          />
+          <span>
+            <span className="block text-sm font-black text-on-surface">Auditoria DNS do VIP</span>
+            <span className="mt-1 block text-sm leading-5 text-on-surface/62">
+              Redireciona DNS clássico para o resolvedor limpo auditável, sem aplicar bloqueio.
+            </span>
+          </span>
         </label>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
@@ -1516,7 +1539,7 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
   const [form, setForm] = useState({
     scope_type: 'global',
     vlan_ids: [],
-    providers: ['google', 'cloudflare', 'quad9'],
+    providers: ['google', 'cloudflare', 'quad9', 'opendns'],
     duration_minutes: '15',
     reason: '',
     legal_basis: '',
@@ -1532,7 +1555,7 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
       ...current,
       scope_type: mode === 'renew' ? 'global' : 'global',
       vlan_ids: [],
-      providers: ['google', 'cloudflare', 'quad9'],
+      providers: ['google', 'cloudflare', 'quad9', 'opendns'],
       duration_minutes: '15',
       reason: '',
       legal_basis: '',
@@ -1744,8 +1767,10 @@ const QUICK_VLAN_CATEGORIES = [
   },
 ];
 
+const QUICK_VLAN_ACTION_CATEGORIES = QUICK_VLAN_CATEGORIES.filter((category) => category.key !== 'pornografia');
+const BLOCK_ONLY_CATEGORIES = QUICK_VLAN_CATEGORIES.filter((category) => category.key === 'pornografia');
 const SCHEDULE_CATEGORIES = QUICK_VLAN_CATEGORIES
-  .filter((category) => ['youtube', 'redes_sociais', 'pornografia'].includes(category.key))
+  .filter((category) => ['youtube', 'redes_sociais'].includes(category.key))
   .map((category) => category.label);
 
 const WEEKDAY_OPTIONS = [
@@ -1784,7 +1809,7 @@ const SPORADIC_PROGRESS_STEPS = [
 const VIP_PROGRESS_STEPS = [
   'Salvando cadastro VIP',
   'Reforçando bypass total do IP',
-  'Atualizando Unbound recursivo e proxy',
+  'Atualizando DNS limpo auditável e proxy',
   'Recarregando enforcement',
   'Atualizando a tela',
 ];
@@ -2414,9 +2439,12 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     () => sortedVlans.filter(vlanIsInStandard),
     [sortedVlans],
   );
+  const quickRuleCategories = quickVlanRule.policy_type === 'block'
+    ? [...QUICK_VLAN_ACTION_CATEGORIES, ...BLOCK_ONLY_CATEGORIES]
+    : QUICK_VLAN_ACTION_CATEGORIES;
   const quickRuleCategory = useMemo(
-    () => QUICK_VLAN_CATEGORIES.find((item) => item.key === quickVlanRule.category) || QUICK_VLAN_CATEGORIES[0],
-    [quickVlanRule.category],
+    () => quickRuleCategories.find((item) => item.key === quickVlanRule.category) || quickRuleCategories[0],
+    [quickRuleCategories, quickVlanRule.category],
   );
   const scheduledPolicyWindows = data.scheduledPolicyWindows || [];
   const scheduleDraftReady = Boolean(
@@ -2628,52 +2656,56 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   );
 
   const quickVlanRulePanel = (
-    <ThemeAwareSurface tone="primary" className="p-4 sm:p-5">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end">
+    <ThemeAwareSurface tone="primary" className="rounded-lg p-3 sm:p-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">Aplicar regra em VLAN</div>
-          <div className="mt-2 text-xl font-black text-on-surface">Escolha ação, categoria e VLANs no mesmo lugar</div>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Ação</span>
-              <SelectInput value={quickVlanRule.policy_type} onChange={(event) => setQuickVlanRule((current) => ({ ...current, policy_type: event.target.value }))}>
+          <div className="text-[10px] font-black uppercase tracking-[0.12em] text-primary">Aplicar regra em VLAN</div>
+          <div className="mt-1 text-base font-black text-on-surface">Ação, categoria e VLANs</div>
+          <div className="mt-3 grid gap-2.5 md:grid-cols-3">
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Ação</span>
+              <SelectInput value={quickVlanRule.policy_type} onChange={(event) => setQuickVlanRule((current) => ({
+                ...current,
+                policy_type: event.target.value,
+                category: event.target.value === 'allow' && current.category === 'pornografia' ? 'youtube' : current.category,
+              }))}>
                 <option value="allow">Liberar</option>
                 <option value="block">Bloquear</option>
               </SelectInput>
             </label>
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Categoria</span>
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Categoria</span>
               <SelectInput value={quickVlanRule.category} onChange={(event) => setQuickVlanRule((current) => ({ ...current, category: event.target.value }))}>
-                {QUICK_VLAN_CATEGORIES.map((category) => (
+                {quickRuleCategories.map((category) => (
                   <option key={category.key} value={category.key}>{category.label}</option>
                 ))}
               </SelectInput>
             </label>
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Observação</span>
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
               <TextInput value={quickVlanRule.notes} onChange={(event) => setQuickVlanRule((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
             </label>
           </div>
         </div>
         <div className="flex flex-wrap gap-2 xl:justify-end">
-          <ActionButton tone="ghost" onClick={selectAllQuickRuleVlans} className="min-h-10 rounded-2xl px-3 shadow-none">Todas</ActionButton>
-          <ActionButton tone="ghost" onClick={clearQuickRuleVlans} disabled={!quickVlanRule.vlan_ids.length} className="min-h-10 rounded-2xl px-3 shadow-none">Limpar</ActionButton>
-          <ActionButton tone={quickVlanRule.policy_type === 'allow' ? 'success' : 'danger'} icon={Power} onClick={applyQuickVlanRule} disabled={working.policy || !quickVlanRule.vlan_ids.length}>
+          <ActionButton tone="ghost" onClick={selectAllQuickRuleVlans} className="min-h-9 rounded-lg px-3 py-1.5 text-[11px] shadow-none">Todas</ActionButton>
+          <ActionButton tone="ghost" onClick={clearQuickRuleVlans} disabled={!quickVlanRule.vlan_ids.length} className="min-h-9 rounded-lg px-3 py-1.5 text-[11px] shadow-none">Limpar</ActionButton>
+          <ActionButton tone={quickVlanRule.policy_type === 'allow' ? 'success' : 'danger'} icon={Power} onClick={applyQuickVlanRule} disabled={working.policy || !quickVlanRule.vlan_ids.length} className="min-h-9 rounded-lg px-3 py-1.5 text-[11px] shadow-none">
             {working.policy ? 'Aplicando...' : 'Aplicar'}
           </ActionButton>
         </div>
       </div>
-      <div className="mt-4 rounded-[24px] border border-outline/12 bg-container/60 p-3">
-        <div className="flex flex-wrap gap-2">
+      <div className="mt-3 rounded-lg border border-outline/12 bg-container/60 p-2.5">
+        <div className="flex flex-wrap gap-1.5">
           {quickSelectableVlans.map((vlan) => (
             <button
               key={`quick-vlan-${vlan.vlan_id}`}
               type="button"
               onClick={() => toggleQuickRuleVlan(vlan.vlan_id)}
               aria-pressed={quickVlanRule.vlan_ids.includes(vlan.vlan_id)}
-              className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+              className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                 quickVlanRule.vlan_ids.includes(vlan.vlan_id)
-                  ? 'border-primary/20 bg-primary text-on-primary shadow-md shadow-primary/20'
+                  ? 'border-primary/20 bg-primary text-on-primary shadow-sm shadow-primary/15'
                   : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
               }`}
             >
@@ -2681,7 +2713,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             </button>
           ))}
         </div>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-2 flex flex-wrap gap-1.5">
           <StateBadge label={quickVlanRule.vlan_ids.length ? `VLAN ${quickVlanRule.vlan_ids.join(', ')}` : 'Nenhuma VLAN selecionada'} tone={quickVlanRule.vlan_ids.length ? 'primary' : 'warning'} />
           <StateBadge label={quickRuleCategory?.description || 'Categoria rápida'} tone="neutral" />
           <StateBadge label="Global fica fora deste fluxo" tone="success" />
@@ -2696,12 +2728,12 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       subtitle="Cards visuais para liberar ou pausar categorias por VLAN, com horário e recorrência explícitos."
       actions={<StateBadge label={`${scheduledPolicyWindows.length} card(s)`} tone={scheduledPolicyWindows.length ? 'primary' : 'neutral'} />}
     >
-      <div className="grid gap-4 2xl:grid-cols-[0.95fr_1.05fr]">
-        <ThemeAwareSurface tone="primary" className="p-4 sm:p-5">
+      <div className="grid gap-3 2xl:grid-cols-[0.9fr_1.1fr]">
+        <ThemeAwareSurface tone="primary" className="rounded-lg p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-primary">Criar janela visual</div>
-              <div className="mt-2 text-xl font-black text-on-surface">{scheduleDraft.id ? 'Editando agendamento' : 'Nova regra por horário'}</div>
+              <div className="text-[10px] font-black uppercase tracking-[0.12em] text-primary">Criar janela visual</div>
+              <div className="mt-1 text-base font-black text-on-surface">{scheduleDraft.id ? 'Editando agendamento' : 'Nova regra por horário'}</div>
             </div>
             {scheduleDraft.id ? (
               <ActionButton
@@ -2727,21 +2759,21 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             ) : null}
           </div>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <label className="space-y-2 md:col-span-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome</span>
+          <div className="mt-3 grid gap-2.5 md:grid-cols-2">
+            <label className="space-y-1.5 md:col-span-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Nome</span>
               <TextInput value={scheduleDraft.name} onChange={(event) => setScheduleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ex: Sexta livre na VLAN 30" />
             </label>
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Início</span>
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Início</span>
               <TextInput type="time" value={scheduleDraft.start_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_time: event.target.value }))} />
             </label>
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Final</span>
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Final</span>
               <TextInput type="time" value={scheduleDraft.end_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_time: event.target.value }))} />
             </label>
-            <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Validade</span>
+            <label className="space-y-1.5">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Validade</span>
               <SelectInput value={scheduleDraft.date_mode} onChange={(event) => setScheduleDraft((current) => ({
                 ...current,
                 date_mode: event.target.value,
@@ -2753,36 +2785,36 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </SelectInput>
             </label>
             {scheduleDraft.date_mode !== 'weekly' ? (
-              <label className="space-y-2">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">{scheduleDraft.date_mode === 'single' ? 'Dia' : 'Data inicial'}</span>
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">{scheduleDraft.date_mode === 'single' ? 'Dia' : 'Data inicial'}</span>
                 <TextInput type="date" value={scheduleDraft.start_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_date: event.target.value }))} />
               </label>
             ) : null}
             {scheduleDraft.date_mode === 'range' ? (
-              <label className="space-y-2">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Data final</span>
+              <label className="space-y-1.5">
+                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Data final</span>
                 <TextInput type="date" value={scheduleDraft.end_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_date: event.target.value }))} />
               </label>
             ) : null}
-            <label className="space-y-2 md:col-span-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Observação</span>
+            <label className="space-y-1.5 md:col-span-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
               <TextInput value={scheduleDraft.notes} onChange={(event) => setScheduleDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
             </label>
           </div>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-3 space-y-2.5">
             <div>
-              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLANs</div>
-              <div className="flex flex-wrap gap-2">
+              <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">VLANs</div>
+              <div className="flex flex-wrap gap-1.5">
                 {quickSelectableVlans.map((vlan) => (
                   <button
                     key={`schedule-vlan-${vlan.vlan_id}`}
                     type="button"
                     onClick={() => toggleScheduleVlan(vlan.vlan_id)}
                     aria-pressed={scheduleDraft.vlan_ids.includes(vlan.vlan_id)}
-                    className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                       scheduleDraft.vlan_ids.includes(vlan.vlan_id)
-                        ? 'border-primary/20 bg-primary text-on-primary shadow-md shadow-primary/20'
+                          ? 'border-primary/20 bg-primary text-on-primary shadow-sm shadow-primary/15'
                         : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
                     }`}
                   >
@@ -2792,17 +2824,17 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </div>
             </div>
             <div>
-              <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Categorias</div>
-              <div className="flex flex-wrap gap-2">
+              <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Categorias</div>
+              <div className="flex flex-wrap gap-1.5">
                 {SCHEDULE_CATEGORIES.map((label) => (
                   <button
                     key={`schedule-category-${label}`}
                     type="button"
                     onClick={() => toggleScheduleCategory(label)}
                     aria-pressed={scheduleDraft.categories.includes(label)}
-                    className={`min-h-10 rounded-2xl border px-3 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                       scheduleDraft.categories.includes(label)
-                        ? 'border-success/20 bg-success text-on-primary shadow-md shadow-success/20'
+                        ? 'border-success/20 bg-success text-on-primary shadow-sm shadow-success/15'
                         : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-success/20 hover:text-success'
                     }`}
                   >
@@ -2813,17 +2845,17 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             </div>
             {scheduleDraft.date_mode !== 'single' ? (
               <div>
-                <div className="mb-2 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Dias</div>
-                <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
+                <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Dias</div>
+                <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
                   {WEEKDAY_OPTIONS.map((weekday) => (
                     <button
                       key={`schedule-day-${weekday.value}`}
                       type="button"
                       onClick={() => toggleScheduleWeekday(weekday.value)}
                       aria-pressed={scheduleDraft.weekdays.includes(weekday.value)}
-                      className={`min-h-10 rounded-2xl border px-2 py-2 text-[11px] font-black uppercase tracking-[0.12em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      className={`min-h-8 rounded-lg border px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                         scheduleDraft.weekdays.includes(weekday.value)
-                          ? 'border-info/20 bg-info text-on-primary shadow-md shadow-info/20'
+                          ? 'border-info/20 bg-info text-on-primary shadow-sm shadow-info/15'
                           : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-info/20 hover:text-info'
                       }`}
                     >
@@ -2835,45 +2867,45 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             ) : null}
           </div>
 
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-1.5">
               <StateBadge label={scheduleDraft.vlan_ids.length ? `VLAN ${scheduleDraft.vlan_ids.join(', ')}` : 'Selecione VLAN'} tone={scheduleDraft.vlan_ids.length ? 'primary' : 'warning'} />
               <StateBadge label={`${scheduleDraft.start_time || '--:--'}-${scheduleDraft.end_time || '--:--'}`} tone="success" />
               <StateBadge label={DATE_MODE_LABELS[scheduleDraft.date_mode] || 'Agenda'} tone="neutral" />
             </div>
-            <ActionButton tone="primary" icon={Clock3} onClick={saveScheduleWindow} disabled={working.policy || !scheduleDraftReady}>
+            <ActionButton tone="primary" icon={Clock3} onClick={saveScheduleWindow} disabled={working.policy || !scheduleDraftReady} className="min-h-9 rounded-lg px-3 py-1.5 text-[11px] shadow-none">
               {working.policy ? 'Salvando...' : (scheduleDraft.id ? 'Atualizar card' : 'Salvar card')}
             </ActionButton>
           </div>
         </ThemeAwareSurface>
 
-        <div className="grid content-start gap-3 md:grid-cols-2">
+        <div className="grid content-start gap-2.5 md:grid-cols-2">
           {scheduledPolicyWindows.length ? scheduledPolicyWindows.map((schedule) => (
-            <ThemeAwareSurface key={schedule.id} tone={schedule.active === false ? 'neutral' : 'success'} className="p-4">
-              <div className="flex items-start justify-between gap-3">
+            <ThemeAwareSurface key={schedule.id} tone={schedule.active === false ? 'neutral' : 'success'} className="rounded-lg p-3">
+              <div className="flex items-start justify-between gap-2.5">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base font-black text-on-surface">{schedule.name}</span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-black leading-5 text-on-surface">{schedule.name}</span>
                     <StateBadge label={schedule.active === false ? 'Pausado' : 'Ativo'} tone={schedule.active === false ? 'neutral' : 'success'} />
                   </div>
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
                     {(schedule.vlan_ids || []).map((vlanId) => <StateBadge key={`${schedule.id}-vlan-${vlanId}`} label={`VLAN ${vlanId}`} tone="primary" />)}
                     {(schedule.categories || []).map((category) => <StateBadge key={`${schedule.id}-cat-${category}`} label={category} tone="success" />)}
                   </div>
                 </div>
                 <Timer size={18} className="mt-1 shrink-0 text-on-surface/42" />
               </div>
-              <div className="mt-4 grid gap-2 text-sm text-on-surface/66">
-                <div className="flex items-center gap-2"><Clock3 size={15} />{schedule.start_time || '--:--'} até {schedule.end_time || '--:--'}</div>
-                <div className="flex items-center gap-2"><Network size={15} />{DATE_MODE_LABELS[schedule.date_mode] || 'Agenda'} • {describeScheduleDateMode(schedule)}</div>
+              <div className="mt-3 grid gap-1.5 text-xs leading-5 text-on-surface/66">
+                <div className="flex items-center gap-1.5"><Clock3 size={14} />{schedule.start_time || '--:--'} até {schedule.end_time || '--:--'}</div>
+                <div className="flex items-center gap-1.5"><Network size={14} />{DATE_MODE_LABELS[schedule.date_mode] || 'Agenda'} • {describeScheduleDateMode(schedule)}</div>
                 {schedule.notes ? <div className="line-clamp-2 text-on-surface/54">{schedule.notes}</div> : null}
               </div>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <ActionButton tone="primary" icon={Pencil} onClick={() => editScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">Editar</ActionButton>
-                <ActionButton tone={schedule.active === false ? 'success' : 'neutral'} icon={Power} onClick={() => toggleScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <ActionButton tone="primary" icon={Pencil} onClick={() => editScheduleWindow(schedule)} className="min-h-8 rounded-lg px-2.5 py-1 text-[11px] shadow-none">Editar</ActionButton>
+                <ActionButton tone={schedule.active === false ? 'success' : 'neutral'} icon={Power} onClick={() => toggleScheduleWindow(schedule)} className="min-h-8 rounded-lg px-2.5 py-1 text-[11px] shadow-none">
                   {schedule.active === false ? 'Ativar' : 'Pausar'}
                 </ActionButton>
-                <ActionButton tone="danger" icon={Trash2} onClick={() => deleteScheduleWindow(schedule)} className="min-h-10 rounded-2xl px-3 shadow-none">Excluir</ActionButton>
+                <ActionButton tone="danger" icon={Trash2} onClick={() => deleteScheduleWindow(schedule)} className="min-h-8 rounded-lg px-2.5 py-1 text-[11px] shadow-none">Excluir</ActionButton>
               </div>
             </ThemeAwareSurface>
           )) : (
@@ -3043,7 +3075,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       eyebrow: 'VIPs ativos',
       title: 'Bypass total real',
       value: activeVips.length,
-      subtitle: 'VIP sai livre pelo firewall e usa Unbound recursivo com passthrough de bloqueios.',
+      subtitle: 'VIP sai livre pelo firewall e usa DNS limpo auditável sem aplicar bloqueios.',
       tone: activeVips.length ? 'warning' : 'neutral',
     },
     {
@@ -3182,6 +3214,10 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       flash('Categoria sem domínios cadastrados.', 'danger');
       return;
     }
+    if (quickVlanRule.policy_type === 'allow' && category.key === 'pornografia') {
+      flash('Pornografia nunca pode ser liberada. Use apenas bloqueio.', 'danger');
+      return;
+    }
 
     setWorking((current) => ({ ...current, policy: true }));
     try {
@@ -3244,7 +3280,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     }));
   };
 
-  const saveScheduleWindow = async () => {
+  async function saveScheduleWindow() {
     setWorking((current) => ({ ...current, policy: true }));
     try {
       const payload = {
@@ -3278,7 +3314,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     } finally {
       setWorking((current) => ({ ...current, policy: false }));
     }
-  };
+  }
 
   const editScheduleWindow = (schedule) => {
     setScheduleDraft({
@@ -3399,6 +3435,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const saveDomainPolicy = async (form) => {
     setWorking((current) => ({ ...current, policy: true }));
     try {
+      if (form.policy_type === 'allow' && textMentionsPornography(form.name, form.description, ...(form.domains || []))) {
+        throw new Error('Pornografia nunca pode ser liberada. Use apenas política de bloqueio.');
+      }
       if (policyEditor.item?.id) {
         await requestAction(`domain-policies/${policyEditor.item.id}`, 'PATCH', form);
       } else {
@@ -3571,6 +3610,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const attachAuditDomainToPolicy = async (form) => {
     setWorking((current) => ({ ...current, policy: true }));
     try {
+      if (form.policy_type === 'allow' && textMentionsPornography(form.name, form.description, form.domain)) {
+        throw new Error('Pornografia nunca pode ser liberada. Use apenas política de bloqueio.');
+      }
       if (form.mode === 'existing') {
         const policy = namedPolicies.find((item) => String(item.id) === String(form.policy_id));
         if (!policy) throw new Error('Política não encontrada');
@@ -3642,6 +3684,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         revoked_at: form.revoked_at || null,
         exception_type: 'bypass total',
         bypass_total: true,
+        dns_audit_enabled: form.dns_audit_enabled !== false,
         active: vipEditor.item ? Boolean(vipEditor.item.active) : true,
       };
 
@@ -3664,7 +3707,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       finishProgress();
       loadAll().catch((error) => flash(error.message || 'VIP salvo, mas houve falha ao atualizar dados secundários.', 'warning'));
       setVipEditor({ open: false, item: null });
-      flash(vipEditor.item ? 'VIP atualizado com bypass total real.' : 'VIP criado com firewall livre e Unbound recursivo liberado.', 'success');
+      flash(vipEditor.item ? 'VIP atualizado com bypass total auditável.' : 'VIP criado com firewall livre e DNS auditável.', 'success');
     } catch (error) {
       flash(error.message || 'Falha ao salvar VIP.', 'danger');
     } finally {
@@ -3680,6 +3723,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         active: !item.active,
         exception_type: item.exception_type || 'bypass total',
         bypass_total: true,
+        dns_audit_enabled: item.dns_audit_enabled !== false,
       });
       flash(`VIP ${item.active ? 'desativado' : 'ativado'}.`, 'success');
     } catch (error) {
@@ -4140,7 +4184,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">VIPs e exceções</div>
                   <div className="mt-3 text-sm leading-6 text-on-surface/68">
                     {activeVips.length
-                      ? `${activeVips.length} VIP(s) ativo(s) com firewall livre, Unbound recursivo liberado e fora de proxy/interceptação.`
+                      ? `${activeVips.length} VIP(s) ativo(s) com firewall livre, DNS auditável e fora de proxy/interceptação.`
                       : 'Nenhum VIP ativo neste momento.'}
                   </div>
                 </ListRow>
@@ -4621,6 +4665,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                             <div className="font-mono text-sm font-black text-on-surface">{item.ip}</div>
                             <div className="mt-1 flex flex-wrap gap-1.5">
                               <StateBadge label={item.active ? 'Ativo' : 'Inativo'} tone={item.active ? 'warning' : 'neutral'} />
+                              <StateBadge label={item.dns_audit_enabled === false ? 'DNS sem auditoria' : 'DNS auditado'} tone={item.dns_audit_enabled === false ? 'neutral' : 'info'} />
                               <StateBadge label={lifecycle} tone={governanceStatusTone(lifecycle)} />
                             </div>
                           </div>

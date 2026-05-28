@@ -354,6 +354,84 @@ async function expireExpiredSessions() {
     return { expired: result.rows.length, runtime_revoked: ips.length };
 }
 
+async function cleanupStaleSessions(options: {
+    requestedBy?: string;
+    actorUserId?: number | null;
+    actorIp?: string | null;
+    actorUserAgent?: string | null;
+    route?: string | null;
+    method?: string | null;
+    audit?: boolean;
+} = {}) {
+    await ensureSchema();
+    const expiration = await expireExpiredSessions();
+    const staleSessions = await pool.query(
+        `SELECT id, status, host(client_ip) AS client_ip
+           FROM hotspot_sessions
+          WHERE admin_hidden_at IS NULL
+            AND (
+                status = 'revoked'
+                OR status = 'expired'
+                OR expires_at <= NOW()
+            )
+          ORDER BY started_at DESC`,
+    );
+
+    const hiddenExpired = staleSessions.rows.filter((row) => row.status !== 'revoked').length;
+    const hiddenRevoked = staleSessions.rows.filter((row) => row.status === 'revoked').length;
+    let runtimeRevoked = 0;
+
+    if (staleSessions.rowCount) {
+        runtimeRevoked = await revokeRuntimeIps(staleSessions.rows);
+        await pool.query(
+            `UPDATE hotspot_sessions
+                SET admin_hidden_at = NOW(),
+                    last_seen_at = COALESCE(last_seen_at, NOW())
+              WHERE id = ANY($1::bigint[])`,
+            [staleSessions.rows.map((row) => row.id)],
+        );
+    }
+
+    const result = {
+        success: true,
+        hidden_total: staleSessions.rowCount,
+        hidden_expired: hiddenExpired,
+        hidden_revoked: hiddenRevoked,
+        deleted_total: staleSessions.rowCount,
+        deleted_expired: hiddenExpired,
+        deleted_revoked: hiddenRevoked,
+        runtime_revoked: runtimeRevoked,
+        expired_marked: expiration.expired,
+        expired_runtime_revoked: expiration.runtime_revoked,
+    };
+
+    if (options.audit !== false && (staleSessions.rowCount || expiration.expired)) {
+        await institutionalAuditService.log({
+            action: 'hotspot_sessions_cleanup_stale',
+            requestedBy: options.requestedBy || 'sistema',
+            actorUserId: options.actorUserId ?? null,
+            actorIp: options.actorIp || null,
+            actorUserAgent: options.actorUserAgent || null,
+            payload: { vlan_id: HOTSPOT_VLAN_ID, automatic: options.route ? false : true },
+            result: {
+                hidden_total: result.hidden_total,
+                hidden_expired: result.hidden_expired,
+                hidden_revoked: result.hidden_revoked,
+                runtime_ips_revoked: result.runtime_revoked,
+                expired_marked: result.expired_marked,
+                expired_runtime_revoked: result.expired_runtime_revoked,
+            },
+            success: true,
+            message: 'Sessoes expiradas ou revogadas do Hotspot foram ocultadas da grade administrativa sem apagar o historico institucional.',
+            route: options.route || 'system://hotspot/hourly-cleanup',
+            method: options.method || 'SYSTEM',
+            statusCode: 200,
+        });
+    }
+
+    return result;
+}
+
 async function ensureHotspotEnforcement() {
     await ensureHotspotAuthSetExists();
     await revokeLegacyAutoSessions();
@@ -416,8 +494,11 @@ async function dropHotspotConnections(ip: string | null) {
 
 async function revokeRuntimeIps(rows: Array<{ client_ip?: string | null }>) {
     const ips = Array.from(new Set(rows.map((row) => row.client_ip).filter(Boolean))) as string[];
-    for (const ip of ips) await revokeHotspotIpRuntimeOnly(ip).catch(() => false);
-    return ips.length;
+    if (!ips.length) return 0;
+    const authorizedIps = new Set(await listAuthorizedHotspotIps().catch(() => []));
+    const presentIps = ips.filter((ip) => authorizedIps.has(normalizeIp(ip)));
+    for (const ip of presentIps) await revokeHotspotIpRuntimeOnly(ip).catch(() => false);
+    return presentIps.length;
 }
 
 async function revokeActiveSessionsByDeviceMacOrIp(deviceId: number | null, mac: string | null, ip: string | null, reason: string) {
@@ -478,6 +559,7 @@ async function findActiveSessionByDeviceOrIp(ip: string | null, mac: string | nu
                 s.expires_at,
                 s.auth_method,
                 s.vlan_id,
+                s.mac_address AS session_mac_address,
                 v.id,
                 v.full_name,
                 v.cpf,
@@ -707,13 +789,8 @@ router.get('/public/capport', async (req, res) => {
     const ip = getClientIp(req);
     const vlanId = inferVlanId(ip);
     const mac = await inferMac(ip);
-
-    if (!mac) {
-        res.type('application/captive+json');
-        return res.json(buildCapportPayload(true));
-    }
-
     const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
+
     if (!activeSession) {
         res.type('application/captive+json');
         return res.json(buildCapportPayload(true));
@@ -731,13 +808,9 @@ router.get('/public/probe', async (req, res) => {
     const mac = await inferMac(ip);
     const probe = String(req.query.kind || 'generate_204').trim().toLowerCase();
 
-    if (!mac) {
-        return res.status(401).json({ authorized: false, reason: 'mac_not_found', ip, vlan_id: vlanId });
-    }
-
     const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
     if (!activeSession) {
-        return res.status(401).json({ authorized: false, reason: 'no_active_session', ip, mac, vlan_id: vlanId });
+        return res.status(401).json({ authorized: false, reason: mac ? 'no_active_session' : 'mac_not_found', ip, mac, vlan_id: vlanId });
     }
 
     const runtimeAuthorized = await authorizeHotspotIp(ip, vlanId).catch(() => false);
@@ -759,23 +832,20 @@ router.get('/public/context', async (req, res) => {
     const ip = getClientIp(req);
     const vlanId = inferVlanId(ip);
     const mac = await inferMac(ip);
-
-    if (!mac) {
-        const revoked = await revokeActiveSessionsByDeviceMacOrIp(null, null, ip, 'context_without_mac').catch(() => null);
-        await audit(req, 'hotspot_mac_not_found', true, { ip, vlan_id: vlanId }, {}, 'MAC nao encontrado na tabela de vizinhanca.');
-        return res.json({ authenticated: false, ip, mac: null, vlan_id: vlanId, requires_login: true, revoked });
-    }
-
     const activeSession = await findActiveSessionByDeviceOrIp(ip, mac);
+
     if (activeSession) {
         const runtimeAuthorized = await authorizeHotspotIp(ip, vlanId).catch(() => false);
+        const sessionMac = mac || activeSession.session_mac_address || activeSession.mac_address || null;
         await audit(
             req,
             'hotspot_active_session_recognized',
             true,
-            { ip, mac, vlan_id: vlanId },
+            { ip, mac: sessionMac, inferred_mac: mac, vlan_id: vlanId },
             { visitor_id: activeSession.id, session_id: activeSession.session_id, runtime_authorized: runtimeAuthorized },
-            'Portal reconheceu sessao ativa valida e preservou a liberacao da rede.',
+            mac
+                ? 'Portal reconheceu sessao ativa valida e preservou a liberacao da rede.'
+                : 'Portal preservou sessao ativa por IP mesmo sem MAC momentaneo na tabela de vizinhanca.',
         );
         return res.json({
             authenticated: true,
@@ -784,7 +854,8 @@ router.get('/public/context', async (req, res) => {
             requires_confirm: false,
             requires_login: false,
             ip,
-            mac,
+            mac: sessionMac,
+            mac_inferred: Boolean(mac),
             vlan_id: vlanId,
             visitor: publicVisitor(activeSession),
             session: {
@@ -797,6 +868,11 @@ router.get('/public/context', async (req, res) => {
             redirect_url: HOTSPOT_SUCCESS_REDIRECT_URL,
             message: `Bem-vindo de volta, ${activeSession.full_name}. Sua sessao de visitante continua valida neste dispositivo.`,
         });
+    }
+
+    if (!mac) {
+        await audit(req, 'hotspot_mac_not_found', true, { ip, vlan_id: vlanId }, {}, 'MAC nao encontrado na tabela de vizinhanca e nenhuma sessao ativa por IP foi localizada.');
+        return res.json({ authenticated: false, ip, mac: null, vlan_id: vlanId, requires_login: true });
     }
 
     const row = await findKnownDevice(mac);
@@ -1333,71 +1409,16 @@ router.get('/sessions', requireJwt, async (_req: AuthenticatedRequest, res) => {
 });
 
 router.post('/sessions/cleanup-stale', requireJwt, async (req: AuthenticatedRequest, res) => {
-    await ensureSchema();
-    const staleSessions = await pool.query(
-        `SELECT id, status, host(client_ip) AS client_ip
-           FROM hotspot_sessions
-          WHERE admin_hidden_at IS NULL
-            AND (
-                status = 'revoked'
-                OR expires_at <= NOW()
-            )
-          ORDER BY started_at DESC`,
-    );
-    if (!staleSessions.rowCount) {
-        return res.json({
-            success: true,
-            hidden_total: 0,
-            hidden_expired: 0,
-            hidden_revoked: 0,
-            deleted_total: 0,
-            deleted_expired: 0,
-            deleted_revoked: 0,
-            runtime_revoked: 0,
-        });
-    }
-
-    const hiddenExpired = staleSessions.rows.filter((row) => row.status !== 'revoked').length;
-    const hiddenRevoked = staleSessions.rows.filter((row) => row.status === 'revoked').length;
-    const runtimeRevoked = await revokeRuntimeIps(staleSessions.rows);
-    await pool.query(
-        `UPDATE hotspot_sessions
-            SET admin_hidden_at = NOW(),
-                last_seen_at = COALESCE(last_seen_at, NOW())
-          WHERE id = ANY($1::bigint[])`,
-        [staleSessions.rows.map((row) => row.id)],
-    );
-
-    await institutionalAuditService.log({
-        action: 'hotspot_sessions_cleanup_stale',
+    const result = await cleanupStaleSessions({
         requestedBy: req.auth?.username || 'sistema',
         actorUserId: req.auth?.id || null,
         actorIp: getClientIp(req),
-        actorUserAgent: req.headers['user-agent'] || null,
-        payload: { vlan_id: HOTSPOT_VLAN_ID },
-        result: {
-            hidden_total: staleSessions.rowCount,
-            hidden_expired: hiddenExpired,
-            hidden_revoked: hiddenRevoked,
-            runtime_ips_revoked: runtimeRevoked,
-        },
-        success: true,
-        message: 'Sessoes expiradas ou revogadas do Hotspot foram ocultadas da grade administrativa sem apagar o historico institucional.',
+        actorUserAgent: String(req.headers['user-agent'] || '') || null,
         route: req.originalUrl,
         method: req.method,
-        statusCode: 200,
     });
 
-    res.json({
-        success: true,
-        hidden_total: staleSessions.rowCount,
-        hidden_expired: hiddenExpired,
-        hidden_revoked: hiddenRevoked,
-        deleted_total: staleSessions.rowCount,
-        deleted_expired: hiddenExpired,
-        deleted_revoked: hiddenRevoked,
-        runtime_revoked: runtimeRevoked,
-    });
+    res.json(result);
 });
 
 router.post('/sessions/:id/revoke', requireJwt, async (req: AuthenticatedRequest, res) => {
@@ -1823,5 +1844,5 @@ router.get('/report', requireJwt, async (req: AuthenticatedRequest, res) => {
     }
 });
 
-export const hotspotSchemaService = { ensureSchema, ensureHotspotEnforcement, ensureAccessLogSchema, expireExpiredSessions };
+export const hotspotSchemaService = { ensureSchema, ensureHotspotEnforcement, ensureAccessLogSchema, expireExpiredSessions, cleanupStaleSessions };
 export default router;

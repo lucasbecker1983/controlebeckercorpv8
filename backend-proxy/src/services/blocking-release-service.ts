@@ -159,6 +159,20 @@ const SOCIAL_SESSION_DOMAINS = [
     'z-m-gateway.facebook.com',
 ];
 
+const MANAGED_POLICY_VLANS = [10, 30, 40, 50, 70];
+
+const WHATSAPP_WEB_META_DEPENDENCIES = [
+    'b-graph.facebook.com',
+    'dgw-mini.c10r.facebook.com',
+    'edge-mqtt.facebook.com',
+    'graph.facebook.com',
+    'graph-fallback.facebook.com',
+    'mqtt.c10r.facebook.com',
+    'star.c10r.facebook.com',
+    'star.fallback.c10r.facebook.com',
+    'z-m-gateway.facebook.com',
+];
+
 const BASELINE_ALLOW_CATALOG = {
     WhatsApp: [
         'static.whatsapp.net', 'wa.me', 'web.whatsapp.com', 'whatsapp.com', 'whatsapp.net',
@@ -316,6 +330,20 @@ const policyTextIncludesPornography = (...values: unknown[]) => {
         .filter(Boolean)
         .join('-');
     return /(pornograf|adulto|conteudo-adulto)/.test(text);
+};
+
+const assertPornographyNeverAllowed = (kind: PolicyKind, payload: any) => {
+    if (kind !== 'allow') return;
+    if (!policyTextIncludesPornography(
+        payload?.category,
+        payload?.label,
+        payload?.key,
+        payload?.description,
+        payload?.notes,
+        payload?.reason,
+        ...(Array.isArray(payload?.domains) ? payload.domains : []),
+    )) return;
+    throw new Error('Pornografia nunca pode ser liberada. Use apenas política de bloqueio.');
 };
 
 const assertGlobalPolicyAllowed = (kind: PolicyKind, scopeType: ScopeType, payload: any) => {
@@ -812,7 +840,7 @@ class BlockingReleaseService {
                 );
         }
 
-        for (const vlanId of [10, 50]) {
+        for (const vlanId of MANAGED_POLICY_VLANS) {
             for (const domain of BASELINE_BLOCK_CATALOG['Redes Sociais']) {
                 await pool.query(
                         `
@@ -834,6 +862,18 @@ class BlockingReleaseService {
                 );
         }
 
+        for (const vlanId of MANAGED_POLICY_VLANS) {
+            for (const domain of WHATSAPP_WEB_META_DEPENDENCIES) {
+                await pool.query(
+                    `
+                        INSERT INTO release_policies (domain, description, category, reason, protected, active, scope_type, scope_value, created_by, notes)
+                        VALUES ($1, $2, 'WhatsApp Web - dependencias Meta', 'Dependencia Meta liberada para WhatsApp e WhatsApp Web', TRUE, TRUE, 'vlan', $3, $4, $5)
+                    `,
+                    [domain, `Dependencia Meta necessaria para WhatsApp Web na VLAN ${vlanId}.`, String(vlanId), requestedBy, 'Baseline SGCG: WhatsApp nunca deve ser bloqueado pelas politicas de redes sociais.'],
+                );
+            }
+        }
+
         for (const domain of BASELINE_ALLOW_CATALOG['Plataformas de Reunião']) {
             await pool.query(
                     `
@@ -842,18 +882,6 @@ class BlockingReleaseService {
                     `,
                     [domain, 'Liberação global protegida para Google Meet, Zoom e Microsoft Teams.', requestedBy, 'Baseline ampliada em 2026-05-04.'],
                 );
-        }
-
-        for (const vlanId of [30, 70]) {
-            for (const domain of BASELINE_BLOCK_CATALOG['Redes Sociais']) {
-                await pool.query(
-                        `
-                            INSERT INTO release_policies (domain, description, category, reason, protected, active, scope_type, scope_value, created_by, notes)
-                            VALUES ($1, $2, 'Redes Sociais', $3, FALSE, TRUE, 'vlan', $4, $5, $6)
-                        `,
-                        [domain, `Liberação de redes sociais para VLAN ${vlanId}.`, `Redes sociais liberadas para VLAN ${vlanId}`, String(vlanId), requestedBy, 'Baseline restaurada 2026-04-15.'],
-                    );
-            }
         }
 
         for (const vlanId of [10, 50]) {
@@ -1432,6 +1460,7 @@ class BlockingReleaseService {
         const category = String(payload?.category || payload?.label || payload?.key || '').trim();
         const description = String(payload?.description || payload?.helper || category || '').trim() || null;
         const { scopeType, scopeValue } = this.buildCategoryScope(payload);
+        assertPornographyNeverAllowed(kind, { ...payload, category, description, domains });
         assertGlobalPolicyAllowed(kind, scopeType, { ...payload, category, description });
         const client = await pool.connect();
         try {
@@ -2202,6 +2231,7 @@ class BlockingReleaseService {
             vlanId || null,
             hasOwn(payload, 'exception_type') ? normalizeOptionalText(payload?.exception_type) || 'vip' : current?.exception_type || 'vip',
             true,
+            normalizeBoolean(payload?.dns_audit_enabled, current?.dns_audit_enabled ?? true),
             active,
             governance.expires_at || (hasOwn(payload, 'valid_until') ? normalizeOptionalTimestamp(payload?.valid_until) : current?.valid_until) || null,
             hasOwn(payload, 'notes') ? normalizeOptionalText(payload?.notes) : current?.notes || null,
@@ -2229,11 +2259,12 @@ class BlockingReleaseService {
                         vlan_id = $17,
                         exception_type = $18,
                         bypass_total = $19,
-                        active = $20,
-                        valid_until = $21,
-                        notes = $22,
+                        dns_audit_enabled = $20,
+                        active = $21,
+                        valid_until = $22,
+                        notes = $23,
                         updated_at = NOW()
-                    WHERE id = $23
+                    WHERE id = $24
                     RETURNING *
                 `,
                 [...values, id],
@@ -2260,11 +2291,12 @@ class BlockingReleaseService {
                         vlan_id,
                         exception_type,
                         bypass_total,
+                        dns_audit_enabled,
                         active,
                         valid_until,
                         notes
                     )
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
                     RETURNING *
                 `,
                 values,
@@ -2790,7 +2822,7 @@ class BlockingReleaseService {
         ).catch(() => ({ rows: [] as any[] }));
         const sporadicCandidates = sporadicRows
             .filter((row) => isManagedBlockingIp(row.ip))
-            .map((row) => ({ ip: row.ip, vlan_id: null, description: 'Exceção esporádica temporária', responsible: 'sporadic' }));
+            .map((row) => ({ ip: row.ip, vlan_id: null, description: 'Exceção esporádica temporária', responsible: 'sporadic', dns_audit_enabled: true }));
 
         const vipCandidates = [
             ...activeExceptions.filter((row) => isManagedBlockingIp(row.ip) || isManagedBlockingVlan(row.vlan_id)),
@@ -2813,18 +2845,21 @@ class BlockingReleaseService {
             if (!cidr) continue;
             await pool.query(
                 `
-                    INSERT INTO dns_vip (cidr, descricao, responsavel, motivo, ativo)
-                    VALUES ($1, $2, $3, 'policy_exception', TRUE)
+                    INSERT INTO dns_vip (cidr, descricao, responsavel, motivo, ativo, dns_audit_enabled)
+                    VALUES ($1, $2, $3, 'policy_exception', TRUE, $4)
                     ON CONFLICT (cidr) DO UPDATE
                     SET descricao = EXCLUDED.descricao,
                         responsavel = EXCLUDED.responsavel,
                         motivo = 'policy_exception',
-                        ativo = TRUE
+                        ativo = TRUE,
+                        dns_audit_enabled = EXCLUDED.dns_audit_enabled,
+                        updated_at = NOW()
                 `,
                 [
                     cidr,
                     row.description || `Bypass por exceção ${cidr}`,
                     row.responsible || 'bloqueios-liberacoes',
+                    row.dns_audit_enabled !== false,
                 ],
             ).catch(() => undefined);
         }

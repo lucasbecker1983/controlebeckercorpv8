@@ -102,6 +102,23 @@ def is_in_blocked_set(ip: str) -> bool:
     return r.returncode == 0
 
 
+def social_blocked_set_has_entries() -> bool:
+    result = subprocess.run(["ipset", "list", SOCIAL_BLOCKED_SET], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"  [AVISO] ipset {SOCIAL_BLOCKED_SET} ausente; usando allowlist completa resolvida para WhatsApp.")
+        return False
+    for line in result.stdout.splitlines():
+        if line.startswith("Number of entries:"):
+            try:
+                entries = int(line.split(":", 1)[1].strip())
+                if entries == 0:
+                    print(f"  [AVISO] ipset {SOCIAL_BLOCKED_SET} vazio; usando allowlist completa resolvida para WhatsApp.")
+                return entries > 0
+            except ValueError:
+                return True
+    return True
+
+
 def recent_whatsapp_domains() -> list[str]:
     try:
         import psycopg2
@@ -135,7 +152,7 @@ def ensure_forward_rule(proto: str, ports: list[str], comment: str):
         "iptables", "-C", "FORWARD",
         "-p", proto,
         "-m", "multiport", "--dports", ",".join(ports),
-        "-m", "set", "--match-set", SOCIAL_BLOCKED_SET, "dst",
+        "-m", "set", "--match-set", IPSET_NAME, "dst",
         "-j", "ACCEPT",
     ]
     if subprocess.run(check_cmd, capture_output=True).returncode == 0:
@@ -146,7 +163,7 @@ def ensure_forward_rule(proto: str, ports: list[str], comment: str):
         "iptables", "-I", "FORWARD", "2",
         "-p", proto,
         "-m", "multiport", "--dports", ",".join(ports),
-        "-m", "set", "--match-set", SOCIAL_BLOCKED_SET, "dst",
+        "-m", "set", "--match-set", IPSET_NAME, "dst",
         "-m", "comment", "--comment", comment,
         "-j", "ACCEPT",
     ], check=True)
@@ -185,14 +202,18 @@ def main():
     domains = sorted(set(WHATSAPP_DOMAINS + recent_whatsapp_domains()))
     print(f"  Domínios avaliados: {len(domains)}")
 
-    # Coletar IPs que estão no range bloqueado
+    require_social_overlap = social_blocked_set_has_entries()
+
+    # Coletar IPs atuais do WhatsApp. Quando o ipset social existe, restringe ao
+    # overlap Meta bloqueado; quando ele está ausente/vazio, evita allowlist vazia.
     whatsapp_blocked_ips: set[str] = set()
     for domain in domains:
         ips = resolve(domain)
         for ip in ips:
-            if is_in_blocked_set(ip):
+            if not require_social_overlap or is_in_blocked_set(ip):
                 whatsapp_blocked_ips.add(ip)
-                print(f"  {domain} → {ip} (dentro do range bloqueado, adicionar ao allow)")
+                reason = "dentro do range bloqueado" if require_social_overlap else "allow preventivo"
+                print(f"  {domain} → {ip} ({reason}, adicionar ao allow)")
             else:
                 print(f"  {domain} → {ip} (fora do range bloqueado, OK)")
 

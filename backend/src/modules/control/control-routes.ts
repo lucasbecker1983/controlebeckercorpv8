@@ -5,6 +5,7 @@ import { pool } from '../../config/db';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { ragService } from './rag-service';
 
 const router = Router();
 
@@ -30,6 +31,17 @@ type ClamExecResult = {
     code: number;
     stdout: string;
     stderr: string;
+};
+
+type TechnicalInsight = {
+    id: string;
+    severity: 'critical' | 'warning' | 'info' | 'success';
+    title: string;
+    probable_cause: string;
+    impact: string;
+    evidence: string[];
+    recommendation: string;
+    action: string;
 };
 
 const execClam = (command: string, args: string[]) => new Promise<ClamExecResult>((resolve, reject) => {
@@ -245,6 +257,273 @@ async function reconcileRunningAntimalwareRun() {
     });
     return null;
 }
+
+const readFirstRow = async (query: string, fallback: Record<string, any> = {}) => {
+    try {
+        const result = await pool.query(query);
+        return result.rows[0] || fallback;
+    } catch {
+        return fallback;
+    }
+};
+
+const readRows = async (query: string) => {
+    try {
+        const result = await pool.query(query);
+        return result.rows || [];
+    } catch {
+        return [];
+    }
+};
+
+const getServiceHealthSnapshot = async () => {
+    const svcs = [
+        { name: 'squid', label: 'Proxy Squid', layer: 'proxy' },
+        { name: 'postgresql', label: 'Banco de Dados', layer: 'database' },
+        { name: 'nginx', label: 'Servidor Web', layer: 'web' },
+        { name: 'ufw', label: 'Firewall UFW', layer: 'firewall' },
+        { name: 'isc-dhcp-server', label: 'Servidor DHCP', layer: 'dhcp' },
+        { name: 'unbound', label: 'DNS Unbound', layer: 'dns' },
+        { name: 'clamav-daemon', label: 'ClamAV Daemon', layer: 'security' },
+        { name: 'clamav-freshclam', label: 'Assinaturas ClamAV', layer: 'security' },
+    ];
+    const results = await Promise.all(svcs.map(async (svc) => {
+        const stdout = await execCmd(`systemctl is-active ${svc.name} || echo "inactive"`).catch(() => 'inactive');
+        const state = stdout.trim().toLowerCase();
+        return {
+            ...svc,
+            status: state === 'active' ? 'active' : 'stopped',
+            state,
+        };
+    }));
+    return results;
+};
+
+const countNatDuplicates = async () => {
+    const output = await execCmd('iptables-save -t nat').catch(() => '');
+    const ruleLines = output
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('-A '));
+    return {
+        total: ruleLines.length,
+        duplicates: ruleLines.length - new Set(ruleLines).size,
+    };
+};
+
+const buildTechnicalInsights = async () => {
+    const [
+        services,
+        natState,
+        blocked24h,
+        blocked5m,
+        topBlockedVlan,
+        topBlockedDomain,
+        activeBypasses,
+        activeTotalBlocks,
+        hotspotActive,
+        hotspotExpired,
+        antimalwareFindings,
+        latestDedupe,
+    ] = await Promise.all([
+        getServiceHealthSnapshot(),
+        countNatDuplicates(),
+        readFirstRow(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '24 hours' AND action = 'blocked'`, { total: 0 }),
+        readFirstRow(`SELECT COUNT(*)::int AS total FROM access_events WHERE occurred_at >= NOW() - INTERVAL '5 minutes' AND action = 'blocked'`, { total: 0 }),
+        readFirstRow(`
+            SELECT vlan_id, COUNT(*)::int AS total
+            FROM access_events
+            WHERE occurred_at >= NOW() - INTERVAL '24 hours'
+              AND action = 'blocked'
+              AND vlan_id IS NOT NULL
+            GROUP BY vlan_id
+            ORDER BY total DESC
+            LIMIT 1
+        `, {}),
+        readFirstRow(`
+            SELECT domain, COUNT(*)::int AS total
+            FROM access_events
+            WHERE occurred_at >= NOW() - INTERVAL '24 hours'
+              AND action = 'blocked'
+              AND domain IS NOT NULL
+            GROUP BY domain
+            ORDER BY total DESC
+            LIMIT 1
+        `, {}),
+        readRows(`SELECT vlan_id, reason, expires_at FROM emergency_vlan_bypass WHERE active = TRUE AND (expires_at IS NULL OR expires_at > NOW()) ORDER BY activated_at DESC LIMIT 8`),
+        readRows(`SELECT vlan_id, reason, activated_at FROM total_vlan_blocks WHERE active = TRUE ORDER BY activated_at DESC LIMIT 8`),
+        readFirstRow(`SELECT COUNT(*)::int AS total FROM hotspot_sessions WHERE status = 'active' AND expires_at > NOW()`, { total: 0 }),
+        readFirstRow(`SELECT COUNT(*)::int AS total FROM hotspot_sessions WHERE status = 'active' AND expires_at <= NOW()`, { total: 0 }),
+        readFirstRow(`SELECT COUNT(*)::int AS total FROM control_antimalware_findings WHERE decision_status = 'pending'`, { total: 0 }),
+        readFirstRow(`SELECT action, duplicate_count, created_at FROM dns_contingency_audit WHERE action = 'runtime-dedupe' ORDER BY created_at DESC LIMIT 1`, {}),
+    ]);
+
+    const insights: TechnicalInsight[] = [];
+    const failedServices = services.filter((svc) => svc.status !== 'active');
+    const dnsFailed = failedServices.some((svc) => svc.layer === 'dns');
+    const proxyFailed = failedServices.some((svc) => svc.layer === 'proxy');
+    const firewallFailed = failedServices.some((svc) => svc.layer === 'firewall');
+    const blocked5mTotal = Number(blocked5m.total || 0);
+    const blocked24hTotal = Number(blocked24h.total || 0);
+    const hotspotExpiredTotal = Number(hotspotExpired.total || 0);
+    const pendingMalwareTotal = Number(antimalwareFindings.total || 0);
+
+    if (failedServices.length) {
+        insights.push({
+            id: 'daemon-health',
+            severity: failedServices.some((svc) => ['dns', 'proxy', 'firewall', 'database'].includes(svc.layer)) ? 'critical' : 'warning',
+            title: `${failedServices.length} serviço(s) exigem atenção`,
+            probable_cause: 'Um ou mais daemons essenciais não estão em estado active no systemd.',
+            impact: dnsFailed
+                ? 'A resolução DNS institucional pode falhar ou ignorar políticas RPZ.'
+                : proxyFailed
+                    ? 'Bloqueios HTTP, página de manutenção e evidências de proxy podem ficar parciais.'
+                    : firewallFailed
+                        ? 'A camada oficial UFW precisa de validação imediata antes de qualquer mudança de runtime.'
+                        : 'Parte da observabilidade ou proteção operacional pode ficar degradada.',
+            evidence: failedServices.map((svc) => `${svc.label}: ${svc.state}`),
+            recommendation: 'Abrir o serviço afetado, validar logs recentes e reiniciar somente quando a causa estiver clara.',
+            action: 'Investigar daemon',
+        });
+    }
+
+    if (natState.duplicates > 0) {
+        insights.push({
+            id: 'nat-duplicates',
+            severity: 'critical',
+            title: 'Duplicidade detectada na tabela NAT',
+            probable_cause: 'Reaplicações de firewall ou contingência podem ter acumulado regras idênticas no runtime.',
+            impact: 'A precedência de VIPs, DNS redirect, Hotspot e Bloqueio Total pode ficar difícil de auditar.',
+            evidence: [`${natState.duplicates} regra(s) duplicada(s) em ${natState.total} regras NAT`, latestDedupe.created_at ? `Último runtime-dedupe: ${latestDedupe.created_at}` : 'Sem runtime-dedupe recente registrado'],
+            recommendation: 'Executar a reconciliação do backend-proxy e validar nat_rules, duplicates e ordem das regras críticas.',
+            action: 'Auditar NAT',
+        });
+    }
+
+    if (blocked5mTotal > 20 || blocked24hTotal > 500) {
+        const vlanText = topBlockedVlan.vlan_id ? `VLAN ${topBlockedVlan.vlan_id} concentrou ${topBlockedVlan.total} bloqueios em 24h` : 'Sem VLAN predominante';
+        insights.push({
+            id: 'blocked-spike',
+            severity: blocked5mTotal > 20 ? 'critical' : 'warning',
+            title: 'Pico de bloqueios institucionais',
+            probable_cause: 'Aumento real de tentativas bloqueadas, política muito ampla ou cliente insistindo em domínio restrito.',
+            impact: 'Usuários podem perceber falha de navegação mesmo quando o SGCG está aplicando a política corretamente.',
+            evidence: [`${blocked5mTotal} bloqueios nos últimos 5 minutos`, `${blocked24hTotal} bloqueios nas últimas 24h`, vlanText, topBlockedDomain.domain ? `Domínio mais bloqueado: ${topBlockedDomain.domain} (${topBlockedDomain.total})` : 'Sem domínio predominante'],
+            recommendation: 'Separar política correta de incidente: verificar domínio, VLAN, cliente e origem do bloqueio antes de liberar.',
+            action: 'Abrir diagnóstico',
+        });
+    }
+
+    if (activeBypasses.length || activeTotalBlocks.length) {
+        insights.push({
+            id: 'exception-state',
+            severity: activeTotalBlocks.length ? 'critical' : 'warning',
+            title: 'Estado excepcional ativo em VLAN',
+            probable_cause: activeTotalBlocks.length
+                ? 'Há Bloqueio Total em vigor para uma ou mais VLANs.'
+                : 'Há bypass emergencial liberando uma VLAN do enforcement categórico.',
+            impact: activeTotalBlocks.length
+                ? 'A navegação da VLAN permanece interrompida até restauração manual.'
+                : 'A VLAN pode navegar fora do padrão categórico normal enquanto o bypass estiver ativo.',
+            evidence: [
+                ...activeTotalBlocks.map((item) => `Bloqueio Total VLAN ${item.vlan_id}: ${item.reason || 'sem motivo informado'}`),
+                ...activeBypasses.map((item) => `Bypass VLAN ${item.vlan_id}: expira ${item.expires_at || 'manual'}`),
+            ],
+            recommendation: 'Confirmar se o motivo operacional ainda existe e encerrar a exceção assim que a janela terminar.',
+            action: 'Revisar exceção',
+        });
+    }
+
+    if (hotspotExpiredTotal > 0) {
+        insights.push({
+            id: 'hotspot-stale',
+            severity: 'warning',
+            title: 'Sessões Hotspot ativas vencidas',
+            probable_cause: 'O varredor de expiração pode estar atrasado ou sessões antigas não foram encerradas no banco/runtime.',
+            impact: 'A leitura administrativa pode divergir do estado real de autorização da VLAN 70.',
+            evidence: [`${hotspotExpiredTotal} sessão(ões) ativas com expires_at vencido`, `${Number(hotspotActive.total || 0)} sessão(ões) ativas ainda dentro da validade`],
+            recommendation: 'Validar o sweeper do Hotspot e comparar sessão com ipset sgcg_hotspot_v70_auth antes de concluir acesso liberado.',
+            action: 'Validar Hotspot',
+        });
+    }
+
+    if (pendingMalwareTotal > 0) {
+        insights.push({
+            id: 'malware-pending',
+            severity: 'critical',
+            title: 'Achados antimalware aguardam decisão',
+            probable_cause: 'Uma varredura ClamAV registrou arquivos suspeitos sem decisão operacional final.',
+            impact: 'Arquivos potencialmente perigosos podem permanecer acessíveis no host.',
+            evidence: [`${pendingMalwareTotal} achado(s) pendente(s) no ClamAV institucional`],
+            recommendation: 'Classificar cada achado e aplicar quarentena ou exclusão conforme o caso.',
+            action: 'Decidir achados',
+        });
+    }
+
+    if (!insights.length) {
+        insights.push({
+            id: 'steady-state',
+            severity: 'success',
+            title: 'Operação técnica sem anomalia crítica',
+            probable_cause: 'Os sinais consultados não indicam falha ativa de daemon, NAT, Hotspot, ClamAV ou exceções críticas.',
+            impact: 'Ambiente em condição normal de observação.',
+            evidence: [`${services.length} serviços técnicos consultados`, `${natState.total} regras NAT com ${natState.duplicates} duplicidade(s)`, `${blocked24hTotal} bloqueios registrados em 24h`],
+            recommendation: 'Manter monitoramento e usar investigação dirigida apenas se houver relato de usuário ou alerta externo.',
+            action: 'Ver observação',
+        });
+    }
+
+    const severityOrder = { critical: 0, warning: 1, info: 2, success: 3 };
+    insights.sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+
+    return {
+        generated_at: new Date().toISOString(),
+        model: 'SGCG IA operacional heurística v1',
+        mode: 'read-only',
+        summary: {
+            critical: insights.filter((item) => item.severity === 'critical').length,
+            warning: insights.filter((item) => item.severity === 'warning').length,
+            services_checked: services.length,
+            nat_rules: natState.total,
+            nat_duplicates: natState.duplicates,
+            blocked_24h: blocked24hTotal,
+            blocked_5m: blocked5mTotal,
+        },
+        insights: insights.slice(0, 6),
+    };
+};
+
+router.get('/ai-insights', async (_req, res) => {
+    try {
+        res.json(await buildTechnicalInsights());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao gerar insights operacionais.' });
+    }
+});
+
+router.get('/ai-rag/status', async (_req, res) => {
+    try {
+        res.json(await ragService.status(false));
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao consultar o RAG operacional.' });
+    }
+});
+
+router.post('/ai-rag/reindex', async (_req, res) => {
+    try {
+        res.json(await ragService.reindex());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao reindexar o RAG operacional.' });
+    }
+});
+
+router.post('/ai-rag/ask', async (req, res) => {
+    try {
+        res.json(await ragService.ask(req.body?.question));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message || 'Falha ao responder com RAG operacional.' });
+    }
+});
 
 // --- STATUS DOS SERVIÇOS EM TEMPO REAL COM TELEMETRIA ---
 router.get('/services', async (req, res) => {

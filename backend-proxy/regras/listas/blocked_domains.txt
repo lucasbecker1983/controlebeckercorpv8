@@ -35,6 +35,8 @@ joom.pro
 livejasmin.com
 made-in-china.com
 max.com
+mercadolibre.com
+mercadolivre.com.br
 mofos.com
 mozilla.cloudflare-dns.com
 music.amazon.com

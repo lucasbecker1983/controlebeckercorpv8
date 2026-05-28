@@ -1,0 +1,9 @@
+[Unit]
+Description=SGCG gov.br and Empresa Facil allowlist refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/controlebeckercorp-v8
+ExecStart=/usr/bin/python3 /opt/controlebeckercorp-v8/scripts/update_govbr_allowlist.py

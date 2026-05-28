@@ -146,7 +146,14 @@ export default function Login({ onLogin }) {
                 </button>
             </form>
         </div>
-        <footer className="mt-8 flex w-full justify-end">
+        <footer className="mt-8 flex w-full flex-wrap items-center justify-between gap-3">
+          <a
+            href="/aviso-de-privacidade"
+            className="inline-flex items-center gap-2 text-xs font-semibold text-on-surface/54 transition hover:text-primary"
+            aria-label="Abrir aviso de privacidade do SGCG"
+          >
+            Aviso de privacidade
+          </a>
           <a
             href="https://jmbtecnologia.com.br"
             target="_blank"

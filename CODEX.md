@@ -23,6 +23,12 @@ Esta regra vale para:
 
 Se houver documentacao complementar em `docs/`, o resumo executivo e o estado atual ainda assim devem ser refletidos aqui.
 
+## Perfil tecnico esperado do agente
+
+- ao atuar neste projeto, o agente deve assumir postura de engenheiro, arquiteto e desenvolvedor senior de sistemas GovTech
+- tambem deve atuar como diretor, projetista, analista, desenvolvedor de frontend, UX, UI e backend senior
+- essa responsabilidade exige olhar o SGCG de ponta a ponta: produto, experiencia do operador, interface, acessibilidade, arquitetura, backend, banco de dados, runtime Linux, seguranca, auditoria, governanca publica, continuidade operacional e validacao real no ambiente
+
 ## Regra inegociavel de firewall
 
 - o firewall principal do servidor SGCG e o `UFW`
@@ -57,6 +63,979 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
 - em qualquer ajuste de firewall, `Unbound`, `RPZ`, `iptables`, `UFW` ou compilador de politicas, essa distincao deve ser preservada:
   - sem entrada da `VLAN 70` para a rede interna
   - com politicas de seguranca do SGCG plenamente ativas sobre a saida para internet
+
+## Incidente de politicas SGCG aparentemente desligadas nas VLANs - 2026-05-28
+
+- sintoma reportado:
+  - redes sociais abriam em IP nao VIP, indicando falha em `RPZ`, `DNS`, `ACL` e enforcement por VLAN
+- causa raiz confirmada no runtime:
+  - o compilador do Unbound estava com `UNBOUND_TAGGED_RPZ_SUSPENDED=true`, mantendo o modo seguro antigo e gerando apenas RPZ global, sem `access-control-tag` e sem RPZ por VLAN/VIP
+  - regras emergenciais amplas `FORWARD -i enp6s0.<vlan> -o enp8s0 -s 192.168.<vlan>.0/24 -j ACCEPT` estavam antes do `SGCG_GUARD`, `ufw-before-forward` e cadeias UFW, permitindo saida direta antes das politicas
+  - nao havia bypass emergencial ativo no banco (`emergency_vlan_bypass active=true` retornou `0`)
+- correcao aplicada:
+  - `backend-proxy/src/services/policy-compiler-service.ts` voltou a gerar RPZ tagged por VLAN/VIP (`UNBOUND_TAGGED_RPZ_SUSPENDED=false`)
+  - o compilador foi executado para `acl-plus-dns`, gerando `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` com `define-tag`, `access-control-tag`, `rpz.vippass` e zonas `blocklist-vlan-10/30/40/50/70`
+  - `unbound-checkconf /etc/unbound/unbound.conf` validou sem erros, o Unbound foi recarregado e o cache foi limpo
+  - as regras amplas de `ACCEPT` por subnet foram removidas das VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`, com limpeza de `conntrack`
+  - `iptables-save` foi persistido em `/etc/iptables/rules.v4`
+  - `backend-proxy` foi recompilado (`npm run build`) e reiniciado via PM2
+- validacao em producao:
+  - `ufw`, `unbound`, `postgresql`, `nginx`, `squid` e `isc-dhcp-server` ativos
+  - `backend-proxy` e `backend-proxy-ingester` online no PM2
+  - `iptables-save -t filter` e `iptables-save -t nat` sem duplicatas (`duplicates=0`)
+  - nenhuma regra ampla `FORWARD` por subnet VLAN para WAN permaneceu presente
+  - consultas DNS vindas dos gateways `192.168.50.1` e `192.168.70.1` para `facebook.com`, `instagram.com`, `tiktok.com`, `youtube.com` e `x.com` retornaram sem IP; `whatsapp.com`, `pontorh.com.br` e `gov.br` continuaram resolvendo
+  - na `VLAN 30`, `facebook.com`, `instagram.com`, `tiktok.com` e `x.com` ainda resolvem porque a politica cadastrada `Redes Sociais` esta escopada para `10,40,50,70`, nao para `30`
+  - a politica `Bloquear YouTube` tambem esta escopada para `10,40,50,70`
+  - `Pornografia` permanece como bloqueio global ativo
+- regra operacional:
+  - se a `VLAN 30` tambem deve bloquear redes sociais, ajustar o escopo das politicas no banco/UI para incluir `30`; nao tratar esse comportamento como falha de firewall enquanto o escopo cadastrado permanecer `10,40,50,70`
+  - a excecao inegociavel do PontoRH/OpenDNS foi preservada
+
+## Revisao de escopo das politicas institucionais e remocao do gateway VLAN 10 do VIP - 2026-05-28
+
+- contexto:
+  - revisao solicitada apos confirmar que o SGCG deve bloquear permanentemente `Redes Sociais`, `YouTube`, `Lista Negra`, `Streaming` e `Pornografia`
+  - a `VLAN 30` possui liberacoes por dia/horario para `YouTube` e `Redes Sociais`, portanto a politica base deve bloquear a VLAN 30 e o agendamento deve abrir somente a janela autorizada
+- correcao de escopo:
+  - `Redes Sociais` passou de `scope_value=10,40,50,70` para `10,30,40,50,70`
+  - `Bloquear YouTube` passou de `scope_value=10,40,50,70` para `10,30,40,50,70`
+  - as tabelas legadas `blocking_policies` foram resincronizadas a partir de `domain_policy_entries`
+  - resultado confirmado:
+    - `Redes Sociais`: `78` dominios ativos em cada VLAN `10`, `30`, `40`, `50` e `70`
+    - `Bloquear YouTube`: `10` dominios ativos em cada VLAN `10`, `30`, `40`, `50` e `70`
+    - `Lista Negra`: bloqueio global ativo
+    - `Streaming`: bloqueio global ativo
+    - `Pornografia`: bloqueio global ativo
+- agendamentos:
+  - `data/scheduled_policy_windows.json` contem duas janelas ativas para a `VLAN 30`:
+    - sexta-feira `08:00-17:00` para `YouTube` e `Redes Sociais`
+    - segunda a sexta `11:30-13:00` para `YouTube` e `Redes Sociais`
+  - em `2026-05-28 08:xx -03`, o reconciliador retornou `vlan30_media_active=false`
+  - `release_policies` com `origin_rule='scheduled-window'` retornou `0`, confirmando que nao havia liberacao agendada ativa no momento
+- remocao de VIP indevido:
+  - `192.168.10.1` foi removido do VIP porque e gateway/DNS da `VLAN 10`, nao endpoint usuario
+  - `dns_vip.id=1840` (`192.168.10.1`, `VLAN_10`) foi desativado
+  - `policy_exceptions.id=39` (`192.168.10.1`, `VLAN_10`) foi desativado
+  - apos reaplicar o motor, `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` deixou de gerar `access-control-tag: 192.168.10.1 "vip_bypass"`
+- aplicacao e validacao:
+  - `blockingReleaseService.apply('codex-scope-review')` reaplicou o motor e derrubou sessoes recentes de redes sociais
+  - `blockingReleaseService.apply('codex-remove-gateway-vip')` reaplicou o runtime apos remover o gateway da lista VIP
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `iptables-save -t filter` e `iptables-save -t nat` sem duplicatas
+  - `ufw`, `unbound`, `postgresql`, `nginx`, `squid` e `isc-dhcp-server` ativos
+  - `backend-proxy` e `backend-proxy-ingester` online no PM2
+  - `/etc/iptables/rules.v4` atualizado com o estado validado
+  - validacao DNS usando os resolvedores/gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1` e `192.168.70.1`:
+    - `facebook.com`, `youtube.com`, `x.com`, `spotify.com` e `pornhub.com` retornaram sem IP
+    - `whatsapp.com`, `pontorh.com.br` e `gov.br` continuaram resolvendo
+  - observacao: `netflix.com` continua resolvendo por desenho da politica de `Streaming`, que preserva Netflix/Fast.com para teste de velocidade conforme regra historica do SGCG
+
+## Performance do DNS recursivo Unbound - 2026-05-28
+
+- contexto:
+  - o resolvedor local respondia cache quente em `0-1 ms`, mas o Unbound principal e o resolvedor VIP limpo estavam usando apenas `1` thread em servidor com `12` CPUs
+  - o SGCG mantem `log-queries` e `log-replies` ativos para alimentar o Radar DNS, portanto o ajuste priorizou paralelismo/cache sem cegar a auditoria
+- alteracoes aplicadas:
+  - criado `/etc/unbound/unbound.conf.d/98-sgcg-performance.conf`
+  - Unbound principal passou a usar:
+    - `num-threads: 12`
+    - `so-reuseport: yes`
+    - `msg-cache-size: 128m`
+    - `rrset-cache-size: 256m`
+    - `key-cache-size: 64m`
+    - `neg-cache-size: 32m`
+    - slabs em `16`
+    - `outgoing-range: 8192`
+    - `num-queries-per-thread: 4096`
+    - buffers socket `4m`
+    - `cache-min-ttl: 60`
+    - `cache-max-ttl: 86400`
+    - `prefetch: yes`
+    - `prefetch-key: yes`
+    - `serve-expired: yes`
+    - `serve-expired-ttl: 86400`
+    - `serve-expired-client-timeout: 1800`
+  - `/etc/unbound/unbound.conf.d/99-ratelimit.conf` deixou de forcar `cache-min-ttl: 0` e passou para `cache-min-ttl: 60`
+  - `/etc/unbound/sgcg-vip-clean.conf` recebeu perfil equivalente com `num-threads: 12`, caches menores e `prefetch/serve-expired`
+- aplicacao:
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `unbound-checkconf /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - reiniciados `unbound` e `sgcg-vip-dns.service`
+  - `unbound-control status` confirmou `threads: 12`
+  - `ps -C unbound` confirmou `NLWP=12` no Unbound principal e `NLWP=12` no resolvedor VIP limpo
+- validacao:
+  - `unbound` e `sgcg-vip-dns.service` ativos
+  - portas `53` e `5355` expostas com `SO_REUSEPORT` em 12 sockets UDP/TCP
+  - primeira consulta apos restart ainda depende de rede externa/forwarders e ficou na faixa comum de `15-27 ms`
+  - segunda/terceira consulta para os mesmos nomes ficou em `0-1 ms`
+  - nas VLANs `10`, `30`, `40`, `50` e `70`, `facebook.com`, `youtube.com` e `pornhub.com` continuaram bloqueados
+  - `whatsapp.com`, `pontorh.com.br` e `gov.br` continuaram resolvendo
+  - amostra do journal apos ajuste: `777` respostas, media `9.97 ms`, maximo `127.87 ms`, `37` acima de `50 ms`
+- observacao operacional:
+  - o Unbound principal ainda possui `forward-zone "."` para `9.9.9.9` e `1.1.1.2`; portanto a primeira consulta fria depende desses forwarders
+  - para consultas ja em cache, a meta operacional e `0-1 ms`
+
+## Ajuste de navegacao lenta nas VLANs - 2026-05-28
+
+- sintoma reportado:
+  - navegacao nas VLANs extremamente lenta ou falhando em alguns dominios
+- achado runtime:
+  - DNS local e HTTPS comum estavam funcionais nos testes por gateway das VLANs `10`, `30`, `40`, `50` e `70`
+  - havia bloqueios silenciosos `DROP` em caminhos que navegadores modernos tentam antes do HTTPS/TCP normal:
+    - `UDP/443` (`QUIC`/HTTP3)
+    - `TCP/853` (`DoT`)
+    - `TCP/443` para resolvedores DoH externos conhecidos (`1.1.1.1`, `1.0.0.1`, `8.8.8.8`, `8.8.4.4`, `9.9.9.9`, `149.112.112.112`, `94.140.14.14`, `94.140.15.15`)
+  - esse tipo de `DROP` preserva a seguranca, mas pode causar espera por timeout antes do navegador cair para o caminho permitido, gerando sensacao de site travando ou lento
+- correcao aplicada:
+  - `backend-proxy/src/services/dns-contingency-service.ts` agora gera o bloco antecipado `BECKERCORP_EARLY_FORWARD` com `REJECT` para `QUIC`, `DoH` e `DoT`, mantendo `ACCEPT` dos VIPs antes dos bloqueios
+  - `/etc/ufw/before.rules` foi atualizado com os mesmos `REJECT` antecipados
+  - `scripts/sanitize_doh_vlans.py` passou a criar regras UFW `route reject` em vez de `route deny` para `DoH`, `DoT` e `QUIC`
+  - regras antigas da `VLAN 70` para `TCP/5222`, `TCP/5223` e `TCP/5228` foram removidas do UFW porque conflitam com dependencias de WhatsApp/Web WhatsApp
+  - `ufw-user-forward` foi normalizado para mostrar `REJECT FWD` nas regras de sanitizacao, nao mais `DENY FWD` silencioso
+  - `backend-proxy` foi recompilado e reiniciado via PM2 para o SGCG manter o comportamento em futuros reconciles
+  - duplicatas NAT residuais foram limpas e `/etc/iptables/rules.v4` foi persistido novamente
+- validacao:
+  - `npm run build` em `backend-proxy` concluido com sucesso
+  - `python3 -m py_compile scripts/sanitize_doh_vlans.py scripts/update_whatsapp_allowlist.py` sem erro
+  - `iptables-restore --test < /etc/ufw/before.rules` sem erro
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx` e `postgresql` ativos
+  - `backend-proxy` e `backend-proxy-ingester` online no PM2
+  - `iptables-save -t filter`: `623` regras, `duplicates=0`
+  - `iptables-save -t nat`: `142` regras, `duplicates=0`
+  - `iptables -S ufw-before-forward` confirmou `REJECT --reject-with icmp-port-unreachable` para `UDP/443` e `REJECT --reject-with tcp-reset` para `DoH`/`DoT`
+  - `ufw status numbered` mostrou `REJECT FWD` para as regras `SANITIZE VLAN* BLOCK DOT/QUIC/DOH`
+  - cache local do Unbound respondeu `0-1 ms` em `127.0.0.1` e nos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`
+  - testes HTTPS usando origem dos gateways das VLANs abriram `google.com`, `gov.br`, `pontorh.com.br`, `whatsapp.com`, `web.whatsapp.com`, `microsoft.com`, `uol.com.br` e `cloudflare.com`
+  - `facebook.com`, `instagram.com`, `youtube.com` e `pornhub.com` continuaram sem IP nas VLANs `10`, `30`, `40`, `50` e `70`
+  - `whatsapp.com` e `web.whatsapp.com` continuaram resolvendo nas VLANs `10`, `30`, `40`, `50` e `70`
+- observacao operacional:
+  - bloquear `QUIC` continua correto para forcar a navegacao auditavel por HTTPS/TCP e evitar bypass de politicas; o ponto corrigido foi trocar timeout silencioso por falha rapida
+
+## Revisao DNS gov.br e WhatsApp em todas as VLANs - 2026-05-28
+
+- sintoma reportado:
+  - `VLAN 40` e `VLAN 50` com lentidao forte na resolucao de nomes, especialmente `globo.com` e portais `gov.br`
+  - todas as VLANs reclamando de instabilidade no WhatsApp, incluindo WhatsApp Web
+  - requisito operacional: `gov.br` e todos os subdominios `*.gov.br` nao devem seguir o recursivo institucional padrao; devem ter bypass DNS total via `1.1.1.1` no modulo `Controle de Rede > DNS Institucional`
+- achados runtime:
+  - as VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99` estavam respondendo DNS para `gov.br`, `www.gov.br`, `sso.acesso.gov.br`, `globo.com`, `whatsapp.com`, `web.whatsapp.com` e `static.whatsapp.net`
+  - a regra persistida em `net_dns_rules` e o arquivo `/etc/unbound/unbound.conf.d/custom-zones.conf` ainda encaminhavam `gov.br` para `9.9.9.9`, divergindo do contrato solicitado
+  - o `ipset sgcg_whatsapp_allowed` existia e as regras `SGCG WHATSAPP ALLOW`, `SGCG WHATSAPP CALL TCP ALLOW` e `SGCG WHATSAPP CALL UDP ALLOW` estavam no `FORWARD`, mas o conjunto estava vazio
+  - o conjunto `sgcg_social_blocked` nao estava carregado; por isso o script antigo so resolvia os dominios do WhatsApp, mas nao adicionava nenhum IP quando nao havia overlap contra esse ipset
+- correcao aplicada:
+  - `net_dns_rules.id=7` (`gov.br`) foi atualizado para `target_ip='1.1.1.1'` e `type='FWD'`, mantendo a regra visivel em `DNS Institucional`
+  - `/etc/unbound/unbound.conf.d/custom-zones.conf` passou a conter `forward-zone name: "gov.br"` com `forward-addr: 1.1.1.1`
+  - `/etc/unbound/sgcg-vip-clean.conf` recebeu a mesma zona especifica para `gov.br -> 1.1.1.1`, antes do forwarder raiz, cobrindo tambem o resolvedor VIP limpo
+  - `scripts/update_whatsapp_allowlist.py` foi ajustado para usar allowlist completa resolvida quando `sgcg_social_blocked` estiver ausente ou vazio, evitando que o WhatsApp fique sem IPs liberados por falha de estado do ipset social
+  - `unbound` foi recarregado, `sgcg-vip-dns.service` reiniciado, caches do Unbound limpos e a allowlist dinamica do WhatsApp foi executada
+  - `/etc/iptables/rules.v4` e `/etc/ipset.conf` foram persistidos apos a correcao
+- validacao:
+  - `unbound-checkconf /etc/unbound/unbound.conf` e `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - `python3 -m py_compile scripts/update_whatsapp_allowlist.py scripts/sanitize_doh_vlans.py` sem erro
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx` e `postgresql` ativos
+  - `sgcg_whatsapp_allowed` passou de `0` para `34` IPs atuais, incluindo dependencias de WhatsApp Web como `graph.whatsapp.com`, `chat.cdn.whatsapp.net`, `mmx-ds.cdn.whatsapp.net` e `edge-mqtt.facebook.com`
+  - `tcpdump` em `enp8s0` confirmou consultas de `sso.acesso.gov.br` e `receita.fazenda.gov.br` saindo para `1.1.1.1:53`
+  - nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`, os dominios `gov.br`, `www.gov.br`, `sso.acesso.gov.br`, `receita.fazenda.gov.br`, `globo.com`, `whatsapp.com`, `web.whatsapp.com`, `static.whatsapp.net`, `graph.whatsapp.com` e `chat.cdn.whatsapp.net` retornaram `NOERROR`
+  - depois do cache aquecido, as VLANs `40`, `50`, `70`, `80` e `99` responderam os nomes principais em `0-1 ms`; a primeira consulta fria na `VLAN 10` ficou na faixa de `16-22 ms`, compatível com forward externo
+  - nas VLANs de politica `10`, `30`, `40`, `50` e `70`, os bloqueios de controle para `facebook.com`, `instagram.com`, `youtube.com` e `pornhub.com` continuaram retornando `NXDOMAIN`
+- observacao operacional:
+  - `VLAN 80` e `VLAN 99` resolvem os dominios de controle social porque nao estao nas tags de bloqueio por VLAN do compilador atual; isso foi observado, mas nao alterado nesta rodada porque o pedido era estabilizar resolucao e WhatsApp em todas as VLANs
+
+## Confirmacao urgente de bypass gov.br e Empresa Facil - 2026-05-28
+
+- contexto:
+  - confirmacao solicitada para garantir que `gov.br` e todos os subdominios `*.gov.br` tenham bypass DNS total pelos resolvedores Cloudflare `1.1.1.1` e `1.0.0.1`
+  - exemplos sensiveis informados: `https://www.gov.br/govbrportal/inicializacao-autenticacao-openid.html` e `https://autenticacao.empresafacil.pr.gov.br/`
+- correcao/persistencia:
+  - `net_dns_rules.id=7` (`gov.br`) foi atualizado para `target_ip='1.1.1.1,1.0.0.1'` e `type='FWD'`, mantendo a regra visivel em `Controle de Rede > DNS Institucional`
+  - `/etc/unbound/unbound.conf.d/custom-zones.conf` passou a conter `forward-zone name: "gov.br"` com dois `forward-addr`: `1.1.1.1` e `1.0.0.1`
+  - `/etc/unbound/sgcg-vip-clean.conf` recebeu a mesma zona especifica `gov.br -> 1.1.1.1 + 1.0.0.1`
+  - os geradores `backend-proxy/src/routes/dns-routes.ts`, `backend/src/modules/unbound/routes.ts` e `backend/src/modules/network/dns-routes.ts` passaram a aceitar multiplos forwarders separados por virgula/espaco e escrever uma linha `forward-addr` por resolvedor, evitando regressao futura pelo painel
+  - `unbound` foi recarregado, `sgcg-vip-dns.service` reiniciado e `backend-proxy`/`bcc-backend` reiniciados via PM2 apos build
+- validacao DNS/forwarder:
+  - `unbound-checkconf /etc/unbound/unbound.conf` e `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - `npm run build` em `backend-proxy` e `backend` concluiu sem erro
+  - `tcpdump -i enp8s0 '(host 1.1.1.1 or host 1.0.0.1) and port 53'` confirmou consultas `*.gov.br` saindo para os dois resolvedores Cloudflare:
+    - `1.1.1.1`: `gov.br`, `www.gov.br`, `sso.acesso.gov.br`, `receita.fazenda.gov.br`, `dados.gov.br`, `barra.sistema.gov.br`, `contas.acesso.gov.br`, `servicos.acesso.gov.br`, `autenticacao.empresafacil.ro.gov.br`
+    - `1.0.0.1`: consultas `A` e `HTTPS` para familia `*.gov.br` tambem apareceram na captura, confirmando que o segundo forwarder esta ativo
+  - nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`, `gov.br`, `www.gov.br`, `sso.acesso.gov.br`, `receita.fazenda.gov.br`, `dados.gov.br`, `barra.sistema.gov.br`, `contas.acesso.gov.br` e `servicos.acesso.gov.br` retornaram `NOERROR`, em cache quente entre `0-1 ms`
+- validacao das URLs informadas:
+  - `https://www.gov.br/govbrportal/inicializacao-autenticacao-openid.html` retornou `HTTP 200` em todas as VLANs testadas, com DNS em cerca de `17-19 ms` na primeira ida e TLS em cerca de `90-95 ms`
+  - a dependencia principal `https://barra.sistema.gov.br/v1/barra-govbr-wc.js` retornou `HTTP 200` em todas as VLANs, com download de `260564` bytes
+  - `autenticacao.empresafacil.pr.gov.br`, `empresafacil.pr.gov.br` e `www.empresafacil.pr.gov.br` resolveram via `1.1.1.1` e `1.0.0.1`
+  - `https://autenticacao.empresafacil.pr.gov.br/` sem cookie retorna `302` para `/selected-system/sigfacil-pr` em todas as VLANs; seguindo redirects sem cookie pode parecer carregamento infinito
+  - com cookie jar normal, o fluxo do Empresa Facil retornou `HTTP 200` e HTML de aproximadamente `30 KB`; na VLAN 50 o teste validado retornou `HTTP 200`, `redirects=2`, `total=1.276s`, `final=https://autenticacao.empresafacil.pr.gov.br/`
+  - dependencias do Empresa Facil (`sigfacil.staticvox.com.br`, `www.googletagmanager.com`, `js-agent.newrelic.com`, `bam.nr-data.net`) resolveram e carregaram por HTTPS nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`
+- conclusao operacional:
+  - o bypass DNS da familia `gov.br` esta ativo para todas as VLANs e pelos dois resolvedores `1.1.1.1` e `1.0.0.1`
+  - para o Empresa Facil, o comportamento de "ficar carregando" nao foi reproduzido como bloqueio de DNS/rede no gateway; o padrao observado foi loop de redirecionamento quando a sessao/cookie `security` nao se fixa no cliente
+  - se um navegador especifico continuar travando, validar no endpoint cache/cookies do site `autenticacao.empresafacil.pr.gov.br`, extensoes do navegador ou WebView, pois a rota de rede e as dependencias externas abriram nos testes de gateway
+
+## Bypass de dependencias gov.br, SSO e Empresa Facil - 2026-05-28
+
+- decisao operacional:
+  - tudo que as paginas criticas `gov.br`, `sso.acesso.gov.br` e `autenticacao.empresafacil.pr.gov.br` pedirem como dependencia externa deve seguir o mesmo contrato de bypass, mesmo quando o dominio nao terminar em `gov.br`
+  - o objetivo e evitar que CSS, JS, captcha, telemetria, assets de CDN ou componentes de acessibilidade caiam em Unbound recursivo padrao, captive, bloqueio social, UFW/ACL ou proxy complementar
+- alteracoes aplicadas:
+  - `scripts/update_govbr_allowlist.py` passou a manter automaticamente os dominios criticos e dependencias em `net_dns_rules` como `FWD` para `1.1.1.1,1.0.0.1`
+  - a rotina regenera `/etc/unbound/unbound.conf.d/custom-zones.conf` a partir de `net_dns_rules`, preservando o contrato visivel em `Controle de Rede > DNS Institucional`
+  - `sgcg_govbr_allowed` passou a incluir IPs atuais de gov.br, SSO, Empresa Facil, hCaptcha/reCAPTCHA, Google/Gstatic/Fonts/Maps, CDNJS, VLibras, SERPRO/estaleiro, StaticVox, New Relic e Google Analytics/Tag Manager
+  - as regras `SGCG GOVBR EMPRESAFACIL ALLOW` no `FORWARD` e `SGCG GOVBR EMPRESAFACIL NAT BYPASS` no `PREROUTING` continuam antes de captive/bloqueios/UFW para esses destinos
+  - `sgcg-govbr-allowlist.timer` permanece ativo para renovar IPs periodicamente; execucao manual em `2026-05-28 10:02 -03` retornou `ok members=107`
+  - `/etc/squid/acl/proxy_whitelist.acl` e `/etc/squid/acl/proxy_protected_ssl.acl` receberam tambem as dependencias criticas, cobrindo clientes que usam proxy explicito
+- dominios adicionados ao bypass institucional:
+  - `certificado.sso.acesso.gov.br`, `cadastro.acesso.gov.br`, `estruturaorganizacional.dados.gov.br`
+  - `sigfacil.staticvox.com.br`, `js-agent.newrelic.com`, `bam.nr-data.net`
+  - `hcaptcha.com`, `js.hcaptcha.com`, `newassets.hcaptcha.com`
+  - `www.googletagmanager.com`, `www.google-analytics.com`, `ssl.google-analytics.com`, `www.google.com`, `www.gstatic.com`, `fonts.googleapis.com`, `fonts.gstatic.com`, `maps.googleapis.com`
+  - `cdnjs.cloudflare.com`, `vlibras.gov.br`, `www.vlibras.gov.br`, `dicionario2.vlibras.gov.br`, `traducao2.vlibras.gov.br`, `cdn-dsgovserprodesign.estaleiro.serpro.gov.br`, `serprobots.estaleiro.serpro.gov.br`, `cdp.cloud.unity3d.com`, `config.uca.cloud.unity3d.com`
+  - `apps.apple.com`, `play.google.com`
+- validacao:
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `squid -k parse` sem erro fatal e `systemctl reload squid` executado; `squid`, `unbound`, `ufw` e `sgcg-govbr-allowlist.timer` ativos
+  - `tcpdump` em `enp8s0` confirmou consultas para dependencias como `newassets.hcaptcha.com`, `www.gstatic.com`, `cdnjs.cloudflare.com`, `cdn-dsgovserprodesign.estaleiro.serpro.gov.br`, `sigfacil.staticvox.com.br`, `js-agent.newrelic.com` e `bam.nr-data.net` saindo para `1.1.1.1` ou `1.0.0.1`
+  - nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`, dependencias do SSO/Empresa Facil resolveram com respostas `A`
+  - `https://sso.acesso.gov.br/authorize?...` retornou `HTTP 302` em todas as VLANs, com TLS em cerca de `60-95 ms`, apontando para `/login`
+  - `https://autenticacao.empresafacil.pr.gov.br/` retornou `HTTP 200`, `redirects=2`, `remote=200.155.79.202` em todas as VLANs; na `VLAN 50`, `total=1.574s`
+  - o mesmo fluxo via Squid explicito retornou `HTTP 200`, `redirects=2`, `size=30690`, e as dependencias principais retornaram `TCP_TUNNEL/200` no `access.log`
+  - conexoes antigas em `conntrack` para IPs de Empresa Facil/SSO/StaticVox foram limpas apos a liberacao ampliada
+
+## Incidente pos-merge/reboot - VLAN 50, UFW e reload indevido do Unbound - 2026-05-27
+
+- contexto:
+  - apos troca de 2 HDs por 2 SSDs, merge e reboot do servidor, as VLANs ficaram sem navegacao para usuarios comuns e maquinas em `VIP` continuavam funcionando
+  - durante a emergencia, regras foram liberadas diretamente no `iptables` e o UFW foi desabilitado
+- achados runtime:
+  - interfaces e rotas estavam presentes: `enp6s0.50` com `192.168.50.1/24`, WAN `enp8s0` com rota default via `186.251.14.25`
+  - `net.ipv4.ip_forward=1`
+  - havia `MASQUERADE` para `192.168.50.0/24` em `POSTROUTING`
+  - `FORWARD` tinha trafego real aceito para `enp6s0.50 -> enp8s0` e retorno `enp8s0 -> enp6s0.50`
+  - `conntrack` mostrou sessoes estabelecidas da VLAN 50 para destinos externos em `443`, `5222`, `5228` e UDP
+  - captura em `enp6s0.50` confirmou trafego bidirecional de `192.168.50.12`, `192.168.50.26` e `192.168.50.30`, incluindo HTTPS externo e check-in interno `HTTP 200`
+  - DNS da VLAN 50 respondeu `NOERROR` em `dig @192.168.50.1 google.com A`
+- causa operacional identificada:
+  - o UFW estava com `/etc/ufw/ufw.conf` em `ENABLED=no`, apesar do servico systemd aparecer como `active (exited)`
+  - `ufw status` falhava por `ip6tables`, pois a carga IPv6 impedia o UFW de listar/recarregar corretamente
+  - o timer `sgcg-policy-window-reconcile.timer` executava a cada minuto e `scripts/reconcile_scheduled_policy_windows.js` reescrevia `/etc/unbound/becker/allowed.rpz` e recarregava o `unbound` mesmo quando o conteudo nao mudava
+  - isso causava reload DNS recorrente e desnecessario durante o periodo de instabilidade
+- correcao aplicada:
+  - `scripts/reconcile_scheduled_policy_windows.js` agora compara o conteudo calculado de `allowed.rpz` com o conteudo original e so grava/recarrega o Unbound quando existe alteracao real
+  - `/etc/default/ufw` foi ajustado temporariamente para `IPV6=no`, isolando a falha de `ip6tables` sem impedir a protecao IPv4 das VLANs
+  - `ufw --force enable` reativou o UFW como camada oficial; `/etc/ufw/ufw.conf` voltou para `ENABLED=yes`
+- validacao:
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
+  - `systemctl start sgcg-policy-window-reconcile.service` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=true`
+  - apos nova execucao do timer, `journalctl -u unbound --since '2026-05-27 12:17:00'` nao mostrou novo `Reloading`, `Restart`, `service stopped` ou `start of service`
+  - `ufw status verbose` voltou a responder `Status: active`, `Default: deny (incoming), allow (outgoing), allow (routed)`
+  - `systemctl is-active ufw unbound sgcg-vip-dns.service squid isc-dhcp-server nginx` retornou `active` para todos
+  - `dig @192.168.50.1 google.com A` retornou `NOERROR`
+  - `ping -4 -c 3 -W 1 -I 192.168.50.1 8.8.8.8` teve `0% packet loss`
+  - `iptables -L FORWARD -n -v` confirmou counters ativos para `192.168.50.0/24`
+  - `iptables -t nat -L POSTROUTING -n -v` confirmou `MASQUERADE` ativo para `192.168.50.0/24`
+- pendencias:
+  - reconstruir com calma o caminho IPv6 do UFW antes de voltar `IPV6=yes`
+  - revisar e remover os bypasses emergenciais de `iptables` quando a rede estiver confirmada pelos usuarios
+  - auditar o restante do reconciliador/firewall para reduzir dependencia de regras runtime aplicadas fora do UFW
+
+## Retorno das regras de seguranca apos estabilizacao - 2026-05-27
+
+- contexto:
+  - apos confirmacao operacional de estabilidade, foi auditado se o `iptables` ja estava em condicao de voltar ao enforcement institucional completo
+  - o UFW permaneceu como firewall oficial (`Status: active`, `Default: deny (incoming), allow (outgoing), allow (routed)`)
+- achados:
+  - `ufw.conf` estava em `ENABLED=yes`
+  - `/etc/default/ufw` permaneceu temporariamente com `IPV6=no`, ainda como pendencia controlada do incidente de `ip6tables`
+  - `/run/sgcg-firewall.lock` estava limpo
+  - `iptables-save -t nat` mediu `rules=150`, `duplicates=0`
+  - `iptables-save -t filter` mediu `rules=653`, `duplicates=0`
+  - havia bypass emergencial ainda ativo em banco para VLAN 10 e VLAN 30; a VLAN 10 ja estava vencida e foi expirada pelo fluxo do SGCG, e a VLAN 30 foi desativada como retorno manual ao enforcement
+- correcao aplicada:
+  - criado snapshot antes da limpeza em `/root/sgcg-firewall-backups/iptables-before-security-restore-20260527-125847.rules`
+  - VLAN 10 (`emergency_vlan_bypass.id=6`) ficou `active=false`, `deactivated_by=system-expiry`
+  - VLAN 30 (`emergency_vlan_bypass.id=8`) ficou `active=false`, `deactivated_by=codex-runtime-audit`
+  - removidos residuos runtime `sgcg-emergency-bypass` do `FORWARD` para `192.168.30.0/24`
+  - removida a excecao DoT nft residual da `enp6s0.30`
+- validacao:
+  - `SELECT count(*) FROM emergency_vlan_bypass WHERE active = TRUE AND (expires_at IS NULL OR expires_at >= NOW())` retornou `0`
+  - `iptables-save | rg "sgcg-emergency-bypass"` nao retornou regras
+  - `nft -a list chain ip filter FORWARD` nao mostrou excecao DoT residual para `enp6s0.30`
+  - `iptables-restore --test` sobre o snapshot atual retornou `iptables_restore_test_ok`
+  - `systemctl is-active ufw unbound sgcg-vip-dns.service squid isc-dhcp-server nginx postgresql` retornou `active` para todos
+  - `dig @192.168.50.1 google.com A` retornou endereco valido
+  - `ping -4 -c 3 -W 1 -I 192.168.50.1 8.8.8.8` teve `0% packet loss`
+- estado final:
+  - `iptables` ficou consistente para retomada das regras de seguranca, sem duplicatas e sem bypass emergencial aberto
+  - mantida a pendencia separada de reconstruir o caminho IPv6 do UFW antes de voltar `IPV6=yes`
+
+## Ajuste do timer de agendamentos por VLAN - 2026-05-27
+
+- contexto:
+  - apos validar que os agendamentos por VLAN estavam funcionando, foi reduzida a frequencia do `sgcg-policy-window-reconcile.timer` para evitar execucoes desnecessarias a cada minuto
+  - a precisao de inicio/fim dos agendamentos continua suficiente para janelas operacionais como horario de almoco e sexta-feira
+- alteracao aplicada:
+  - `/etc/systemd/system/sgcg-policy-window-reconcile.timer` passou de `OnUnitActiveSec=60s` para `OnUnitActiveSec=5min`
+  - `AccuracySec` passou de `5s` para `30s`
+  - a descricao da unit foi atualizada para `a cada 5 minutos`
+  - executados `systemctl daemon-reload` e `systemctl restart sgcg-policy-window-reconcile.timer`
+- validacao:
+  - `systemctl status sgcg-policy-window-reconcile.timer` mostrou `active (waiting)` e proximo disparo em aproximadamente 5 minutos
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
+  - `node scripts/reconcile_scheduled_policy_windows.js` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=false`
+  - `journalctl -u unbound --since '5 minutes ago'` nao mostrou novo `Reloading`, `Restart`, `stopped`, `start of service`, `error`, `failed` ou `fatal`
+- impacto esperado:
+  - reducao de carga e ruido operacional sem perder confiabilidade pratica dos agendamentos
+  - atraso maximo esperado para aplicar ou remover uma janela passa a ser de cerca de 5 minutos
+
+## Hotspot VLAN 70 - correcao de sessao ativa sem MAC momentaneo - 2026-05-25
+
+- sintoma relatado:
+  - aparelhos conectavam normalmente na rede `VISITANTES` da `VLAN 70`, mas o sistema operacional voltava a exibir `conectado sem acesso a internet`
+- causa raiz validada em runtime:
+  - o login publico do Hotspot criava sessao ativa e autorizava o IP no `ipset` `sgcg_hotspot_v70_auth`
+  - em seguida, consultas de contexto/CAPPORT podiam ocorrer quando a vizinhanca ARP/neighbor do Linux ainda estava `INCOMPLETE`, `FAILED` ou sem MAC resolvido
+  - o endpoint `GET /api/hotspot/public/context` tratava a ausencia momentanea de MAC como falha dura e revogava sessoes ativas por IP com motivo `context_without_mac`
+  - isso removia o IP do `sgcg_hotspot_v70_auth`, fazia o `generate_204` voltar a servir o portal e o Android/iOS classificava a rede como sem internet
+- correcao aplicada:
+  - `backend/src/modules/hotspot/hotspot-routes.ts` agora procura sessao ativa pelo IP antes de exigir MAC em `context`, `capport` e `probe`
+  - quando existe sessao ativa valida por IP, o backend preserva a autorizacao runtime mesmo sem MAC momentaneo na tabela de vizinhanca
+  - a revogacao automatica por `context_without_mac` foi removida desse caminho; sem MAC e sem sessao ativa, o portal apenas retorna `requires_login=true`
+  - a consulta de sessao passou a expor tambem `session_mac_address`, permitindo responder com o MAC gravado na sessao quando o MAC nao foi inferido ao vivo
+- reparo operacional da rodada:
+  - as sessoes ainda validas `135` (`192.168.70.54`) e `137` (`192.168.70.35`), derrubadas durante o diagnostico pelo comportamento antigo, foram restauradas para `status=active`
+  - os IPs `192.168.70.54` e `192.168.70.35` foram recolocados em `sgcg_hotspot_v70_auth` com timeout ativo
+  - conexoes conntrack desses IPs foram limpas para evitar estado antigo apos a restauracao
+- validacao:
+  - `cd backend && npm run build` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` executado e `bcc-backend` ficou `online`
+  - `GET /api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.35` retornou `authenticated=true`, `session.runtime_authorized=true`, `mac_inferred=false`
+  - `GET /api/hotspot/public/capport` com `X-Forwarded-For: 192.168.70.35` retornou `{"captive":false}`
+  - `GET /generate_204` com `Host: connectivitycheck.gstatic.com` e `X-Forwarded-For: 192.168.70.35` retornou `204 No Content`
+  - `GET /api/hotspot/public/context` com `X-Forwarded-For: 192.168.70.54` retornou `authenticated=true`, `session.runtime_authorized=true`, `mac_inferred=false`
+  - `GET /api/hotspot/public/capport` com `X-Forwarded-For: 192.168.70.54` retornou `{"captive":false}`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou `192.168.70.35` e `192.168.70.54` presentes com timeout ativo
+
+## Observabilidade Grafana/Prometheus - 2026-05-18
+
+- objetivo:
+  - instalar e deixar operacional uma camada Grafana baseada na rede real do SGCG
+  - complementar o Netdata existente com dashboards persistentes, Prometheus, node_exporter e blackbox_exporter
+- instalacao:
+  - pacote `grafana 13.0.1-01` instalado a partir do repositorio oficial Grafana OSS ja configurado no host
+  - pacote `prometheus-blackbox-exporter 0.24.0-2ubuntu0.3` instalado pelos repositorios Ubuntu Noble
+  - `prometheus` e `prometheus-node-exporter` ja existiam, mas estavam mascarados; foram desmascarados, habilitados e reiniciados
+- seguranca de exposicao:
+  - `grafana-server` escuta apenas em `127.0.0.1:3000`
+  - `prometheus` escuta apenas em `127.0.0.1:9090`
+  - `prometheus-node-exporter` escuta apenas em `127.0.0.1:9100`
+  - `prometheus-blackbox-exporter` escuta apenas em `127.0.0.1:9115`
+  - acesso HTTP externo direto a essas portas nao foi aberto
+  - Nginx publica apenas no console interno:
+    - `https://console.interno.jacarezinho/grafana/`
+    - `https://192.168.10.1/grafana/`
+    - `https://console.interno.jacarezinho/prometheus/`
+    - `https://192.168.10.1/prometheus/`
+  - a senha administrativa do Grafana foi resetada e armazenada fora do repositorio em `/root/.sgcg-grafana-admin-password`
+- arquivos de runtime alterados:
+  - `/etc/grafana/grafana.ini`
+  - `/etc/grafana/provisioning/datasources/sgcg-prometheus.yml`
+  - `/etc/grafana/provisioning/datasources/sinturs-prom.yml`
+  - `/etc/grafana/provisioning/dashboards/sinturs.yml`
+  - `/etc/prometheus/prometheus.yml`
+  - `/etc/default/prometheus-node-exporter`
+  - `/etc/default/prometheus-blackbox-exporter`
+  - `/etc/systemd/system/prometheus.service.d/override.conf`
+  - `/etc/nginx/sites-available/console.interno.jacarezinho`
+  - `/var/lib/grafana/dashboards/legacy/sgcg-gateway-rede.json`
+- dashboards/probes configurados:
+  - dashboard `SGCG - Gateway e Rede`
+  - datasource padrao `SGCG Prometheus`
+  - metricas de CPU, memoria, disco e trafego por interface
+  - interfaces contempladas: `enp8s0`, `enp6s0`, `enp6s0.10`, `enp6s0.30`, `enp6s0.40`, `enp6s0.50`, `enp6s0.70`, `enp6s0.80`, `enp6s0.99`, `wg0`, `ifb10`, `ifb30`, `ifb40`, `ifb50`, `ifb70`, `ifb80`
+  - probes ICMP dos gateways/enderecos:
+    - `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1`, `192.168.99.1`, `10.8.0.1`, `186.251.14.26`
+  - probes HTTP de servicos locais:
+    - Netdata `127.0.0.1:19999`
+    - backend core `127.0.0.1:6778/health`
+    - frontend interno `127.0.0.1:6777`
+    - backend-proxy `127.0.0.1:6779/health`
+  - probes HTTP das cameras VLAN 40:
+    - `192.168.40.102` a `192.168.40.107`
+- ajuste operacional:
+  - `prometheus-blackbox-exporter` recebeu capability `cap_net_raw=ep` para permitir probes ICMP sem executar o servico como root
+  - dashboards legados foram separados em `/var/lib/grafana/dashboards/legacy` para evitar conflito de resource manager do Grafana 13
+- validacao:
+  - `promtool check config /etc/prometheus/prometheus.yml` concluido com sucesso
+  - `nginx -t` concluido com sucesso; apenas avisos preexistentes de vhosts duplicados/protocol options foram exibidos
+  - `grafana-server`, `prometheus`, `prometheus-node-exporter`, `prometheus-blackbox-exporter` e `nginx` ficaram `active`
+  - `ss -lntup` confirmou todas as portas do stack de observabilidade presas a `127.0.0.1`
+  - `curl http://127.0.0.1:3000/grafana/api/health` retornou `database=ok`
+  - `curl http://127.0.0.1:9090/prometheus/-/ready` retornou `Prometheus Server is Ready`
+  - Nginx interno retornou `302` para `/grafana/` e `200` para `/prometheus/-/ready`
+  - API do Grafana confirmou datasource `SGCG Prometheus` como padrao e dashboard `SGCG - Gateway e Rede`
+  - API do Prometheus confirmou todos os targets ativos como `up`
+
+## RAG operacional local - 2026-05-18
+
+- objetivo:
+  - implementar a primeira camada RAG do SGCG sobre a base local de conhecimento e sinais vivos do ambiente
+  - permitir perguntas operacionais com resposta auditavel e fontes recuperadas, sem depender inicialmente de provider externo de IA
+- decisao de arquitetura:
+  - a primeira versao e `local-extractive-rag`
+  - nao envia documentos, logs, IPs, politicas ou evidencias sensiveis para fora do SGCG
+  - usa recuperacao lexical local sobre documentos e configuracoes, somada a snapshot ao vivo do Prometheus
+  - a resposta e deliberadamente baseada em trechos recuperados e fontes, nao em geracao livre
+  - um LLM externo pode ser plugado depois, desde que haja politica explicita de dados e mascaramento
+- backend:
+  - criado `backend/src/modules/control/rag-service.ts`
+  - adicionadas rotas autenticadas no modulo `Operacoes Tecnicas`:
+    - `GET /api/control/ai-rag/status`
+    - `POST /api/control/ai-rag/ask`
+    - `POST /api/control/ai-rag/reindex`
+  - o indice local contempla:
+    - `CODEX.md`
+    - `RESUMO_TECNICO_SGCG.md`, quando existente
+    - `DOCUMENTACAO_PROJETO.md`
+    - `pontorh.md`, quando existente
+    - `docs/`
+    - `backend-proxy/docs/`
+    - `instalador/docs/`
+    - `/etc/prometheus/prometheus.yml`
+    - `/etc/grafana/provisioning/datasources/sgcg-prometheus.yml`
+    - snapshot runtime `runtime://prometheus-targets`
+  - o indice e mantido em memoria com TTL curto e pode ser reindexado sob demanda pela rota autenticada
+  - cada resposta retorna:
+    - `mode`
+    - `question`
+    - `answer`
+    - `confidence`
+    - `sources`
+    - estado runtime do Prometheus
+- frontend:
+  - `frontend/src/pages/Control.jsx` recebeu a secao `RAG operacional`
+  - a tela permite:
+    - ver quantidade de trechos e fontes indexadas
+    - ver readiness/targets do Prometheus
+    - reindexar a base local
+    - perguntar sobre VLAN, Prometheus, Grafana, Hotspot, DNS, QoS, bloqueios ou sintomas operacionais
+    - visualizar resposta e fontes recuperadas
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado e processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e processo ficou `online`
+  - `GET /api/control/ai-rag/status` autenticado retornou:
+    - `chunks=388`
+    - `sources=17`
+    - `prometheus_ready=true`
+    - `prometheus_targets_up=22`
+    - `prometheus_targets_down=0`
+  - `POST /api/control/ai-rag/ask` autenticado com a pergunta `Como está a observabilidade Grafana e Prometheus do SGCG?` retornou:
+    - `mode=local-extractive-rag`
+    - `confidence=medium`
+    - `source_count=6`
+    - resposta com fontes locais, incluindo `CODEX.md` e datasource Grafana/Prometheus
+  - `https://127.0.0.1:6777/control` retornou HTTP `200`
+
+## RAG operacional - conector Gemini opcional - 2026-05-18
+
+- objetivo:
+  - preparar o RAG operacional para usar `gemini-2.5-flash` como IA externa sem quebrar o fallback local
+- backend:
+  - `backend/src/config/env.ts` passou a ler:
+    - `AI_PROVIDER`
+    - `GEMINI_MODEL`
+    - `GEMINI_API_KEY` ou `GOOGLE_API_KEY`
+  - `backend/src/modules/control/rag-service.ts` passou a:
+    - tentar chamada REST oficial do Gemini quando `AI_PROVIDER=gemini` e houver chave
+    - enviar apenas contexto recuperado e mascarado por `maskSensitive`
+    - limitar temperatura e tamanho de resposta
+    - retornar `provider`, `model`, `external_ai_used` e `external_ai_error`
+    - manter fallback automatico para `local-extractive-rag` em caso de erro, cota, permissao ou timeout
+  - `backend/.env.example` recebeu as variaveis sem segredo
+- frontend:
+  - a secao `RAG operacional` em `frontend/src/pages/Control.jsx` passou a indicar se a IA externa foi usada ou se a resposta veio do fallback local
+  - quando o Gemini falha, a interface mostra o motivo resumido e preserva a resposta local
+- runtime:
+  - `backend/.env` local foi configurado com `AI_PROVIDER=gemini`, `GEMINI_MODEL=gemini-2.5-flash` e a chave informada pelo operador
+  - a chave nao foi registrada neste documento e deve permanecer fora do Git
+- validacao:
+  - documentacao oficial Google consultada para endpoint REST `generateContent` com `gemini-2.5-flash`
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado e processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e processo ficou `online`
+  - chamada autenticada ao RAG tentou Gemini e retornou fallback local com:
+    - `external_ai_used=false`
+    - `external_ai_error=Gemini HTTP 403`
+    - `prometheus_ready=true`
+    - `prometheus_targets_up=22`
+    - `prometheus_targets_down=0`
+  - teste direto contra `generativelanguage.googleapis.com` retornou:
+    - `status=403`
+    - `PERMISSION_DENIED`
+    - mensagem `The caller does not have permission`
+- pendencia operacional:
+  - habilitar/autorizar a Gemini API no projeto da chave ou gerar nova chave valida no Google AI Studio
+  - apos a correcao da chave, repetir `POST /api/control/ai-rag/ask` e confirmar `external_ai_used=true`
+
+## RAG operacional - Gemini validado - 2026-05-18
+
+- objetivo:
+  - substituir a chave Gemini sem registrar segredo em Git ou documentacao
+  - validar uso real do `gemini-2.5-flash` no RAG operacional
+- runtime:
+  - `backend/.env` teve `GEMINI_API_KEY` substituida pela nova chave informada pelo operador
+  - `AI_PROVIDER=gemini` e `GEMINI_MODEL=gemini-2.5-flash` foram preservados
+  - `pm2 restart bcc-backend --update-env` aplicado para carregar o novo ambiente
+- validacao:
+  - chamada direta REST para `generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` retornou:
+    - `status=200`
+    - texto `ok`
+  - chamada autenticada ao RAG com a pergunta `Resuma o estado do Prometheus e Grafana do SGCG em uma resposta curta.` retornou:
+    - `mode=gemini-rag`
+    - `provider=gemini`
+    - `model=gemini-2.5-flash`
+    - `external_ai_used=true`
+    - `external_ai_error=null`
+    - `prometheus_ready=true`
+    - `prometheus_targets_up=22`
+    - `prometheus_targets_down=0`
+  - a resposta do Gemini citou evidencias de Prometheus/Grafana e manteve o proximo passo em modo seguro/observacional
+- seguranca:
+  - a chave nao foi escrita no `CODEX.md`
+  - `backend/.env` permanece fora do fluxo de commit e com permissao restrita
+  - o RAG continua com fallback local se a API externa falhar
+
+## Assistente IA em chat - 2026-05-18
+
+- objetivo:
+  - transformar o RAG operacional em uma experiencia clara de chat no SGCG
+  - evitar que o operador precise localizar a pergunta/resposta apenas dentro de `Operacoes Tecnicas`
+- frontend:
+  - criada pagina `frontend/src/pages/AiAssistant.jsx`
+  - adicionada rota autenticada `/assistente-ia`
+  - adicionado item `Assistente IA` no menu `Controle`
+  - o chat mantem historico local curto no navegador em `sgcg_ai_assistant_thread_v1`
+  - cada resposta exibe:
+    - conteudo da resposta
+    - provider/modelo usado
+    - estado de fallback local ou Gemini
+    - confianca
+    - targets Prometheus up quando disponivel
+    - fontes recuperadas em painel expansivel
+  - perguntas rapidas foram adicionadas para temas comuns como Prometheus/Grafana, VLAN 70, RAG e Hotspot
+- backend:
+  - a tela usa as rotas ja existentes:
+    - `GET /api/control/ai-rag/status`
+    - `POST /api/control/ai-rag/ask`
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado e processo ficou `online`
+  - `https://127.0.0.1:6777/assistente-ia` retornou HTTP `200`
+  - chamada autenticada ao RAG pelo endpoint usado pelo chat retornou em uma tentativa:
+    - `mode=gemini-rag`
+    - `provider=gemini`
+    - `model=gemini-2.5-flash`
+    - `external_ai_used=true`
+  - outra tentativa retornou `Gemini HTTP 503` e caiu corretamente no fallback:
+    - `mode=local-extractive-rag`
+    - `provider=local`
+    - `external_ai_used=false`
+  - conclusao operacional: o chat esta publicado e resiliente a oscilacao da API externa Gemini
+
+## VIP auditado por DNS - 2026-05-13
+
+- objetivo:
+  - manter o usuario `VIP` com bypass real de bloqueios, RPZ e proxy, mas registrar a navegacao DNS classica para auditoria forense
+  - caso validado inicialmente: `192.168.10.45`
+- arquivos alterados:
+  - `backend-proxy/src/services/blocking-release-schema-service.ts`
+  - `backend-proxy/src/services/blocking-release-service.ts`
+  - `backend-proxy/src/services/dns-contingency-service.ts`
+  - `backend-proxy/src/dns-radar-ingester.ts`
+  - `backend-proxy/src/services/dns-radar-service.ts`
+  - `frontend/src/pages/BlockingReleases.jsx`
+  - `/etc/unbound/sgcg-vip-clean.conf`
+- schema e persistencia:
+  - `policy_exceptions` ganhou `dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE`
+  - `dns_vip` ganhou `dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE`
+  - novas excecoes VIP passam a nascer com auditoria DNS ativa por padrao
+  - a tela `Bloqueios e Liberacoes` passou a exibir e permitir alternar `Auditoria DNS do VIP`
+- runtime:
+  - VIP com auditoria ativa continua fora de RPZ/proxy/bloqueios comuns
+  - consultas DNS classicas `UDP/53` e `TCP/53` do VIP sao redirecionadas para o resolvedor limpo `sgcg-vip-dns.service` na porta `5355`
+  - `sgcg-vip-dns.service` foi ajustado com `log-queries: yes` e `log-replies: yes`
+  - `dns-radar-ingester` passou a ler dois fluxos:
+    - `journalctl -fu unbound`
+    - `journalctl -fu sgcg-vip-dns.service`
+  - eventos vindos do resolvedor VIP limpo entram em `dns_policy_events.resolver = 'unbound-vip-clean'`
+  - para evitar fuga silenciosa da auditoria, `DoT TCP/853` e rejeitado para VIP auditado antes do ACCEPT geral
+  - `DoH` sobre `443` permanece indistinguivel de HTTPS comum sem proxy/endpoint agent, portanto nao e bloqueado para nao quebrar navegacao VIP
+- PontoRH/OpenDNS preservado:
+  - a excecao hardcoded `208.67.222.222` e `208.67.220.220` continua antes da captura DNS do VIP
+  - validacao runtime mostrou, para `192.168.10.45`, `RETURN` especifico para OpenDNS nas linhas 20-23 do `iptables-save -t nat`, antes do `REDIRECT --to-ports 5355` nas linhas 24-25
+- validacao:
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` concluido com sucesso
+  - `systemctl restart sgcg-vip-dns.service` executado e servico ficou ativo
+  - `pm2 restart backend-proxy --update-env` executado e processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e processo ficou `online`
+  - banco validado:
+    - `policy_exceptions.id=34`, `ip=192.168.10.45`, `dns_audit_enabled=t`
+    - `dns_vip.id=73`, `dns_audit_enabled=t`
+  - `journalctl -u sgcg-vip-dns.service` registrou consultas reais de `192.168.10.45`, incluindo `www.gstatic.com`
+  - `dns_policy_events` ja recebeu eventos `resolver='unbound-vip-clean'` nos ultimos 30 minutos
+
+## Relatorios Forenses - agrupamento por site principal - 2026-05-13
+
+- objetivo:
+  - reduzir poluicao visual nos relatorios sem perder evidencia tecnica
+  - aplicar o agrupamento para todos os usuarios e fontes de navegacao, nao apenas para VIPs
+- decisao funcional:
+  - o relatorio passa a separar:
+    - `site principal`: dominio normalizado para leitura humana, exemplo `simepar.br`
+    - `evidencia tecnica`: dominio real consultado, exemplo `produtos.simepar.br` ou `lb01.simepar.br`
+  - a visao padrao de navegacao virou `Por site`
+  - a visao `Eventos tecnicos` continua disponivel para investigacao forense detalhada
+  - a visao `Agrupado por IP` passou a contar `Sites unicos`, preservando a contagem tecnica no backend
+- arquivos alterados:
+  - `backend/src/modules/reports/reports-service.ts`
+  - `backend/src/modules/reports/reports-routes.ts`
+  - `frontend/src/pages/Reports.jsx`
+- backend:
+  - criada funcao PostgreSQL `sgcg_site_domain(raw_domain TEXT)`
+  - a funcao normaliza subdominios comuns para o site principal:
+    - `www.simepar.br` -> `simepar.br`
+    - `produtos.simepar.br` -> `simepar.br`
+    - `lb01.simepar.br` -> `simepar.br`
+    - `www.google.com.br` -> `google.com.br`
+    - `api.jacarezinho.pr.gov.br` -> `jacarezinho.pr.gov.br`
+  - novo endpoint interno:
+    - `GET /api/reports/navigation/by-site`
+  - `GET /api/reports/navigation` agora retorna `site_domain` e `technical_domain`
+  - filtros por dominio passam a procurar tanto no dominio tecnico quanto no site principal
+  - exportacao PDF de navegacao passa a exibir `Site principal`
+- frontend:
+  - `Relatorios Forenses` passou a abrir por padrao na visao `Por site`
+  - adicionada tabela com:
+    - site principal
+    - total de eventos
+    - bloqueados/liberados
+    - IPs envolvidos
+    - dominios tecnicos associados
+    - fontes DNS/Proxy/UFW
+    - ultimo acesso
+  - a tabela de eventos tecnicos mostra o site principal em destaque e o dominio tecnico em linha secundaria
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado e processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e processo ficou `online`
+  - `reportsService.ensureSchema()` executado com sucesso no backend compilado
+  - consulta de validacao confirmou:
+    - `www.simepar.br`, `produtos.simepar.br` e `lb01.simepar.br` normalizam para `simepar.br`
+    - no periodo de 24h, `simepar.br` agrupou 8 eventos, 1 IP e 3 dominios tecnicos
+    - evento tecnico preservou `technical_domain=produtos.simepar.br` e exibiu `site_domain=simepar.br`
+
+## Relatorios Forenses - correcao de PDF sem paginas em branco - 2026-05-13
+
+- arquivo alterado:
+  - `backend/src/modules/reports/reports-service.ts`
+- problema:
+  - ao exportar PDF de relatorios, o documento podia alternar uma pagina com conteudo e uma pagina em branco
+  - causa provavel: o rodape escrevia texto muito proximo da margem inferior; o PDFKit criava uma nova pagina automaticamente, e em seguida o codigo criava outra pagina manualmente
+- correcao:
+  - o rodape dos PDFs de navegacao e auditoria foi reposicionado para dentro da area util da pagina
+  - as linhas do rodape passaram a usar `lineBreak: false`, evitando quebra automatica que empurre conteudo para uma pagina nova
+  - a imagem/logo da JMB foi removida dos PDFs
+  - o rodape agora mantem apenas o texto `JMB Tecnologia`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - PDF de navegacao gerado em `/tmp/relatorio-navegacao-test.pdf`
+    - `pdfinfo`: `Pages: 46`
+    - `pdftotext`: `text_pages=46`, sem paginas em branco
+  - PDF de auditoria gerado em `/tmp/relatorio-auditoria-test.pdf`
+    - `pdfinfo`: `Pages: 28`
+    - `pdftotext`: `text_pages=28`, sem paginas em branco
+
+## Relatorios Forenses - PDF limpo e PDF forense - 2026-05-13
+
+- objetivo:
+  - permitir PDF personalizado e limpo para leitura humana, sem perder o PDF tecnico de evidencia
+- arquivos alterados:
+  - `backend/src/modules/reports/reports-service.ts`
+  - `backend/src/modules/reports/reports-routes.ts`
+  - `frontend/src/pages/Reports.jsx`
+- backend:
+  - criada exportacao `exportNavigationCleanPdf`
+  - criada rota `GET /api/reports/navigation/export-clean.pdf`
+  - o PDF limpo agrupa por:
+    - IP
+    - usuario/identidade
+    - site principal normalizado
+  - o PDF limpo exibe:
+    - acessos
+    - sites
+    - IPs
+    - bloqueados
+    - dominios tecnicos
+    - primeiro acesso
+    - ultimo acesso
+    - evidencia tecnica resumida
+  - o PDF forense tecnico permanece em `GET /api/reports/navigation/export.pdf`
+- frontend:
+  - o botao unico `Exportar PDF` foi separado em:
+    - `PDF limpo`
+    - `PDF forense`
+  - `PDF limpo` usa `/api/reports/navigation/export-clean.pdf`
+  - `PDF forense` usa `/api/reports/navigation/export.pdf`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `git diff --check` concluido sem alertas
+  - PDF limpo de teste gerado em `/tmp/relatorio-navegacao-limpo-test.pdf`
+    - `pdfinfo`: `Pages: 39`
+    - `pdftotext`: `text_pages=39`, sem paginas em branco
+    - texto validado: `Relatório Limpo de Navegação` e `JMB Tecnologia`
+  - PDF forense de teste gerado em `/tmp/relatorio-navegacao-forense-test.pdf`
+    - `pdfinfo`: `Pages: 46`
+    - `pdftotext`: `text_pages=46`, sem paginas em branco
+    - texto validado: `Relatório Forense de Navegação` e `JMB Tecnologia`
+
+## Contingencia DNS - Google e OpenDNS nos resolvedores autorizados - 2026-05-13
+
+- objetivo:
+  - incluir Google DNS e OpenDNS na lista de resolvedores publicos autorizados da contingencia, junto dos provedores ja existentes
+- arquivos alterados:
+  - `backend-proxy/src/services/dns-contingency-service.ts`
+  - `frontend/src/pages/BlockingReleases.jsx`
+- backend:
+  - `DEFAULT_PROVIDERS` passou a incluir:
+    - `google`
+    - `cloudflare`
+    - `quad9`
+    - `opendns`
+  - catalogo efetivo validado:
+    - Google DNS: `8.8.8.8`, `8.8.4.4`
+    - Cloudflare: `1.1.1.1`, `1.0.0.1`
+    - Quad9: `9.9.9.9`, `149.112.112.112`
+    - OpenDNS: `208.67.222.222`, `208.67.220.220`
+- frontend:
+  - a tela `Contingencia DNS` passou a exibir `OpenDNS` como provedor selecionavel em `Resolvedores publicos autorizados`
+  - a selecao padrao do dialogo de ativacao/renovacao agora vem com `Google DNS`, `Cloudflare`, `Quad9` e `OpenDNS`
+- banco/runtime:
+  - `dns_contingency_state.providers` foi atualizado para `["google","cloudflare","quad9","opendns"]`
+  - `dns_contingency_state.resolvers` foi atualizado com os oito IPs publicos correspondentes
+  - o estado atual estava `expired`, portanto a mudanca nao abriu contingencia ativa nem alterou o bloqueio vigente de DNS
+  - a excecao permanente PontoRH/OpenDNS continua separada em `permanent_work_dns_resolvers`
+- validacao:
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `git diff --check` concluido sem alertas
+  - `pm2 restart backend-proxy --update-env` executado e `backend-proxy` ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e `bcc-frontend` ficou `online`
+  - `dnsContingencyService.getStatus()` confirmou:
+    - `providers=["google","cloudflare","quad9","opendns"]`
+    - `resolvers=["8.8.8.8","8.8.4.4","1.1.1.1","1.0.0.1","9.9.9.9","149.112.112.112","208.67.222.222","208.67.220.220"]`
+    - `permanent_work_dns_resolvers=["208.67.222.222","208.67.220.220"]`
+  - `https://127.0.0.1:6777/bloqueios-liberacoes` passou a servir o bundle `dist/assets/index-BN91Vkrh.js`
+
+## Governanca - reducao de poluicao visual sem perda funcional - 2026-05-13
+
+- arquivos alterados:
+  - `frontend/src/components/Sidebar.jsx`
+  - `frontend/src/components/ui/Sidebar.jsx`
+  - `frontend/src/App.jsx`
+  - `frontend/src/pages/Dashboard.jsx`
+  - `frontend/src/pages/GovernancePolicies.jsx`
+  - `frontend/src/pages/GovernanceCompliance.jsx`
+  - `frontend/src/pages/GovernanceAudit.jsx`
+- decisao de produto:
+  - a area de `Governanca` deixou de expor todos os modulos como itens equivalentes na primeira camada da sidebar
+  - a navegacao principal foi reorganizada por intencao de uso, preservando as rotas e funcionalidades antigas
+  - novas portas de entrada:
+    - `Painel Executivo`
+    - `Politicas e Excecoes`
+    - `Conformidade e Dados`
+    - `Auditoria e Evidencias`
+- funcionalidades preservadas:
+  - `Governanca Visual` continua acessivel pelo painel executivo e pela rota `/governanca-visual`
+  - `Politicas Institucionais`, `Aprovacoes & Excecoes`, `Excecoes VIP`, `Excecoes Temporarias`, `Contingencia DNS` e `Telemetria` continuam acessiveis por atalhos internos
+  - `LGPD & Protecao de Dados` e `Governanca de Dados` continuam completos, agora agrupados em `Conformidade e Dados`
+  - `Relatorios Forenses`, `Central de Chamados`, `Identidades & Perfis` e `Configuracoes Institucionais` continuam acessiveis por `Auditoria e Evidencias`
+- ajuste tecnico:
+  - o componente base da sidebar passou a aceitar `matchPaths`, permitindo que uma rota antiga mantenha o agrupamento visual ativo no novo menu
+  - foram criadas tres paginas-guia novas:
+    - `/governanca-politicas`
+    - `/governanca-conformidade`
+    - `/governanca-auditoria`
+  - o `Centro de Governanca` ganhou atalhos para as quatro frentes, reduzindo dependencia da sidebar como indice de todos os modulos
+- validacao:
+  - `git diff --check` concluido sem alertas
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado:
+    - `dist/assets/index-BCSHdG3X.js`
+    - `dist/assets/index-CG-AepbR.css`
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso e `bcc-frontend` ficou `online`
+  - `curl -sk https://127.0.0.1:6777/governanca-politicas` serviu o HTML do app com o novo bundle
+  - `curl -sk https://127.0.0.1:6777/governanca-conformidade` serviu o HTML do app com o novo bundle
+  - `curl -sk https://127.0.0.1:6777/governanca-auditoria` serviu o HTML do app com o novo bundle
+- correcao imediata apos publicacao:
+  - identificado erro runtime `Uncaught ReferenceError: LayoutDashboard is not defined`
+  - causa: o item `Continuidade & Backup` da secao `Controle` continuava usando o icone `LayoutDashboard`, mas o import havia sido removido durante a limpeza da sidebar
+  - correcao aplicada em `frontend/src/components/Sidebar.jsx`, restaurando o import de `LayoutDashboard`
+  - `git diff --check` concluido sem alertas
+  - `cd frontend && npm run build` concluido com sucesso
+  - novo bundle gerado: `dist/assets/index-Ch0VvhYO.js`
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `https://console.jacarezinho.cloud/` passou a referenciar `/assets/index-Ch0VvhYO.js`
+
+## LGPD - linguagem de gestao governamental e auditoria humana - 2026-05-13
+
+- arquivos alterados:
+  - `frontend/src/pages/Lgpd.jsx`
+  - `backend/src/modules/lgpd/lgpd-service.ts`
+- decisao de produto:
+  - o modulo deixou de se apresentar como uma tela juridica centrada em artigos da LGPD
+  - a experiencia passou a falar como governanca de gestores publicos:
+    - `Painel de Gestao`
+    - `Dados sob Responsabilidade`
+    - `Pedidos de Pessoas`
+    - `Incidentes e Riscos`
+    - `Evidencias e Auditoria`
+  - a base legal continua visivel, mas como sustentacao discreta, nao como linguagem principal da operacao
+- correcao do painel executivo:
+  - o painel passou a calcular resumo local a partir de atividades, pedidos e incidentes carregados, alem do resumo vindo do backend
+  - se o endpoint de dashboard vier zerado, mas as listas tiverem registros, a tela usa o maior valor entre resumo do servidor e dados locais
+  - quando nao houver registros reais, o painel exibe estado vazio orientado a acao, com atalhos para `Mapear dados` e `Registrar pedido`, evitando a sensacao de modulo quebrado
+  - KPIs passaram a usar linguagem de gestao:
+    - `Areas com dados pessoais`
+    - `Riscos relevantes`
+    - `Pedidos em andamento`
+    - `Incidentes em aberto`
+- auditoria aprimorada:
+  - `Tipo` virou `Area afetada`
+  - `Acao` virou `O que aconteceu`
+  - valores tecnicos como `processing`, `request`, `incident`, `create`, `update` passaram a ser traduzidos para linguagem humana:
+    - `Dados sob responsabilidade`
+    - `Pedido de pessoa`
+    - `Incidente ou risco`
+    - `Estrutura de governanca`
+    - `Registro criado`
+    - `Registro atualizado`
+    - `Estrutura institucional atualizada`
+  - o codigo tecnico da acao continua aparecendo como detalhe secundario para auditoria
+  - a aba de acesso passou a traduzir eventos como `auth.login` para `Entrada no sistema`
+- ajuste backend:
+  - atualizacao da estrutura institucional LGPD passou a registrar `entityType=program`, em vez de cair como `processing`
+  - isso melhora as novas evidencias daqui para frente, exibindo a area afetada correta como `Estrutura de governanca`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado: `dist/assets/index-CMmZy8V7.js`
+  - `pm2 restart bcc-backend --update-env` executado e `bcc-backend` ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado e `bcc-frontend` ficou `online`
+  - `curl -s http://127.0.0.1:6778/api/ping` respondeu `{"msg":"Pong HTTP (Core 6778)"}`
+  - `https://console.jacarezinho.cloud/` passou a referenciar `/assets/index-CMmZy8V7.js`
+  - `git diff --check` concluido sem alertas
+
+## Aviso de Privacidade publico do SGCG - 2026-05-13
+
+- arquivos alterados:
+  - `frontend/src/pages/PrivacyNotice.jsx`
+  - `frontend/src/App.jsx`
+  - `frontend/src/pages/Login.jsx`
+  - `frontend/src/pages/Lgpd.jsx`
+- publicacao:
+  - criada pagina publica em `/aviso-de-privacidade`
+  - URL publicada:
+    - `https://console.jacarezinho.cloud/aviso-de-privacidade`
+  - a pagina nao exige login e e renderizada antes do bloqueio de autenticacao do console
+- conteudo institucional:
+  - identifica a Prefeitura Municipal de Jacarezinho/PR como controladora
+  - identifica a JMB Tecnologia como mantenedora tecnica da plataforma
+  - explica, em linguagem direta, categorias de dados tratados pelo SGCG:
+    - dados cadastrais
+    - autenticacao
+    - CPF quando necessario
+    - telefone
+    - IP
+    - MAC
+    - VLAN
+    - sessoes
+    - chamados
+    - evidencias de auditoria
+    - metadados tecnicos de navegacao institucional
+  - descreve finalidades de uso:
+    - seguranca da rede
+    - controle governamental
+    - atendimento
+    - auditoria
+    - investigacao de incidentes
+    - prestacao de contas
+  - cita LGPD, Lei nº 13.709/2018, e Marco Civil da Internet como base de responsabilidade publica
+- atualizacao do frontend:
+  - a tela de login passou a exibir link publico `Aviso de privacidade`
+  - o modulo `Protecao de Dados e Responsabilidade Publica` passou a apontar para `/aviso-de-privacidade` como aviso publicado, mesmo se o campo ainda estiver vazio no banco
+  - o formulario de estrutura de governanca tambem passa a sugerir `/aviso-de-privacidade` como URL padrao
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado:
+    - `dist/assets/index-B5seWAr-.js`
+    - `dist/assets/index-DDNUdMS7.css`
+  - `pm2 restart bcc-frontend --update-env` executado com sucesso
+  - `curl -sk https://console.jacarezinho.cloud/aviso-de-privacidade` serviu o HTML do app com o novo bundle
+  - `rg` no bundle confirmou presenca do texto `Aviso de Privacidade do Sistema de Governança e Controle Governamental`
+  - `git diff --check` concluido sem alertas
+
+## LGPD - populacao inicial de governanca publica - 2026-05-13
+
+- arquivo criado:
+  - `backend/src/scripts/342_seed_lgpd_governance.ts`
+- objetivo:
+  - popular o modulo `Protecao de Dados e Responsabilidade Publica` com dados institucionais plausiveis para deixar o painel, inventario, pedidos, incidentes e evidencias auditaveis utilizaveis imediatamente
+  - evitar dados ficticios genericos e alinhar o conteudo ao SGCG real, incluindo Hotspot, Acesso Mobile, Relatorios Forenses, Observabilidade DNS/Proxy/Firewall, Usuarios e Continuidade
+- estrategia:
+  - script idempotente por nome/titulo
+  - se um registro ja existe, o script atualiza
+  - se nao existe, o script cria
+  - a auditoria registra cada criacao/atualizacao como evidencia institucional
+- estrutura institucional populada:
+  - controlador: `Prefeitura Municipal de Jacarezinho/PR`
+  - unidade: `Governanca de Dados e Controle Institucional`
+  - operador/mantenedor tecnico nos tratamentos: `JMB Tecnologia`
+  - aviso de privacidade: `/aviso-de-privacidade`
+- dados populados:
+  - `8` areas/tratamentos de dados pessoais:
+    - `Acesso ao Console SGCG`
+    - `Hotspot Institucional de Visitantes`
+    - `Acesso Mobile de Colaboradores`
+    - `Relatorios Forenses de Navegacao`
+    - `Central de Chamados Institucional`
+    - `Gestao de Usuarios e Perfis`
+    - `Observabilidade DNS, Proxy e Firewall`
+    - `Backups e Continuidade Operacional`
+  - `4` pedidos de pessoas:
+    - acesso aos dados
+    - correcao de dados
+    - confirmacao de tratamento
+    - informacao sobre compartilhamento
+  - `3` incidentes/riscos:
+    - tentativas de login recusadas
+    - revisao de relatorio com dados tecnicos de navegacao
+    - correcao de cadastro de visitante no Hotspot
+- validacao:
+  - `cd backend && npx ts-node src/scripts/342_seed_lgpd_governance.ts` executado com sucesso
+  - saida validada:
+    - `processing=8`
+    - `requests=4`
+    - `incidents=3`
+    - `audit=80`
+  - `cd backend && npm run build` concluido com sucesso apos mover o script para `src/scripts`
+  - `cd frontend && npm run build` ja havia concluido com sucesso no bundle vigente
+  - `git diff --check` concluido sem alertas
 
 ## Commit de coerencia com producao - pendencias incorporadas - 2026-05-12
 
@@ -5645,6 +6624,310 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - apos uma rodada completa do reconciliador automatico, `/run/sgcg-firewall.lock` estava liberado, `backend-proxy` online e `iptables-save -t nat` manteve `nat_rules=114` e `duplicates=0`
   - apos nova rodada sem mudanca de configuracao, a auditoria `runtime-dedupe` nao recebeu novas entradas depois de `2026-05-12 13:49:12`, confirmando que o reconciliador deixou de recriar duplicatas recorrentes quando nao ha alteracao no `before.rules`
 
+## Resumo tecnico permanente do SGCG - 2026-05-14
+
+- arquivo criado:
+  - `RESUMO_TECNICO_SGCG.md`
+- objetivo:
+  - consolidar em um arquivo novo uma leitura tecnica permanente do SGCG para futuras sessoes entenderem rapidamente o que o sistema e, como opera e quais regras nao podem ser quebradas
+  - transformar o historico cronologico do `CODEX.md` em referencia por arquitetura, runtime, modulos, VLANs, firewall, DNS, portais, auditoria, LGPD, QoS, instalador e validacao
+- regra reforcada:
+  - o `CODEX.md` continua sendo o documento principal e inegociavel de continuidade
+  - toda rodada que altere estrutura, visual, funcionalidade, arquitetura, runtime, build ou validacao deve registrar o fechamento neste arquivo
+  - documentos complementares podem existir, mas nao substituem o registro obrigatorio no `CODEX.md`
+- escopo do resumo:
+  - identidade do sistema `SGCG - Sistema de Governanca e Controle Governamental`
+  - eixos permanentes `Governanca` e `Controle`
+  - papeis de `frontend`, `backend`, `backend-proxy`, Nginx, PostgreSQL e runtime Linux
+  - regras de UFW como firewall oficial e uso complementar de `iptables`, `ipset`, `tc`, `conntrack`, Unbound e Squid
+  - contratos criticos de PontoRH/OpenDNS, VLAN 70, Hotspot, Colaboradores VLAN 30, VIPs, Relatorios Forenses, LGPD, QoS, Bloqueio Total, contingencia DNS, WhatsApp, SMSGate, console interno, instalador e identidade de endpoints
+- validacao:
+  - alteracao documental apenas
+  - nenhum build foi necessario
+
+## Perfil tecnico do agente registrado nos documentos principais - 2026-05-14
+
+- arquivos alterados:
+  - `CODEX.md`
+  - `RESUMO_TECNICO_SGCG.md`
+- ajuste aplicado:
+  - registrado que, ao atuar no SGCG, o agente deve assumir postura de engenheiro, arquiteto e desenvolvedor senior de sistemas GovTech
+  - registrado tambem o papel de diretor, projetista, analista, desenvolvedor de frontend, UX, UI e backend senior
+  - o texto foi refletido tanto no documento principal de continuidade quanto no resumo tecnico permanente
+- validacao:
+  - alteracao documental apenas
+  - nenhum build foi necessario
+
+## Arquitetura de autenticacao VLAN 50 sem portal - 2026-05-14
+
+- arquivo criado:
+  - `docs/ARQUITETURA_AUTENTICACAO_VLAN50_8021X_RADIUS.md`
+- objetivo:
+  - registrar a arquitetura recomendada para exigir login e senha na `VLAN 50` sem portal cativo, com experiencia semelhante a rede corporativa/AD
+  - preservar auditoria completa, correlacao forense e aderencia a LGPD e ao Marco Civil da Internet
+- decisao arquitetural proposta:
+  - usar `802.1X` com `FreeRADIUS`
+  - manter o SGCG como console de identidade, grupos, dispositivos, sessoes, auditoria, relatorios e governanca
+  - configurar APs/switches da `VLAN 50` como clientes RADIUS
+  - usar accounting RADIUS para registrar inicio, fim, duracao e volume de sessoes quando suportado pelo equipamento
+  - correlacionar sessoes RADIUS com `DHCP`, `dns_policy_events`, `navigation_events`, UFW/proxy e Relatorios Forenses
+- regra funcional:
+  - nao usar portal cativo para este objetivo na `VLAN 50`
+  - a autenticacao deve ocorrer antes da liberacao da rede, via prompt nativo do sistema operacional em Wi-Fi Enterprise ou porta cabeada 802.1X
+  - a navegacao autenticada continua sujeita as politicas institucionais existentes de DNS, RPZ, UFW, proxy, QoS e auditoria
+- conformidade:
+  - o documento registra os fundamentos de desenho para LGPD, incluindo finalidade, adequacao, necessidade, seguranca, transparencia e responsabilizacao
+  - o documento registra o Marco Civil da Internet como referencia para guarda sigilosa e segura de registros de conexao
+  - o desenho evita captura de conteudo privado de paginas HTTPS e foca em metadados necessarios para seguranca e prestacao de contas
+- validacao:
+  - alteracao documental apenas
+  - nenhum build foi necessario
+
+## Hotspot SMS - integracao inicial com Integrax - 2026-05-14
+
+- arquivos alterados:
+  - `backend/src/config/env.ts`
+  - `backend/src/modules/hotspot/hotspot-routes.ts`
+  - `backend/.env.example`
+  - `backend/341_autobind_smsgate_sender.sh`
+  - `backend/.env` local nao versionado
+- objetivo:
+  - permitir que a recuperacao de senha do Hotspot envie SMS por API profissional da Integrax, sem depender obrigatoriamente do aparelho Android/SMSGate
+  - preservar o SMSGate como provider configuravel/fallback
+- implementacao:
+  - `HOTSPOT_SMS_PROVIDER=integrax` passa a acionar a API externa da Integrax
+  - endpoint usado: `POST https://sms.aresfun.com/v1/integration/{TOKEN}/send-sms`
+  - payload enviado pelo SGCG:
+    - `to`: numero brasileiro em formato `55DDDNONODIGITO`
+    - `from`: remetente/shortcode configurado em `HOTSPOT_SMS_FROM`
+    - `message`: texto institucional ja gerado pelo fluxo do Hotspot
+  - `HOTSPOT_SMS_API_KEY` passa a armazenar o token local da Integrax no `.env` nao versionado
+  - `HOTSPOT_SMS_FROM` foi adicionado ao `env.ts` e ao `.env.example`
+  - o `SMSGate` antigo continua suportado quando `HOTSPOT_SMS_PROVIDER=smsgate`
+- protecao operacional:
+  - o script `backend/341_autobind_smsgate_sender.sh` agora respeita provider diferente de `smsgate`
+  - se o `.env` estiver com `HOTSPOT_SMS_PROVIDER=integrax`, o autobind do SMSGate sai sem reescrever provider/base/token e sem reiniciar o backend
+  - isso evita que o timer do SMSGate reverta automaticamente o teste da Integrax
+- validacao:
+  - documentacao externa consultada em `https://www.integrax.app/dashboard/external/docs`
+  - `cd backend && npm run build` concluido com sucesso
+  - chamada de saldo `GET /v1/integration/{TOKEN}/consult/credits` retornou `404`, indicando que essa rota nao esta disponivel para este token/base ou escopo
+  - chamada controlada ao endpoint real de SMS com `to=[]` retornou `400` com `NO_PHONE_NUMBER`, confirmando que base URL, token e rota `send-sms` foram reconhecidos pela API sem disparar SMS real
+  - `bash backend/341_autobind_smsgate_sender.sh` retornou `autobind do SMSGate ignorado: HOTSPOT_SMS_PROVIDER=integrax`
+  - `pm2 restart bcc-backend --update-env` executado e `bcc-backend` ficou `online`
+  - `curl http://127.0.0.1:6778/api/ping` respondeu `{"msg":"Pong HTTP (Core 6778)"}`
+- pendencia de teste real:
+  - falta informar um numero de telefone ou CPF de visitante autorizado para disparar um SMS real de recuperacao e validar recebimento no aparelho
+  - o token da Integrax nao foi registrado neste arquivo por seguranca
+
+## Hotspot SMS - teste real de recuperacao via Integrax - 2026-05-14
+
+- objetivo:
+  - validar o fluxo real de recuperacao de senha do Hotspot usando `HOTSPOT_SMS_PROVIDER=integrax`
+- teste executado:
+  - usado CPF de visitante autorizado informado pelo operador, registrado aqui apenas de forma mascarada
+  - o cadastro ativo foi localizado com celular mascarado `41*******22`
+  - chamada executada contra o backend local:
+    - `POST http://127.0.0.1:6778/api/hotspot/public/password-recovery/request`
+    - `X-Forwarded-For: 192.168.70.250`
+  - resposta HTTP:
+    - `200`
+    - `{"success":true,"message":"Se os dados conferirem, o código será enviado por SMS."}`
+- validacao no banco:
+  - criada entrada recente em `hotspot_password_resets`
+  - telefone registrado de forma mascarada: `41*******22`
+  - janela de validade: 5 minutos
+  - `used_at=null` apos o disparo, aguardando uso do codigo
+- resultado:
+  - o fluxo do SGCG aceitou a recuperacao e nao recebeu erro da Integrax no disparo
+  - a validacao final depende de confirmacao fisica do recebimento do SMS no aparelho do visitante
+- seguranca:
+  - CPF completo, codigo OTP e token Integrax nao foram registrados neste arquivo
+
+## Hotspot SMS - correcao de telefone do visitante e novo disparo Integrax - 2026-05-14
+
+- diagnostico:
+  - o painel da Integrax indicava entrega, mas o operador nao recebeu o SMS
+  - a primeira verificacao no SGCG mostrou que o visitante estava cadastrado com telefone de destino em `DDD 41`, final `0422`
+  - o operador esclareceu que o telefone correto do visitante deveria ser `DDD 43`, final `2342`
+  - portanto a falha percebida nao estava no backend nem necessariamente na Integrax: o SGCG estava usando um telefone cadastrado incorreto para o visitante
+- correcao aplicada:
+  - cadastro ativo do visitante foi atualizado para telefone com `DDD 43`, final `2342`
+  - o reset gerado para o telefone antigo `DDD 41`, final `0422`, foi invalidado com `used_at`
+  - novo disparo de recuperacao foi executado pelo fluxo oficial:
+    - `POST http://127.0.0.1:6778/api/hotspot/public/password-recovery/request`
+    - resposta `200`
+- validacao:
+  - `hotspot_visitors` confirmou o visitante ativo com `DDD 43`, final `2342`
+  - `hotspot_password_resets` criou novo registro ativo com `DDD 43`, final `2342`
+  - o registro antigo com `DDD 41`, final `0422`, ficou com `used_at` preenchido para nao permanecer utilizavel
+- seguranca:
+  - CPF completo, telefone completo, codigo OTP e token Integrax nao foram registrados neste arquivo
+- pendencia:
+  - confirmar fisicamente se o SMS chegou ao aparelho correto apos o novo disparo para `DDD 43`, final `2342`
+
+## Hotspot SMS - rollback para SMSGate e remocao da Integrax - 2026-05-14
+
+- decisao operacional:
+  - a Integrax nao possui numero/remetente proprio adequado para o fluxo testado
+  - o usuario solicitou rollback para `SMSGate` e exclusao da integracao Integrax
+- rollback aplicado:
+  - o codigo do backend voltou a suportar apenas o provider `smsgate` no fluxo de recuperacao de senha do Hotspot
+  - referencias a `Integrax`, `aresfun`, `send-sms` e `HOTSPOT_SMS_FROM` foram removidas dos arquivos versionaveis do backend
+  - o `.env` local voltou para:
+    - `HOTSPOT_SMS_PROVIDER=smsgate`
+    - `HOTSPOT_SMS_BASE_URL=https://console.jacarezinho.cloud/smsgate/api`
+  - o token de teste da Integrax foi removido do `.env` local
+  - o `backend/341_autobind_smsgate_sender.sh` voltou a operar normalmente para manter o emissor Android vinculado ao Hotspot
+- validacao:
+  - `bash backend/341_autobind_smsgate_sender.sh` confirmou emissor SMSGate ja vinculado ao Hotspot
+  - `cd backend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado
+  - `curl http://127.0.0.1:6778/api/ping` respondeu `{"msg":"Pong HTTP (Core 6778)"}`
+  - `curl https://console.jacarezinho.cloud/smsgate/health` respondeu `status=pass`
+  - busca em `backend/src`, `backend/.env.example`, `backend/341_autobind_smsgate_sender.sh` e `backend/.env` nao encontrou mais referencias a Integrax, `aresfun`, `HOTSPOT_SMS_FROM`, token de teste ou endpoint `send-sms`
+- observacao:
+  - os registros anteriores no `CODEX.md` permanecem como historico da tentativa e do diagnostico, mas o runtime atual do Hotspot voltou para `SMSGate`
+
+## Hotspot SMS - teste apos rollback para SMSGate - 2026-05-14
+
+- objetivo:
+  - testar o mesmo CPF informado pelo operador apos o rollback da Integrax para `SMSGate`
+- estado antes do disparo:
+  - visitante ativo localizado com telefone mascarado `DDD 43`, final `2342`
+  - `SMSGate` publicado em `https://console.jacarezinho.cloud/smsgate/health` respondeu `status=pass`
+  - containers `sgcg-smsgate-server` e `sgcg-smsgate-worker` estavam `healthy`
+- teste executado:
+  - `POST http://127.0.0.1:6778/api/hotspot/public/password-recovery/request`
+  - `X-Forwarded-For: 192.168.70.250`
+  - resposta HTTP `200`
+  - resposta JSON: `{"success":true,"message":"Se os dados conferirem, o código será enviado por SMS."}`
+- validacao no banco:
+  - novo registro ativo em `hotspot_password_resets`
+  - telefone mascarado: `DDD 43`, final `2342`
+  - validade de 5 minutos
+  - `used_at=null` apos o disparo
+  - reset anterior para o mesmo telefone foi marcado como usado no momento da nova solicitacao, preservando apenas um codigo ativo
+- pendencia:
+  - confirmar fisicamente se o SMS enviado pelo `SMSGate` chegou ao aparelho correto
+- seguranca:
+  - CPF completo, telefone completo e codigo OTP nao foram registrados neste arquivo
+
+## IA em Operacoes Tecnicas - insights operacionais acionaveis - 2026-05-17
+
+- objetivo:
+  - criar uma camada inicial de `IA em Operacoes Tecnicas` dentro do modulo `Operacoes Tecnicas`
+  - entregar diagnostico acionavel, com causa provavel, impacto, evidencias e acao recomendada, sem aplicar mudancas automaticamente no runtime
+  - manter a IA como leitura operacional orientada por evidencias reais do SGCG, nao como chat generico
+- arquivos alterados nesta rodada:
+  - `backend/src/modules/control/control-routes.ts`
+  - `frontend/src/pages/Control.jsx`
+  - `CODEX.md`
+- backend:
+  - adicionada rota autenticada `GET /api/control/ai-insights`
+  - a rota cruza sinais de:
+    - estado systemd de servicos tecnicos essenciais
+    - tabela `nat` via `iptables-save -t nat`
+    - bloqueios recentes em `access_events`
+    - bypass emergencial em `emergency_vlan_bypass`
+    - Bloqueio Total em `total_vlan_blocks`
+    - sessoes Hotspot ativas/vencidas em `hotspot_sessions`
+    - achados pendentes em `control_antimalware_findings`
+    - ultima auditoria `runtime-dedupe` em `dns_contingency_audit`
+  - o retorno e explicitamente `mode=read-only`
+  - os insights sao classificados como `critical`, `warning`, `info` ou `success`
+  - cada insight inclui:
+    - `title`
+    - `probable_cause`
+    - `impact`
+    - `evidence`
+    - `recommendation`
+    - `action`
+- frontend:
+  - adicionada secao `IA em Operações Técnicas` no topo do modulo `Operações Técnicas`
+  - a secao mostra resumo de NAT, bloqueios 24h/5min, servicos lidos e ultima analise
+  - cada card de insight apresenta severidade, causa provavel, impacto, acao recomendada e evidencias tecnicas
+  - adicionada acao visual `Atualizar`, reaproveitando o carregamento do modulo
+  - a interface deixa claro que a camada e somente leitura e nao executa automacao sem operador
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado; processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+  - `curl http://127.0.0.1:6778/api/ping` respondeu `{"msg":"Pong HTTP (Core 6778)"}`
+  - chamada sem JWT para `GET /api/control/ai-insights` respondeu `{"error":"Token ausente."}`, confirmando protecao pela guarda global
+  - chamada autenticada localmente com JWT temporario de validacao retornou HTTP `200`
+  - payload validado na chamada autenticada:
+    - `model=SGCG IA operacional heurística v1`
+    - `mode=read-only`
+    - `services_checked=8`
+    - `nat_rules=129`
+    - `nat_duplicates=0`
+    - `blocked_24h=0`
+    - `blocked_5m=0`
+    - insight retornado: `Operação técnica sem anomalia crítica`
+- decisao operacional:
+  - esta primeira versao nao usa provider externo de IA e nao envia dados sensiveis para fora do SGCG
+  - a classificacao atual e heuristica, local e auditavel
+  - proxima evolucao natural: botao `Investigar` abrir o recorte exato no modulo relacionado, por exemplo daemon, NAT, Hotspot, ClamAV, Bloqueios/Liberacoes ou Relatorios Forenses
+
+## IA em Operacoes Tecnicas - correcao da acao de observacao - 2026-05-17
+
+- problema identificado:
+  - o insight de estado normal retornava a acao `Manter observação`
+  - na interface, o botao de acao do card era apenas visual e nao executava nenhuma abertura de diagnostico
+  - isso gerava uma experiencia errada: parecia uma opcao operacional, mas nao fazia nada
+- correcao aplicada:
+  - o backend passou a retornar `Ver observação` para o insight `steady-state`
+  - o frontend passou a tratar o clique de qualquer acao de insight
+  - ao clicar, abre um modal de investigacao/observacao com:
+    - severidade
+    - horario da analise
+    - causa provavel
+    - impacto
+    - evidencias lidas
+    - proximo passo operacional
+  - para o insight `steady-state`, o modal explica explicitamente que a observacao serve como ponto de controle dos sinais lidos, sem reiniciar servicos, sem liberar politicas e sem substituir validacao quando houver reclamacao real de usuario
+  - insights de daemon, excecao de VLAN e ClamAV tambem direcionam a rolagem para a secao operacional relacionada quando aplicavel
+- arquivos alterados nesta correcao:
+  - `backend/src/modules/control/control-routes.ts`
+  - `frontend/src/pages/Control.jsx`
+  - `CODEX.md`
+- validacao:
+  - `cd backend && npm run build` concluido com sucesso
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-backend --update-env` executado; processo ficou `online`
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+  - chamada autenticada para `GET /api/control/ai-insights` retornou HTTP `200`
+  - payload validado retornou `action="Ver observação"` no insight `steady-state`
+  - payload manteve `mode=read-only`, `nat_rules=129`, `nat_duplicates=0`, `services_checked=8`, `blocked_24h=0` e `blocked_5m=0`
+
+## IA em Operacoes Tecnicas - reanalise de sinais funcional no modal - 2026-05-17
+
+- problema corrigido:
+  - o botao `Reanalisar sinais` dentro do modal de insight chamava o carregamento geral do modulo, mas podia manter o modal com o insight antigo em tela
+  - isso fazia a acao parecer executada sem atualizar as evidencias exibidas ao operador
+- correcao aplicada:
+  - adicionados estados dedicados de reanalise no frontend:
+    - `aiReanalysisLoading`
+    - `aiReanalysisError`
+  - adicionada funcao dedicada `reanalyzeSelectedInsight`
+  - ao clicar em `Reanalisar sinais`, a tela chama novamente `GET /api/control/ai-insights`
+  - o payload novo atualiza `aiInsights`
+  - o modal procura o insight novo pelo mesmo `id` do insight aberto
+  - se o insight anterior desaparecer porque a condicao operacional mudou, o modal passa a mostrar o primeiro insight atual retornado pela IA
+  - durante a reanalise, o modal mostra `Reanalisando...` e bloqueia novo clique ate terminar
+  - se a chamada falhar, o erro aparece dentro do proprio modal, sem fechar o diagnostico
+- arquivo alterado nesta correcao:
+  - `frontend/src/pages/Control.jsx`
+  - `CODEX.md`
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+- regra operacional reforcada:
+  - acoes visiveis em insights de IA devem alterar estado real da interface ou abrir diagnostico rastreavel
+  - nenhum botao do painel de IA deve permanecer como acao apenas decorativa
+
 ## Hotspot e Acesso Mobile - pesquisa com autocomplete e filtros - 2026-05-22
 
 - objetivo:
@@ -5833,6 +7116,78 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `dig @127.0.0.1 pornhub.com A +short` permaneceu sem resposta
   - `curl -k https://127.0.0.1:6777/bloqueios-liberacoes` retornou HTTP `200`
 
+## Bloqueios e Liberacoes - correcao de erro runtime no bundle - 2026-05-22
+
+- problema:
+  - o navegador reportou `ReferenceError: Cannot access 'Zn' before initialization` no bundle `index-BSr12SgS.js`
+  - o erro ocorria ao carregar a pagina `Bloqueios e Liberacoes`, no componente minificado correspondente a `frontend/src/pages/BlockingReleases.jsx`
+- causa:
+  - o painel `Agendamentos por VLAN` era montado antes da inicializacao da constante `saveScheduleWindow`
+  - como o JSX passava `onClick={saveScheduleWindow}` diretamente, o bundle podia acessar a constante ainda dentro da zona morta temporal do JavaScript
+- correcao:
+  - `saveScheduleWindow` foi convertida de arrow function atribuida a `const` para declaracao `async function saveScheduleWindow()`
+  - a funcao passa a ser hoistable e fica disponivel quando o JSX do painel e criado
+- escopo:
+  - ajuste limitado ao frontend administrativo
+  - nenhuma rota, schema, ipset, UFW, DNS, RPZ, Squid, Unbound ou regra de firewall foi alterada
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado: `dist/assets/index-2FkmNol0.js`
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+  - `curl -sk https://127.0.0.1:6777/bloqueios-liberacoes` serviu o HTML do app referenciando `/assets/index-2FkmNol0.js`
+  - `curl -sk -I https://127.0.0.1:6777/assets/index-2FkmNol0.js` retornou HTTP `200`
+
+## Bloqueios e Liberacoes - pornografia nunca liberavel - 2026-05-22
+
+- regra institucional:
+  - `Pornografia` e bloqueio mandatorio permanente
+  - a categoria nao deve ter opcao de liberacao em nenhuma superficie operacional
+  - qualquer tentativa direta por API ou rotina de criar `allow` para pornografia deve ser recusada
+- frontend:
+  - `frontend/src/pages/BlockingReleases.jsx` passou a remover `Pornografia` da lista de categorias quando a acao escolhida for `Liberar`
+  - `Pornografia` permanece disponivel apenas quando a acao for `Bloquear`
+  - `Agendamentos por VLAN` deixou de oferecer `Pornografia`, pois agendamentos visuais sao janelas de liberacao
+  - a tela passou a bloquear tambem tentativas de salvar politica nomeada `allow` com texto ou dominios relacionados a pornografia
+- backend:
+  - `backend-proxy/src/services/blocking-release-service.ts` passou a recusar `updateCategoryPolicy` com `policy_type='allow'` para categoria, chave, descricao, notas ou dominios de pornografia/adulto
+  - `backend-proxy/src/services/domain-policy-manager-service.ts` passou a recusar politicas nomeadas `allow` que mencionem pornografia/adulto no nome, descricao, governanca ou entradas
+  - `backend-proxy/src/routes/blocking-release-routes.ts` passou a recusar agendamentos visuais com categoria `Pornografia`
+- reconciliador:
+  - `scripts/reconcile_scheduled_policy_windows.js` removeu `Pornografia` do catalogo de liberacoes agendadas
+  - se um agendamento legado ou manual contiver pornografia/adulto, o reconciliador fecha/removera a janela ao inves de abrir liberacao
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado: `dist/assets/index-BLjgPlcl.js`
+  - `cd backend-proxy && npm run build` concluido com sucesso
+  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluido sem erro
+  - `pm2 restart backend-proxy --update-env` e `pm2 restart bcc-frontend --update-env` executados; ambos ficaram `online`
+  - teste direto no servico compilado `blockingReleaseService.updateCategoryPolicy` tentando `policy_type='allow'` para `Pornografia` retornou erro esperado: `Pornografia nunca pode ser liberada. Use apenas política de bloqueio.`
+  - teste direto no servico compilado `domainPolicyManagerService.create` tentando politica nomeada `allow` para `pornhub.com` retornou o mesmo erro esperado
+  - `node scripts/reconcile_scheduled_policy_windows.js` retornou `ok=true`, `schedules=1`, `changed=0`, `vlan30_media_active=true`
+  - `data/scheduled_policy_windows.json` permanece somente com `YouTube` e `Redes Sociais` na agenda da `VLAN 30`
+  - `curl -sk https://127.0.0.1:6777/bloqueios-liberacoes` serviu o HTML do app referenciando `/assets/index-BLjgPlcl.js`
+
+## Bloqueios e Liberacoes - cards mais compactos nos agendamentos - 2026-05-22
+
+- objetivo:
+  - reduzir o peso visual dos cards da tela `Bloqueios e Liberacoes`
+  - deixar `Aplicar regra em VLAN` e `Agendamentos por VLAN` mais agradaveis, densos e operacionais
+  - corrigir excesso de fontes grandes, padding alto, botoes largos e cards com aparencia exagerada
+- frontend:
+  - `frontend/src/pages/BlockingReleases.jsx` reduziu os titulos dos paineis de `text-xl` para leitura mais compacta
+  - os cards principais desses blocos passaram a usar `rounded-lg`, menos padding e sombras mais discretas
+  - botoes de VLAN, categoria, dias da semana e acoes do card passaram para altura menor, texto menor e espaçamento reduzido
+  - os cards de agendamento existentes agora exibem titulo, badges, horario, recorrencia e acoes em formato mais enxuto
+  - os controles continuam com foco visivel e area clicavel suficiente para uso operacional
+- escopo:
+  - ajuste apenas visual no frontend administrativo
+  - nenhuma rota, schema, ipset, UFW, DNS, RPZ, Squid, Unbound, agendamento systemd ou politica runtime foi alterado
+- validacao:
+  - `cd frontend && npm run build` concluido com sucesso
+  - bundle gerado: `dist/assets/index-D5X2Qp4E.js`
+  - `pm2 restart bcc-frontend --update-env` executado; processo ficou `online`
+  - `curl -sk https://127.0.0.1:6777/bloqueios-liberacoes` serviu o HTML do app referenciando `/assets/index-D5X2Qp4E.js`
+
 ## Sentinela do link Nicknetwork com contra-prova externa - 2026-05-25
 
 - objetivo:
@@ -5915,6 +7270,87 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `ss -lntup` confirmou Squid ouvindo em `3129`
   - `curl -sk -i https://127.0.0.1:6779/health` retornou `401 Token ausente`, confirmando backend-proxy vivo atras de autenticacao
   - log de erro do backend-proxy nao foi atualizado na rodada; ultimos erros sobre `ufw command not found` eram historicos de `2026-05-21`
+
+## DNS Institucional - Gov.BR via Quad9 e remocao de VIP indevido - 2026-05-26
+
+- objetivo:
+  - remover o IP publico `161.148.164.31` da lista de `Excecoes VIP`, pois VIP no SGCG representa cliente interno gerenciado, nao destino publico
+  - fazer a familia `gov.br` sair pelo DNS Quad9 `9.9.9.9`
+  - garantir que dominios `gov.br` e subdominios nao sofram bloqueio por politica institucional
+- alteracoes aplicadas:
+  - `policy_exceptions` id `38` (`161.148.164.31`, descricao `Gov.BR`) foi marcado como `active=false`, com `revoked_by=codex`
+  - `net_dns_rules` para `gov.br` foi atualizado de `1.1.1.1` para `9.9.9.9`, tipo `FWD`
+  - `/etc/unbound/unbound.conf.d/custom-zones.conf` passou a conter:
+    - `forward-zone name: "gov.br"`
+    - `forward-addr: 9.9.9.9`
+  - todos os registros ativos de `release_policies` com `domain='gov.br'` ou `domain LIKE '%.gov.br'` foram marcados como `protected=true`
+  - consulta de conflito confirmou `0` bloqueios ativos em `blocking_policies` para `gov.br` e subdominios
+- estado preservado:
+  - `allowed.rpz` ja continha `gov.br CNAME rpz-passthru.` e `*.gov.br CNAME rpz-passthru.`
+  - a excecao permanente PontoRH/OpenDNS foi preservada: `iptables-save -t nat` confirmou `RETURN` para `208.67.222.222` e `208.67.220.220` antes do redirect global de DNS nas VLANs gerenciadas
+- validacao:
+  - `unbound-checkconf` retornou sem erros
+  - `systemctl reload unbound` executado e `systemctl is-active unbound` retornou `active`
+  - `unbound-control flush_zone gov.br` e `unbound-control flush_zone .` executados
+  - `dig @127.0.0.1 gov.br A` retornou `NOERROR` com `161.148.164.31`
+  - `dig @127.0.0.1 www.gov.br A` retornou `NOERROR` com `161.148.164.31`
+  - `dig @127.0.0.1 acesso.gov.br A` retornou `NOERROR`
+  - `dig @127.0.0.1 receita.fazenda.gov.br A` retornou `NOERROR`
+  - `tcpdump -ni enp8s0 host 9.9.9.9 and port 53 -c 2` durante consulta nova `codex-forward-test-20260526.gov.br` capturou ida para `9.9.9.9.53` e resposta `NXDomain` vinda de `9.9.9.9.53`, provando o encaminhamento da zona `gov.br` pelo Quad9
+  - `dig @127.0.0.1 codex-forward-test-20260526.gov.br A` e `dig @9.9.9.9 codex-forward-test-20260526.gov.br A` retornaram `NXDOMAIN` coerente para nome inexistente, sem indicio de bloqueio SGCG
+  - `dig @127.0.0.1 app.pontorh.com.br A` e `dig @208.67.222.222 app.pontorh.com.br A` retornaram `NXDOMAIN` igualmente, indicando resposta autoritativa externa e nao bloqueio local do SGCG
+
+## DNS Institucional - correcao do teste de resolucao FWD - 2026-05-26
+
+- problema:
+  - na tela `Controle de Rede > DNS Institucional`, o botao `Testar Resolucao` mostrava `OFF` para `gov.br`
+  - a regra estava correta como `FWD` para `9.9.9.9`, mas a verificacao comparava a resposta final do dominio com o IP do resolvedor
+  - para `FWD`, `target_ip=9.9.9.9` e o servidor consultado, nao o IP esperado de `gov.br`
+- correcao:
+  - `backend-proxy/src/routes/dns-routes.ts` passou a tratar `type='FWD'` separadamente em `POST /api/dns/zones/verify`
+  - a verificacao agora consulta `@127.0.0.1` e tambem `@<target_ip>` e considera ativo quando as respostas coincidem
+  - regras estaticas tipo `A` continuam usando comparacao direta entre resposta e IP configurado
+- validacao:
+  - `cd backend-proxy && npm run build` concluiu com sucesso
+  - `pm2 restart backend-proxy --update-env` executado; processo ficou `online`
+  - chamada autenticada para `/api/dns/zones/verify` com `{"domain":"gov.br","target_ip":"9.9.9.9","type":"FWD"}` retornou:
+    - `match=true`
+    - `resolved_to=161.148.164.31`
+    - `expected_resolver=9.9.9.9`
+    - `resolver_answer=161.148.164.31`
+    - `verification_mode=forward-zone`
+
+## Hotspot - limpeza horaria de sessoes expiradas/revogadas - 2026-05-26
+
+- objetivo:
+  - garantir que a grade administrativa do Hotspot nao acumule sessoes com estado expirado
+  - manter a expiracao runtime ja existente e adicionar limpeza automatica horaria dos registros vencidos/revogados visiveis
+  - preservar historico institucional e relatorios, ocultando da grade via `admin_hidden_at` em vez de apagar linhas
+- backend:
+  - `backend/src/modules/hotspot/hotspot-routes.ts` recebeu a funcao reutilizavel `cleanupStaleSessions`
+  - a limpeza primeiro executa `expireExpiredSessions`, marcando como `expired` sessoes `active` com `expires_at <= NOW()` e removendo IPs do runtime quando necessario
+  - depois oculta da grade administrativa sessoes com:
+    - `status='revoked'`
+    - `status='expired'`
+    - ou `expires_at <= NOW()`
+  - o endpoint manual `POST /api/hotspot/sessions/cleanup-stale` passou a usar a mesma funcao da rotina automatica
+  - `revokeRuntimeIps` passou a remover do `ipset` apenas IPs que ainda estejam presentes em `sgcg_hotspot_v70_auth`, evitando ruido de erro esperado quando o timeout do proprio ipset ja removeu o IP
+- agendamento runtime:
+  - `backend/src/server.ts` manteve o sweeper de expiracao a cada 1 minuto
+  - foi adicionado um segundo sweeper com `setInterval(..., 60 * 60 * 1000)` para executar `cleanupStaleSessions({ requestedBy: 'system:hourly-hotspot-cleanup' })`
+  - a rotina horaria possui trava simples `hotspotCleanupRunning` para evitar sobreposicao caso uma execucao anterior ainda esteja rodando
+- validacao:
+  - antes da limpeza manual havia `5` sessoes expiradas ainda visiveis na grade e `0` sessoes ativas vencidas
+  - `cd backend && npm run build` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` executado; processo ficou `online`
+  - chamada autenticada para `POST /api/hotspot/sessions/cleanup-stale` retornou `hidden_total=5`, `hidden_expired=5`, `runtime_revoked=5`
+  - apos a limpeza, consulta SQL confirmou:
+    - `visible_expired=0`
+    - `visible_revoked=0`
+    - `active_expired=0`
+  - `ipset list sgcg_hotspot_v70_auth` confirmou `Number of entries: 0`
+  - segunda chamada autenticada ao endpoint retornou todos os contadores zerados, validando idempotencia
+
 ## Infraestrutura - armazenamento fisico ROOT e placa mae - 2026-05-27
 
 - objetivo:
@@ -5946,59 +7382,33 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
     - `storage.root.layout='4 SSDs em volume unificado'`
     - `storage.physical_ssds` com 4 itens (`sda`, `sdb`, `sdc`, `sdd`)
   - bundle gerado em `frontend/dist` contem `Disco ROOT (SISTEMA)` e `Placa Mae`
-## Incidente pos-merge/reboot - VLAN 50, UFW e reload indevido do Unbound - 2026-05-27
+
+## Rede/DNS - bypass emergencial gov.br, Empresa Facil e Conectividade Social - 2026-05-28
 
 - contexto:
-  - apos troca de 2 HDs por 2 SSDs, merge e reboot do servidor, as VLANs ficaram sem navegacao para usuarios comuns e maquinas em `VIP` continuavam funcionando
-  - durante a emergencia, regras foram liberadas diretamente no `iptables` e o UFW foi desabilitado
-- achados runtime:
-  - interfaces e rotas estavam presentes: `enp6s0.50` com `192.168.50.1/24`, WAN `enp8s0` com rota default via `186.251.14.25`
-  - `net.ipv4.ip_forward=1`
-  - havia `MASQUERADE` para `192.168.50.0/24` em `POSTROUTING`
-  - `FORWARD` tinha trafego real aceito para `enp6s0.50 -> enp8s0` e retorno `enp8s0 -> enp6s0.50`
-  - `conntrack` mostrou sessoes estabelecidas da VLAN 50 para destinos externos em `443`, `5222`, `5228` e UDP
-  - captura em `enp6s0.50` confirmou trafego bidirecional de `192.168.50.12`, `192.168.50.26` e `192.168.50.30`, incluindo HTTPS externo e check-in interno `HTTP 200`
-  - DNS da VLAN 50 respondeu `NOERROR` em `dig @192.168.50.1 google.com A`
-- causa operacional identificada:
-  - o UFW estava com `/etc/ufw/ufw.conf` em `ENABLED=no`, apesar do servico systemd aparecer como `active (exited)`
-  - `ufw status` falhava por `ip6tables`, pois a carga IPv6 impedia o UFW de listar/recarregar corretamente
-  - o timer `sgcg-policy-window-reconcile.timer` executava a cada minuto e `scripts/reconcile_scheduled_policy_windows.js` reescrevia `/etc/unbound/becker/allowed.rpz` e recarregava o `unbound` mesmo quando o conteudo nao mudava
-  - isso causava reload DNS recorrente e desnecessario durante o periodo de instabilidade
-- correcao aplicada:
-  - `scripts/reconcile_scheduled_policy_windows.js` agora compara o conteudo calculado de `allowed.rpz` com o conteudo original e so grava/recarrega o Unbound quando existe alteracao real
-  - `/etc/default/ufw` foi ajustado temporariamente para `IPV6=no`, isolando a falha de `ip6tables` sem impedir a protecao IPv4 das VLANs
-  - `ufw --force enable` reativou o UFW como camada oficial; `/etc/ufw/ufw.conf` voltou para `ENABLED=yes`
+  - usuarios de VLANs nao VIP reportaram lentidao extrema de DNS e falhas em `gov.br`, SSO gov.br, Empresa Facil e WhatsApp/Web WhatsApp
+  - o IP acompanhado durante a correcao foi `192.168.10.131`
+  - no VIP os portais fluem porque a politica cria caminho amplo de ida e retorno antes dos guardrails UFW/SGCG
+- DNS institucional:
+  - `gov.br` e dependencias criticas foram migrados para forwarders Cloudflare `1.1.1.1,1.0.0.1`
+  - `scripts/update_govbr_allowlist.py` sincroniza `net_dns_rules`, regenera `/etc/unbound/unbound.conf.d/custom-zones.conf` e mantém RPZ `rpz-passthru` nas allowlists por VLAN
+  - dominios cobertos incluem `gov.br`, `acesso.gov.br`, `sso.acesso.gov.br`, `servicos.gov.br`, `serpro.gov.br`, `estaleiro.serpro.gov.br`, `caixa.gov.br`, Conectividade Social, eSocial, Empresa Facil PR e dependencias observadas como `go-mpulse.net`, Akamai, hCaptcha, Google assets, New Relic e StaticVox
+- firewall/runtime:
+  - criado/atualizado o ipset `sgcg_govbr_allowed`
+  - mantidas regras de ida no `FORWARD` para `enp6s0+ -> enp8s0` TCP/UDP 80,443 com destino no ipset
+  - mantido bypass NAT em `PREROUTING` para destinos do ipset, evitando DNAT/captive/proxy local
+  - adicionada regra de retorno antes do `SGCG_GUARD`: `enp8s0 -> enp6s0+`, `ESTABLISHED,RELATED`, origem no ipset, comentario `SGCG GOVBR EMPRESAFACIL RETURN ALLOW`
+  - a ausencia dessa regra de retorno deixava conexoes de `192.168.10.131` para Empresa Facil em `SYN_RECV`: o SYN saia pela WAN e o SYN-ACK voltava, mas nao completava na VLAN
+- persistencia:
+  - `scripts/update_govbr_allowlist.py` passou a recriar tambem a regra de retorno
+  - runtime persistido em `/etc/iptables/rules.v4` e `/etc/ipset.conf`
+  - timer `sgcg-govbr-allowlist.timer` mantem a allowlist atualizada a cada 10 minutos
 - validacao:
-  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
-  - `systemctl start sgcg-policy-window-reconcile.service` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=true`
-  - apos nova execucao do timer, `journalctl -u unbound --since '2026-05-27 12:17:00'` nao mostrou novo `Reloading`, `Restart`, `service stopped` ou `start of service`
-  - `ufw status verbose` voltou a responder `Status: active`, `Default: deny (incoming), allow (outgoing), allow (routed)`
-  - `systemctl is-active ufw unbound sgcg-vip-dns.service squid isc-dhcp-server nginx` retornou `active` para todos
-  - `dig @192.168.50.1 google.com A` retornou `NOERROR`
-  - `ping -4 -c 3 -W 1 -I 192.168.50.1 8.8.8.8` teve `0% packet loss`
-  - `iptables -L FORWARD -n -v` confirmou counters ativos para `192.168.50.0/24`
-  - `iptables -t nat -L POSTROUTING -n -v` confirmou `MASQUERADE` ativo para `192.168.50.0/24`
-- pendencias:
-  - reconstruir com calma o caminho IPv6 do UFW antes de voltar `IPV6=yes`
-  - revisar e remover os bypasses emergenciais de `iptables` quando a rede estiver confirmada pelos usuarios
-  - auditar o restante do reconciliador/firewall para reduzir dependencia de regras runtime aplicadas fora do UFW
-
-## Ajuste do timer de agendamentos por VLAN - 2026-05-27
-
-- contexto:
-  - apos validar que os agendamentos por VLAN estavam funcionando, foi reduzida a frequencia do `sgcg-policy-window-reconcile.timer` para evitar execucoes desnecessarias a cada minuto
-  - a precisao de inicio/fim dos agendamentos continua suficiente para janelas operacionais como horario de almoco e sexta-feira
-- alteracao aplicada:
-  - `/etc/systemd/system/sgcg-policy-window-reconcile.timer` passou de `OnUnitActiveSec=60s` para `OnUnitActiveSec=5min`
-  - `AccuracySec` passou de `5s` para `30s`
-  - a descricao da unit foi atualizada para `a cada 5 minutos`
-  - executados `systemctl daemon-reload` e `systemctl restart sgcg-policy-window-reconcile.timer`
-- validacao:
-  - `systemctl status sgcg-policy-window-reconcile.timer` mostrou `active (waiting)` e proximo disparo em aproximadamente 5 minutos
-  - `node --check scripts/reconcile_scheduled_policy_windows.js` concluiu sem erro
-  - `node scripts/reconcile_scheduled_policy_windows.js` retornou `ok=true`, `schedules=2`, `changed=0`, `vlan30_media_active=false`
-  - `journalctl -u unbound --since '5 minutes ago'` nao mostrou novo `Reloading`, `Restart`, `stopped`, `start of service`, `error`, `failed` ou `fatal`
-- impacto esperado:
-  - reducao de carga e ruido operacional sem perder confiabilidade pratica dos agendamentos
-  - atraso maximo esperado para aplicar ou remover uma janela passa a ser de cerca de 5 minutos
-
+  - `python3 scripts/update_govbr_allowlist.py` executou com sucesso e reportou `ok members=215`
+  - `dig @127.0.0.1 gov.br A +short` retornou `161.148.164.31`
+  - `dig @127.0.0.1 www.gov.br A +short` retornou `161.148.164.31`
+  - `dig @127.0.0.1 sso.acesso.gov.br A +short` retornou `189.9.168.40`
+  - `dig @127.0.0.1 autenticacao.empresafacil.pr.gov.br A +short` retornou `200.155.79.202`
+  - `unbound-control list_forwards` confirmou `gov.br`, `www.gov.br`, `acesso.gov.br`, `sso.acesso.gov.br`, `autenticacao.empresafacil.pr.gov.br`, `caixa.gov.br`, `conectividade.caixa.gov.br`, `esocial.gov.br`, `serpro.gov.br`, `go-mpulse.net` e dependencias relacionadas como `forward 1.1.1.1 1.0.0.1`
+  - `conntrack` passou a mostrar conexoes de `192.168.10.131` para `200.155.79.200:443` e `161.148.164.31:443` como `[ASSURED]`, em vez de ficarem travadas em `SYN_RECV`
+  - `tcpdump -ni any` confirmou pacote de retorno `161.148.164.31.443 > 192.168.10.131` saindo por `enp6s0.10`

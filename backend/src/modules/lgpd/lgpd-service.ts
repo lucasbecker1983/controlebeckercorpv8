@@ -382,7 +382,7 @@ export const lgpdService = {
         );
 
         await this.logAudit({
-            entityType: 'processing',
+            entityType: 'program',
             entityId: 1,
             action: 'program.update',
             actor,

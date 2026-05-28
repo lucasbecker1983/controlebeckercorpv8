@@ -4,6 +4,7 @@ import { pool } from '../config/db';
 import { env } from '../config/env';
 import { runCommand } from '../utils/process';
 import { filterOperationalVlans, isManagedBlockingIp, isManagedBlockingVlan } from './blocking-release-scope';
+import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
 import { policyCompilerService } from './policy-compiler-service';
 
 type ContingencyStatus = 'normal' | 'active' | 'expired' | 'error';
@@ -22,6 +23,7 @@ type VlanRow = {
 type VipBypassRow = {
     ip: string;
     vlan_id: number | null;
+    dns_audit_enabled: boolean;
 };
 
 const BEGIN_MARKER = '# BEGIN DNS_EMERGENCY_V8';
@@ -30,8 +32,18 @@ const EARLY_BEGIN_MARKER = '# BEGIN BECKERCORP_EARLY_FORWARD';
 const EARLY_END_MARKER = '# END BECKERCORP_EARLY_FORWARD';
 const PONTORH_BEGIN_MARKER = '# BEGIN SGCG_PONTORH_OPENDNS';
 const PONTORH_END_MARKER = '# END SGCG_PONTORH_OPENDNS';
+const DOH_BLOCK_SERVERS = [
+    '1.1.1.1',
+    '1.0.0.1',
+    '8.8.8.8',
+    '8.8.4.4',
+    '9.9.9.9',
+    '149.112.112.112',
+    '94.140.14.14',
+    '94.140.15.15',
+];
 const CHAIN_NAME = 'DNS_EMERGENCY_V8';
-const DEFAULT_PROVIDERS: ResolverProvider[] = ['google', 'cloudflare', 'quad9'];
+const DEFAULT_PROVIDERS: ResolverProvider[] = ['google', 'cloudflare', 'quad9', 'opendns'];
 const PERMANENT_WORK_DNS_PROVIDERS: ResolverProvider[] = ['opendns'];
 const FIREWALL_LOCK_DIR = '/run/sgcg-firewall.lock';
 const FIREWALL_LOCK_STALE_MS = 120_000;
@@ -307,15 +319,16 @@ class DnsContingencyService {
     }
 
     async listVipBypassRows(): Promise<VipBypassRow[]> {
+        await ensureBlockingReleaseSchema();
         const { rows } = await pool.query(
             `
-                SELECT host(ip) AS ip, vlan_id, id AS sort_id
+                SELECT host(ip) AS ip, vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, id AS sort_id
                 FROM policy_exceptions
                 WHERE active = TRUE
                   AND masklen(ip) = 32
                   AND (valid_until IS NULL OR valid_until >= NOW())
                 UNION ALL
-                SELECT host(cidr::inet) AS ip, NULL::integer AS vlan_id, id AS sort_id
+                SELECT host(cidr::inet) AS ip, NULL::integer AS vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, id AS sort_id
                 FROM dns_vip
                 WHERE ativo = TRUE
                   AND masklen(cidr::inet) = 32
@@ -329,6 +342,7 @@ class DnsContingencyService {
             .map((row) => ({
                 ip: String(row.ip || '').trim(),
                 vlan_id: row.vlan_id === null || row.vlan_id === undefined ? null : Number(row.vlan_id),
+                dns_audit_enabled: row.dns_audit_enabled !== false,
             }))
             .filter((row) => {
                 if (!row.ip) return false;
@@ -524,6 +538,10 @@ class DnsContingencyService {
             env.proxyGatewayIp,
         ]);
         const activeVipSet = new Set(vipIps.map((ip) => `${ip}/32`));
+        const dnsAuditByIp = new Map<string, boolean>();
+        for (const ip of vipIps) {
+            dnsAuditByIp.set(ip, vipBypassRows.some((vip) => vip.ip === ip && vip.dns_audit_enabled !== false));
+        }
         const activeEmergencySubnets = new Set(emergencyVlans.map((v) => v.subnet_cidr));
         const applied: string[] = [];
         const removed: string[] = [];
@@ -534,7 +552,7 @@ class DnsContingencyService {
         const existingRuntimeRules = new Set<string>();
         const staleNatVipIps = new Set<string>();
         const staleFilterVipIps = new Set<string>();
-        const natVipOrder = new Map<string, { firstRedirect: number | null; firstReturn: number | null }>();
+        const natVipOrder = new Map<string, { firstRedirect: number | null; firstAuditRedirect: number | null; firstReturn: number | null }>();
         const firstGlobalDnsRedirect = natLines.findIndex((line) => (
             line.startsWith('-A PREROUTING ')
             && line.includes('-i enp6s0+')
@@ -556,9 +574,12 @@ class DnsContingencyService {
             const ipMatch = line.match(/\s-s\s+(\d+\.\d+\.\d+\.\d+(?:\/32)?)\b/);
             const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
             if (!normalizedIp || !activeVipSet.has(normalizedIp)) return;
-            const state = natVipOrder.get(normalizedIp) || { firstRedirect: null, firstReturn: null };
+            const state = natVipOrder.get(normalizedIp) || { firstRedirect: null, firstAuditRedirect: null, firstReturn: null };
             if (line.includes('-j REDIRECT') && line.includes(`--to-ports ${env.vipCleanDnsPort}`)) {
                 state.firstRedirect = state.firstRedirect === null ? index : Math.min(state.firstRedirect, index);
+                if (!line.includes(' -d ')) {
+                    state.firstAuditRedirect = state.firstAuditRedirect === null ? index : Math.min(state.firstAuditRedirect, index);
+                }
             }
             if (line.includes('-j RETURN')) {
                 state.firstReturn = state.firstReturn === null ? index : Math.min(state.firstReturn, index);
@@ -567,7 +588,10 @@ class DnsContingencyService {
         });
 
         for (const [ip, state] of natVipOrder.entries()) {
-            if (state.firstReturn !== null && (state.firstRedirect === null || state.firstReturn < state.firstRedirect)) {
+            const plainIp = ip.replace(/\/32$/, '');
+            const requiresDnsAudit = dnsAuditByIp.get(plainIp) !== false;
+            const firstRequiredRedirect = requiresDnsAudit ? state.firstAuditRedirect : state.firstRedirect;
+            if (state.firstReturn !== null && (firstRequiredRedirect === null || state.firstReturn < firstRequiredRedirect)) {
                 staleNatVipIps.add(ip);
             }
         }
@@ -634,26 +658,41 @@ class DnsContingencyService {
                 .map((vip) => (vip.vlan_id ? gatewayByVlanId.get(Number(vip.vlan_id)) || '' : ''))
                 .filter(Boolean));
             const localDnsTargets = scopedLocalDnsTargets.length ? scopedLocalDnsTargets : fallbackLocalDnsTargets;
+            const permanentWorkDnsTargets = this.getResolverAddresses(PERMANENT_WORK_DNS_PROVIDERS);
+            const dnsAuditEnabled = dnsAuditByIp.get(ip) !== false;
             const natInsertPosition = (await this.countRuntimeRulesWithComment('nat', 'PREROUTING', 'sgcg-total-vlan-block')) + 1;
             const filterInsertPosition = (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-total-vlan-block')) + 1;
             const rules = [
-                ['nat', 'PREROUTING', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
-                ['nat', 'PREROUTING', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
                 ['nat', 'PREROUTING', ['-s', ip, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
-                ...localDnsTargets.flatMap((target) => ([
-                    ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
-                    ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
-                ] as Array<[string, string, string[], number]>)),
+                ...(dnsAuditEnabled
+                    ? [
+                        ['nat', 'PREROUTING', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
+                        ['nat', 'PREROUTING', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
+                        ...permanentWorkDnsTargets.flatMap((target) => ([
+                            ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
+                            ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
+                        ] as Array<[string, string, string[], number]>)),
+                    ] as Array<[string, string, string[], number]>
+                    : [
+                        ['nat', 'PREROUTING', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
+                        ['nat', 'PREROUTING', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'RETURN'], natInsertPosition],
+                        ...localDnsTargets.flatMap((target) => ([
+                            ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
+                            ['nat', 'PREROUTING', ['-s', ip, '-d', target, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REDIRECT', '--to-ports', String(env.vipCleanDnsPort)], natInsertPosition],
+                        ] as Array<[string, string, string[], number]>)),
+                    ]),
                 ['filter', 'INPUT', ['-s', ip, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
                 ['filter', 'INPUT', ['-s', ip, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
                 ['filter', 'INPUT', ['-s', ip, '-p', 'udp', '--dport', String(env.vipCleanDnsPort), '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
                 ['filter', 'INPUT', ['-s', ip, '-p', 'tcp', '--dport', String(env.vipCleanDnsPort), '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], 1],
                 ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'udp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
                 ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'tcp', '--dport', '53', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
-                ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'tcp', '--dport', '853', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
                 ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'tcp', '--dport', '443', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
                 ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'udp', '--dport', '443', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
                 ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
+                dnsAuditEnabled
+                    ? ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'tcp', '--dport', '853', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'REJECT', '--reject-with', 'tcp-reset'], filterInsertPosition]
+                    : ['filter', 'FORWARD', ['-s', ip, '-o', env.wanInterface, '-p', 'tcp', '--dport', '853', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
                 ['filter', 'FORWARD', ['-d', ip, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
             ] as Array<[string, string, string[], number]>;
 
@@ -704,20 +743,25 @@ class DnsContingencyService {
 
     buildEarlyFirewallBlock(vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
         const vipIps = unique(vipBypassRows.map((vip) => vip.ip));
-        const vipForwardRules = vipIps.flatMap((ip) => [
-            `-A ufw-before-input -s ${ip} -p udp --dport ${env.vipCleanDnsPort} -j ACCEPT`,
-            `-A ufw-before-input -s ${ip} -p tcp --dport ${env.vipCleanDnsPort} -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p udp --dport 53 -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 53 -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 853 -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 443 -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p udp --dport 443 -j ACCEPT`,
-            `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -j ACCEPT`,
-            `-A ufw-before-forward -d ${ip} -i ${env.wanInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`,
-        ]);
+        const vipForwardRules = vipIps.flatMap((ip) => {
+            const dnsAuditEnabled = vipBypassRows.some((vip) => vip.ip === ip && vip.dns_audit_enabled !== false);
+            return [
+                `-A ufw-before-input -s ${ip} -p udp --dport ${env.vipCleanDnsPort} -j ACCEPT`,
+                `-A ufw-before-input -s ${ip} -p tcp --dport ${env.vipCleanDnsPort} -j ACCEPT`,
+                ...(dnsAuditEnabled ? [`-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 853 -j REJECT --reject-with tcp-reset`] : []),
+                `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p udp --dport 53 -j ACCEPT`,
+                `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 53 -j ACCEPT`,
+                ...(!dnsAuditEnabled ? [`-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 853 -j ACCEPT`] : []),
+                `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p tcp --dport 443 -j ACCEPT`,
+                `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -p udp --dport 443 -j ACCEPT`,
+                `-A ufw-before-forward -s ${ip} -o ${env.wanInterface} -j ACCEPT`,
+                `-A ufw-before-forward -d ${ip} -i ${env.wanInterface} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT`,
+            ];
+        });
         const lines = [
             EARLY_BEGIN_MARKER,
-            '# VIPs sempre saem antes dos bloqueios comuns; DNS da maquina pode ser local, publico, DoT ou DoH.',
+            '# VIPs sempre saem antes dos bloqueios comuns; por padrao, DNS classico e auditado no resolvedor limpo 5355.',
+            '# A excecao PontoRH/OpenDNS permanece fora da captura pelo bloco SGCG_PONTORH_OPENDNS.',
             ...vipForwardRules,
             '',
             '# WhatsApp/Web WhatsApp compartilha infraestrutura Meta; nao bloquear faixas Meta ou portas push aqui.',
@@ -727,16 +771,12 @@ class DnsContingencyService {
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.8.0/21 -j DROP`,
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.16.0/21 -j DROP`,
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d 91.108.56.0/22 -j DROP`,
-            '',
-            '# Bloqueios mobile da VLAN 70 precisam preceder o allow geral de roteamento do UFW.',
-            `-A ufw-before-forward -i enp6s0.70 -o ${env.wanInterface} -p tcp --dport 5222 -j DROP`,
-            `-A ufw-before-forward -i enp6s0.70 -o ${env.wanInterface} -p tcp --dport 5223 -j DROP`,
-            `-A ufw-before-forward -i enp6s0.70 -o ${env.wanInterface} -p tcp --dport 5228 -j DROP`,
-            '',
-            '# DoT bloqueado: impede bypass do Unbound/RPZ via DNS-over-TLS em todas as VLANs internas.',
-            '# VLANs em bypass emergencial recebem ACCEPT antes do DROP global.',
+            '# Bloqueios de DNS seguro externo e QUIC usam REJECT para evitar timeouts longos nos navegadores.',
+            '# VLANs em bypass emergencial recebem ACCEPT antes do bloqueio global.',
             ...emergencyVlans.map((v) => `-A ufw-before-forward -i ${v.interface_name} -p tcp --dport 853 -j ACCEPT`),
-            `-A ufw-before-forward -i enp6s0+ -p tcp --dport 853 -j DROP`,
+            `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -p udp --dport 443 -j REJECT --reject-with icmp-port-unreachable`,
+            ...DOH_BLOCK_SERVERS.map((ip) => `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d ${ip}/32 -p tcp --dport 443 -j REJECT --reject-with tcp-reset`),
+            `-A ufw-before-forward -i enp6s0+ -p tcp --dport 853 -j REJECT --reject-with tcp-reset`,
             EARLY_END_MARKER,
         ];
         return lines.join('\n');

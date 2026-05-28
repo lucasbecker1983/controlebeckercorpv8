@@ -26,6 +26,13 @@ const writeScheduledPolicyWindows = (items: any[]) => {
 const triggerScheduledPolicyReconcile = async () => {
     await runCommand('systemctl', ['start', 'sgcg-policy-window-reconcile.service'], { allowFailure: true });
 };
+const scheduleCategoryKey = (value: unknown) => String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+const scheduleCategoryIsPornography = (value: unknown) => /(pornograf|adulto|conteudo-adulto)/.test(scheduleCategoryKey(value));
 const normalizeScheduleWindow = (payload: any, fallback: any = {}) => {
     const id = String(payload?.id || fallback.id || payload?.name || `schedule-${Date.now()}`)
         .toLowerCase()
@@ -42,6 +49,7 @@ const normalizeScheduleWindow = (payload: any, fallback: any = {}) => {
     if (!String(payload?.name ?? fallback.name ?? '').trim()) throw new Error('Nome do agendamento obrigatório');
     if (!vlanIds.length) throw new Error('Selecione ao menos uma VLAN');
     if (!categories.length) throw new Error('Selecione ao menos uma categoria');
+    if (categories.some(scheduleCategoryIsPornography)) throw new Error('Pornografia nunca pode ser liberada por agendamento.');
     return {
         ...fallback,
         id,

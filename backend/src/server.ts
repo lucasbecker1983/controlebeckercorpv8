@@ -157,6 +157,19 @@ app.listen(PORT, '0.0.0.0', () => {
         });
     }, 60 * 1000);
     hotspotSessionSweeper.unref?.();
+    let hotspotCleanupRunning = false;
+    const hotspotStaleCleanupSweeper = setInterval(() => {
+        if (hotspotCleanupRunning) return;
+        hotspotCleanupRunning = true;
+        hotspotSchemaService.cleanupStaleSessions({ requestedBy: 'system:hourly-hotspot-cleanup' })
+            .catch((error) => {
+                console.error('[HOTSPOT] Falha ao limpar sessoes expiradas/revogadas:', error);
+            })
+            .finally(() => {
+                hotspotCleanupRunning = false;
+            });
+    }, 60 * 60 * 1000);
+    hotspotStaleCleanupSweeper.unref?.();
     const collabSessionSweeper = setInterval(() => {
         collaboratorsSchemaService.expireExpiredSessions().catch((error) => {
             console.error('[COLLAB] Falha ao expirar sessoes vencidas:', error);

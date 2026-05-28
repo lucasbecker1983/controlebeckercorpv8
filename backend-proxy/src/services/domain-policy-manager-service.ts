@@ -68,6 +68,24 @@ const policyTextIncludesPornography = (...values: unknown[]) => {
     return /(pornograf|adulto|conteudo-adulto|conteudo-adulto)/.test(text);
 };
 
+const policyEntryValues = (entries: NormalizedPolicyEntry[]) => entries.flatMap((entry) => [
+    entry.raw,
+    entry.normalized_domain,
+    entry.normalized_host_domain,
+]);
+
+const assertPornographyNeverAllowed = (input: {
+    policyType: PolicyType;
+    name?: unknown;
+    description?: unknown;
+    governanceSummary?: unknown;
+    entries?: NormalizedPolicyEntry[];
+}) => {
+    if (input.policyType !== 'allow') return;
+    if (!policyTextIncludesPornography(input.name, input.description, input.governanceSummary, ...(input.entries ? policyEntryValues(input.entries) : []))) return;
+    throw new Error('Pornografia nunca pode ser liberada. Use apenas política de bloqueio.');
+};
+
 const assertGlobalScopeAllowed = (input: {
     scopeType: ScopeType;
     policyType: PolicyType;
@@ -609,6 +627,13 @@ export class DomainPolicyManagerService {
             ...payload,
             requested_by: payload?.requested_by || requestedBy,
         });
+        assertPornographyNeverAllowed({
+            policyType,
+            name,
+            description: payload?.description,
+            governanceSummary: governance.summary,
+            entries,
+        });
         assertGlobalScopeAllowed({
             scopeType: scope.scopeType,
             policyType,
@@ -709,6 +734,13 @@ export class DomainPolicyManagerService {
                 ...payload,
                 requested_by: payload?.requested_by || current.requested_by || requestedBy,
             }, current);
+            assertPornographyNeverAllowed({
+                policyType,
+                name,
+                description: payload?.description ?? current.description,
+                governanceSummary: governance.summary,
+                entries,
+            });
             assertGlobalScopeAllowed({
                 scopeType: scope.scopeType,
                 policyType,

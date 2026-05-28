@@ -30,6 +30,11 @@ const VLAN_META = new Map<number, { name: string; ip: string }>([
     [80, { name: 'VLAN 80 (VOiP)', ip: '192.168.80.1/24' }],
 ]);
 
+const splitForwardAddrs = (value: string) => value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 const ensureNetDnsRulesSchema = async () => {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS net_dns_rules (
@@ -55,7 +60,12 @@ const syncUnboundCustomZones = async () => {
         if (!domain || !targetIp) return;
 
         if (type === 'FWD') {
-            forwardBlocks += `\nforward-zone:\n    name: "${domain}"\n    forward-addr: ${targetIp}\n`;
+            const forwardAddrs = splitForwardAddrs(targetIp);
+            if (!forwardAddrs.length) return;
+            forwardBlocks += `\nforward-zone:\n    name: "${domain}"\n`;
+            forwardAddrs.forEach((addr) => {
+                forwardBlocks += `    forward-addr: ${addr}\n`;
+            });
             return;
         }
 
@@ -343,18 +353,49 @@ router.post('/zones/delete', async (req, res) => {
 router.post('/zones/verify', async (req, res) => {
     const domain = String(req.body?.domain || '').trim();
     const targetIp = String(req.body?.target_ip || req.body?.ip || '').trim();
+    const type = String(req.body?.type || 'A').trim().toUpperCase();
 
     if (!domain) {
         return res.status(400).json({ error: 'Domínio é obrigatório.' });
     }
 
     try {
-        const result = await runCommand('dig', ['@127.0.0.1', domain, '+short'], {
+        const localResult = await runCommand('dig', ['+time=2', '+tries=1', '@127.0.0.1', domain, 'A', '+short'], {
             elevated: true,
             allowFailure: true,
         });
-        const resolvedIp = result.stdout.split('\n').map((line) => line.trim()).find(Boolean) || null;
-        res.json({ match: targetIp ? resolvedIp === targetIp : Boolean(resolvedIp), resolved_to: resolvedIp });
+        const localAnswers = localResult.stdout
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+        const resolvedIp = localAnswers.find(Boolean) || null;
+
+        if (type === 'FWD' && targetIp) {
+            const forwardResult = await runCommand('dig', ['+time=2', '+tries=1', `@${targetIp}`, domain, 'A', '+short'], {
+                elevated: true,
+                allowFailure: true,
+            });
+            const forwardAnswers = forwardResult.stdout
+                .split('\n')
+                .map((line) => line.trim())
+                .filter(Boolean);
+            const localSet = new Set(localAnswers);
+            const hasSameAnswer = forwardAnswers.some((answer) => localSet.has(answer));
+
+            return res.json({
+                match: localResult.code === 0 && forwardResult.code === 0 && hasSameAnswer,
+                resolved_to: resolvedIp,
+                expected_resolver: targetIp,
+                resolver_answer: forwardAnswers.find(Boolean) || null,
+                verification_mode: 'forward-zone',
+            });
+        }
+
+        res.json({
+            match: targetIp ? resolvedIp === targetIp : Boolean(resolvedIp),
+            resolved_to: resolvedIp,
+            verification_mode: 'static-record',
+        });
     } catch (error: any) {
         res.status(500).json({ error: error.message || 'Falha ao verificar zona DNS.' });
     }

@@ -12,11 +12,15 @@ import Users from './pages/Users';
 import Proxy from './pages/Proxy';
 import BlockingReleases from './pages/BlockingReleases';
 import Control from './pages/Control';
+import AiAssistant from './pages/AiAssistant';
 import Backups from './pages/Backups';
 import Security from './pages/Security';
 import Settings from './pages/Settings';
 import DataGovernance from './pages/DataGovernance';
 import GovernanceVisual from './pages/GovernanceVisual';
+import GovernancePolicies from './pages/GovernancePolicies';
+import GovernanceCompliance from './pages/GovernanceCompliance';
+import GovernanceAudit from './pages/GovernanceAudit';
 import ApprovalsExceptions from './pages/ApprovalsExceptions';
 import Lgpd from './pages/Lgpd';
 import Reports from './pages/Reports';
@@ -27,6 +31,7 @@ import CollaboratorPortal from './pages/CollaboratorPortal';
 import SupportPortal from './pages/SupportPortal';
 import SupportTickets from './pages/SupportTickets';
 import Maintenance from './pages/Maintenance';
+import PrivacyNotice from './pages/PrivacyNotice';
 import { api, resetAuthInvalidation } from './services/api';
 import { resetAuthFetchInvalidation } from './services/authFetch';
 import { storageGet, storageRemove, storageSet } from './services/browserStorage';
@@ -177,6 +182,10 @@ export default function App() {
     return <Maintenance />;
   }
 
+  if (window.location.pathname.startsWith('/aviso-de-privacidade')) {
+    return <PrivacyNotice />;
+  }
+
   if (!user?.id && !user?.username) {
     return <Login onLogin={(nextUser) => {
       resetAuthInvalidation();
@@ -226,6 +235,9 @@ export default function App() {
           <Route path="/server" element={<Server />} />
           <Route path="/users" element={<Users />} />
           <Route path="/proxy" element={<Proxy />} />
+          <Route path="/governanca-politicas" element={<GovernancePolicies />} />
+          <Route path="/governanca-conformidade" element={<GovernanceCompliance />} />
+          <Route path="/governanca-auditoria" element={<GovernanceAudit />} />
           <Route path="/bloqueios-liberacoes" element={<BlockingReleases />} />
           <Route path="/governanca-visual" element={<GovernanceVisual />} />
           <Route path="/governanca-dados" element={<DataGovernance />} />
@@ -235,6 +247,7 @@ export default function App() {
           <Route path="/relatorios" element={<Reports />} />
           <Route path="/chamados" element={<SupportTickets />} />
           <Route path="/control" element={<Control />} />
+          <Route path="/assistente-ia" element={<AiAssistant />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />
           <Route path="/hotspot" element={<Hotspot />} />

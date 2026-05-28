@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Database, Shield, Clock, Globe, ArrowDown, ArrowUp, Activity } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Cpu, Database, Shield, Clock, Globe, ArrowDown, ArrowUp, Activity, BarChart3, FileSearch, Scale, ShieldCheck } from 'lucide-react';
 import { api } from '../services/api';
 import { ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
@@ -29,6 +30,37 @@ const LiveAreaChart = ({ data, maxValue }) => {
         </div>
     );
 };
+
+const governancePaths = [
+    {
+        title: 'Governança Visual',
+        description: 'Gráficos clicáveis, anomalias e leitura executiva com caminho direto para investigação.',
+        to: '/governanca-visual',
+        icon: BarChart3,
+        tone: 'text-blue-600',
+    },
+    {
+        title: 'Políticas e Exceções',
+        description: 'Decisão formal sobre bloqueios, liberações, VIPs, contingência e escopos institucionais.',
+        to: '/governanca-politicas',
+        icon: ShieldCheck,
+        tone: 'text-emerald-600',
+    },
+    {
+        title: 'Conformidade e Dados',
+        description: 'LGPD, governança de dados, inventário, incidentes, titulares e qualidade de evidência.',
+        to: '/governanca-conformidade',
+        icon: Scale,
+        tone: 'text-violet-600',
+    },
+    {
+        title: 'Auditoria e Evidências',
+        description: 'Relatórios forenses, chamados, autoria, configurações e trilhas de prova institucional.',
+        to: '/governanca-auditoria',
+        icon: FileSearch,
+        tone: 'text-orange-600',
+    },
+];
 
 export default function Dashboard() {
     const [data, setData] = useState(null);
@@ -111,6 +143,23 @@ export default function Dashboard() {
                         A camada de controle executa enforcement, monitora serviços, expõe telemetria e valida tecnicamente o comportamento da infraestrutura.
                     </p>
                 </Surface>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 2xl:grid-cols-4">
+                {governancePaths.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                        <Link key={item.title} to={item.to} className="group block h-full">
+                            <Surface stripe={false} className="flex h-full flex-col p-5 transition group-hover:border-primary/22 group-hover:shadow-md">
+                                <div className={`inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-outline/10 bg-surface ${item.tone}`}>
+                                    <Icon size={20} />
+                                </div>
+                                <h3 className="mt-4 text-base font-black tracking-tight text-on-surface">{item.title}</h3>
+                                <p className="mt-2 flex-1 text-sm leading-6 text-on-surface/60">{item.description}</p>
+                            </Surface>
+                        </Link>
+                    );
+                })}
             </div>
 
             <Surface className="p-6 md:p-8">

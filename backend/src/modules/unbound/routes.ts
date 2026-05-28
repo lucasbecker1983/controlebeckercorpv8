@@ -11,6 +11,11 @@ const respondUnboundError = (res: any, area: string, error: unknown) => {
     return res.status(500).json({ error: `Falha ao processar ${area}.` });
 };
 
+const splitForwardAddrs = (value: string) => value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 // --- GERAÇÃO DE ARQUIVO DE CONFIGURAÇÃO ---
 const syncUnboundConfig = async () => {
     try {
@@ -23,7 +28,12 @@ const syncUnboundConfig = async () => {
             if (type === 'A') {
                 serverBlock += `    local-zone: "${r.domain}" redirect\n    local-data: "${r.domain} A ${r.target_ip}"\n`;
             } else if (type === 'FWD') {
-                forwardBlocks += `\nforward-zone:\n    name: "${r.domain}"\n    forward-addr: ${r.target_ip}\n`;
+                const forwardAddrs = splitForwardAddrs(String(r.target_ip || ''));
+                if (!forwardAddrs.length) return;
+                forwardBlocks += `\nforward-zone:\n    name: "${r.domain}"\n`;
+                forwardAddrs.forEach((addr) => {
+                    forwardBlocks += `    forward-addr: ${addr}\n`;
+                });
             }
         });
 

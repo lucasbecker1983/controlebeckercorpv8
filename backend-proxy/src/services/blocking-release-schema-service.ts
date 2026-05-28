@@ -160,9 +160,22 @@ CREATE TABLE IF NOT EXISTS policy_exceptions (
     vlan_id INTEGER,
     exception_type VARCHAR(64) NOT NULL,
     bypass_total BOOLEAN NOT NULL DEFAULT FALSE,
+    dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     valid_until TIMESTAMPTZ,
     notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dns_vip (
+    id SERIAL PRIMARY KEY,
+    cidr VARCHAR(64) NOT NULL UNIQUE,
+    descricao VARCHAR(255),
+    responsavel VARCHAR(128),
+    motivo TEXT,
+    ativo BOOLEAN NOT NULL DEFAULT TRUE,
+    dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -386,6 +399,8 @@ ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS effective_from TIMESTAMPT
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE dns_vip ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS dns_ignored_domains (
     id BIGSERIAL PRIMARY KEY,

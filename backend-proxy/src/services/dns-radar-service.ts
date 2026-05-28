@@ -17,7 +17,7 @@ type PendingRpz = {
     occurredAt: string;
 };
 
-const JOURNAL_ARGS = ['-fu', 'unbound', '-n', '200', '--no-pager', '-o', 'short-iso'];
+const JOURNAL_SOURCE_LABEL = 'journalctl -fu unbound + sgcg-vip-dns.service -o short-iso';
 
 const normalizeDomain = (value: string) => String(value || '')
     .trim()
@@ -83,7 +83,7 @@ export class DnsRadarService {
         return null;
     }
 
-    async ingestLine(line: string) {
+    async ingestLine(line: string, resolver = this.resolver) {
         await ensureBlockingReleaseSchema();
         const parsed = this.parseLine(line);
         if (!parsed) return null;
@@ -122,6 +122,7 @@ export class DnsRadarService {
 
         const payload = {
             parser: 'journalctl-short-iso',
+            resolver,
             rpz,
             resolved,
             response_code: parsed.responseCode,
@@ -144,7 +145,7 @@ export class DnsRadarService {
             parsed.queryType,
             parsed.responseCode,
             action,
-            this.resolver,
+            resolver,
         ].join('|'));
 
         await pool.query(
@@ -199,7 +200,7 @@ export class DnsRadarService {
                 resolved.category,
                 resolved.rule_id,
                 rpz?.matchedRule || resolved.matched_rule,
-                this.resolver,
+                resolver,
                 JSON.stringify(payload),
                 fingerprint,
                 identity?.display_user || null,
@@ -208,6 +209,7 @@ export class DnsRadarService {
         );
         const livePayload = JSON.stringify({
             source: 'dns',
+            resolver,
             occurred_at: parsed.occurredAt,
             client_ip: parsed.clientIp || null,
             vlan_id: resolved.vlan_id,
@@ -246,7 +248,7 @@ export class DnsRadarService {
             active,
             pid: pid || null,
             log_file: this.logFile,
-            source: 'journalctl -fu unbound -o short-iso',
+            source: JOURNAL_SOURCE_LABEL,
             last_seen_at: recent.rows[0]?.last_seen_at || null,
             events_10m: recent.rows[0]?.total || 0,
         };

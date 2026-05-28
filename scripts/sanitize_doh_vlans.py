@@ -221,7 +221,7 @@ def step_add_vip_allows(vips: dict[int, list[str]]):
 def step_add_dot_quic_blocks():
     """
     Bloqueia DoT (853/tcp) e QUIC (443/udp) para VLANs sem cobertura.
-    VLAN 10 já tem essas regras.
+    Usa REJECT para que navegadores façam fallback rápido para HTTPS/TCP.
     """
     print("\n[3/5] Adicionando bloqueios de DoT (853) e QUIC (443/udp) para VLANs 30, 50, 70...")
     for vlan_id, iface in MANAGED_VLANS.items():
@@ -232,7 +232,7 @@ def step_add_dot_quic_blocks():
         tag_quic = f"SANITIZE VLAN{vlan_id} BLOCK QUIC"
 
         if not rule_exists(tag_dot):
-            run(["ufw", "route", "deny",
+            run(["ufw", "route", "reject",
                  "in", "on", iface, "out", "on", WAN_IFACE,
                  "proto", "tcp", "to", "any", "port", "853",
                  "comment", tag_dot])
@@ -240,7 +240,7 @@ def step_add_dot_quic_blocks():
             print(f"  VLAN {vlan_id}: DoT já bloqueado, pulando.")
 
         if not rule_exists(tag_quic):
-            run(["ufw", "route", "deny",
+            run(["ufw", "route", "reject",
                  "in", "on", iface, "out", "on", WAN_IFACE,
                  "proto", "udp", "to", "any", "port", "443",
                  "comment", tag_quic])
@@ -251,6 +251,7 @@ def step_add_dot_quic_blocks():
 def step_add_doh_blocks():
     """
     Bloqueia DoH (443/tcp) para os resolvedores externos conhecidos em todas as VLANs.
+    Usa REJECT para evitar espera por timeout quando o cliente tenta DNS seguro externo.
     OpenDNS NÃO é bloqueado.
     """
     print("\n[4/5] Adicionando bloqueios de DoH por servidor para todas as VLANs...")
@@ -260,7 +261,7 @@ def step_add_doh_blocks():
             if rule_exists(tag):
                 print(f"  VLAN {vlan_id}: {server_ip} ({provider}) já bloqueado, pulando.")
                 continue
-            run(["ufw", "route", "deny",
+            run(["ufw", "route", "reject",
                  "in", "on", iface, "out", "on", WAN_IFACE,
                  "proto", "tcp", "to", server_ip, "port", "443",
                  "comment", tag])

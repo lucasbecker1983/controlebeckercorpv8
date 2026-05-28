@@ -209,12 +209,12 @@ export default function Reports() {
 
   // Navigation tab state
   const [navFilters, setNavFilters] = useState(initialNavFilters);
-  const [navView, setNavView] = useState(searchParams.get('view') || 'events'); // 'events' | 'by_ip'
+  const [navView, setNavView] = useState(searchParams.get('view') || 'by_site'); // 'by_site' | 'events' | 'by_ip'
   const [navData, setNavData] = useState(null);
   const [navPage, setNavPage] = useState(1);
   const [navLoading, setNavLoading] = useState(false);
   const [navError, setNavError] = useState(null);
-  const [navPdfLoading, setNavPdfLoading] = useState(false);
+  const [navPdfLoading, setNavPdfLoading] = useState(null);
 
   // Audit tab state
   const [auditFilters, setAuditFilters] = useState({ period: '24h', actor: '', ip: '', source: 'all', action: '', success: '', date_from: '', date_to: '' });
@@ -228,7 +228,11 @@ export default function Reports() {
     setNavLoading(true);
     setNavError(null);
     try {
-      const endpoint = navView === 'by_ip' ? '/api/reports/navigation/by-ip' : '/api/reports/navigation';
+      const endpoint = navView === 'by_ip'
+        ? '/api/reports/navigation/by-ip'
+        : navView === 'by_site'
+          ? '/api/reports/navigation/by-site'
+          : '/api/reports/navigation';
       const params = new URLSearchParams();
       Object.entries(navFilters).forEach(([k, v]) => { if (v) params.set(k, String(v)); });
       if (navView === 'events') { params.set('page', String(page)); params.set('limit', '100'); }
@@ -260,29 +264,32 @@ export default function Reports() {
     }
   }, [auditFilters]);
 
-  useEffect(() => { if (activeTab === 'navigation') loadNav(1); }, [activeTab]);
+  useEffect(() => { if (activeTab === 'navigation') loadNav(1); }, [activeTab, navView]);
   useEffect(() => { if (activeTab === 'audit') loadAudit(1); }, [activeTab]);
 
-  const exportNavPdf = async () => {
-    setNavPdfLoading(true);
+  const exportNavPdf = async (kind = 'clean') => {
+    setNavPdfLoading(kind);
     try {
       const params = new URLSearchParams();
       Object.entries(navFilters).forEach(([k, v]) => { if (v) params.set(k, String(v)); });
       const token = localStorage.getItem('becker_token');
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await fetch(`${API_BASE}/api/reports/navigation/export.pdf?${params}`, { headers });
+      const endpoint = kind === 'clean'
+        ? '/api/reports/navigation/export-clean.pdf'
+        : '/api/reports/navigation/export.pdf';
+      const res = await fetch(`${API_BASE}${endpoint}?${params}`, { headers });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `relatorio-navegacao-${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.download = `relatorio-navegacao-${kind === 'clean' ? 'limpo' : 'forense'}-${new Date().toISOString().slice(0, 10)}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Erro ao gerar PDF: ' + e.message);
     } finally {
-      setNavPdfLoading(false);
+      setNavPdfLoading(null);
     }
   };
 
@@ -472,13 +479,19 @@ export default function Reports() {
               {/* View toggle */}
               <div className="ml-auto flex gap-1 rounded-lg border border-outline/10 bg-surface p-1">
                 <button
-                  onClick={() => { setNavView('events'); loadNav(1); }}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'events' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
+                  onClick={() => setNavView('by_site')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_site' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
                 >
-                  Por evento
+                  Por site
                 </button>
                 <button
-                  onClick={() => { setNavView('by_ip'); loadNav(1); }}
+                  onClick={() => setNavView('events')}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'events' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
+                >
+                  Eventos técnicos
+                </button>
+                <button
+                  onClick={() => setNavView('by_ip')}
                   className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_ip' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
                 >
                   Agrupado por IP
@@ -486,24 +499,33 @@ export default function Reports() {
               </div>
 
               <button
-                onClick={exportNavPdf}
-                disabled={navPdfLoading}
+                onClick={() => exportNavPdf('clean')}
+                disabled={Boolean(navPdfLoading)}
+                className="flex items-center gap-2 rounded-lg border border-primary/25 bg-primary px-3 py-2 text-sm font-medium text-on-primary shadow-sm hover:opacity-90 disabled:opacity-50"
+              >
+                <Download size={14} />
+                {navPdfLoading === 'clean' ? 'Gerando...' : 'PDF limpo'}
+              </button>
+              <button
+                onClick={() => exportNavPdf('forensic')}
+                disabled={Boolean(navPdfLoading)}
                 className="flex items-center gap-2 rounded-lg border border-outline/20 px-3 py-2 text-sm font-medium text-on-surface/70 hover:border-primary/30 hover:text-primary disabled:opacity-50"
               >
                 <Download size={14} />
-                {navPdfLoading ? 'Gerando PDF...' : 'Exportar PDF'}
+                {navPdfLoading === 'forensic' ? 'Gerando...' : 'PDF forense'}
               </button>
             </div>
           </div>
 
           {/* Summary Cards */}
           {navData?.summary && navView === 'events' && (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-9">
               <SummaryCard label="Total" value={Number(navData.summary.total).toLocaleString('pt-BR')} icon={Activity} />
               <SummaryCard label="Bloqueados" value={Number(navData.summary.blocked).toLocaleString('pt-BR')} color="red-500" icon={XCircle} />
               <SummaryCard label="Liberados" value={Number(navData.summary.allowed).toLocaleString('pt-BR')} color="green-500" icon={CheckCircle2} />
               <SummaryCard label="IPs únicos" value={navData.summary.unique_ips} icon={Monitor} />
-              <SummaryCard label="Domínios únicos" value={navData.summary.unique_domains} icon={Globe2} />
+              <SummaryCard label="Sites únicos" value={navData.summary.unique_sites ?? navData.summary.unique_domains} icon={Globe2} />
+              <SummaryCard label="Domínios técnicos" value={navData.summary.unique_domains} icon={Wifi} />
               <SummaryCard label="DNS/RPZ" value={Number(navData.summary.dns_events || 0).toLocaleString('pt-BR')} icon={Globe2} />
               <SummaryCard label="Proxy/ACL" value={Number(navData.summary.proxy_events || 0).toLocaleString('pt-BR')} icon={Shield} />
               <SummaryCard label="Com sessão" value={Number(navData.summary.session_linked || 0).toLocaleString('pt-BR')} icon={User} />
@@ -536,7 +558,7 @@ export default function Reports() {
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">IP Origem</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Usuário / Estação</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">VLAN</th>
-                      <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Domínio consultado</th>
+                      <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Site / evidência técnica</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Sessão</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Tipo</th>
                       <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Ação</th>
@@ -568,10 +590,15 @@ export default function Reports() {
                               {ev.vlan_id ? `V${ev.vlan_id}` : '—'}
                             </span>
                           </td>
-                          <td className="px-3 py-2 max-w-[260px]">
-                            <span className="block truncate text-xs text-on-surface" title={ev.domain}>
-                              {ev.domain || '—'}
+                          <td className="px-3 py-2 max-w-[280px]">
+                            <span className="block truncate text-xs font-semibold text-on-surface" title={ev.site_domain || ev.domain}>
+                              {ev.site_domain || ev.domain || '—'}
                             </span>
+                            {ev.technical_domain && ev.technical_domain !== ev.site_domain ? (
+                              <span className="block truncate font-mono text-[10px] text-on-surface/45" title={ev.technical_domain}>
+                                {ev.technical_domain}
+                              </span>
+                            ) : null}
                           </td>
                           <td className="px-3 py-2 text-xs text-on-surface/60">
                             {ev.session_type ? `${ev.session_type} #${ev.session_id}` : '—'}
@@ -618,6 +645,72 @@ export default function Reports() {
             </>
           )}
 
+          {/* By-site table */}
+          {!navLoading && navView === 'by_site' && navData?.rows && (
+            <div className="overflow-x-auto rounded-xl border border-outline/10 bg-surface-high shadow-sm">
+              <table className="w-full min-w-[1120px] text-sm">
+                <thead>
+                  <tr className="border-b border-outline/10 bg-surface">
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Site principal</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Eventos</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Bloqueados</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Liberados</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">IPs</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Domínios técnicos</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Fontes</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Último acesso</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {navData.rows.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-sm text-on-surface/40">
+                        Nenhum site encontrado para os filtros aplicados.
+                      </td>
+                    </tr>
+                  )}
+                  {navData.rows.map((row, i) => (
+                    <tr key={row.site_domain || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
+                      <td className="px-3 py-2">
+                        <button
+                          onClick={() => {
+                            setNavFilters((f) => ({ ...f, domain: row.site_domain }));
+                            setNavView('events');
+                          }}
+                          className="text-left text-sm font-bold text-on-surface hover:text-primary hover:underline"
+                        >
+                          {row.site_domain || 'sem domínio'}
+                        </button>
+                        {Array.isArray(row.sample_ips) && row.sample_ips.length ? (
+                          <div className="mt-0.5 font-mono text-[10px] text-on-surface/45">
+                            {row.sample_ips.slice(0, 4).join(' · ')}{row.sample_ips.length > 4 ? ` · +${row.sample_ips.length - 4}` : ''}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2 text-xs font-semibold text-on-surface">{Number(row.total).toLocaleString('pt-BR')}</td>
+                      <td className="px-3 py-2"><Pill color="red">{Number(row.blocked).toLocaleString('pt-BR')}</Pill></td>
+                      <td className="px-3 py-2"><Pill color="green">{Number(row.allowed).toLocaleString('pt-BR')}</Pill></td>
+                      <td className="px-3 py-2 text-xs text-on-surface/70">{Number(row.unique_ips).toLocaleString('pt-BR')}</td>
+                      <td className="px-3 py-2 max-w-[360px]">
+                        <div className="truncate font-mono text-[10px] text-on-surface/60" title={(row.raw_domains || []).join(', ')}>
+                          {Array.isArray(row.raw_domains) && row.raw_domains.length ? row.raw_domains.slice(0, 5).join(' · ') : '—'}
+                          {Array.isArray(row.raw_domains) && row.raw_domains.length > 5 ? ` · +${row.raw_domains.length - 5}` : ''}
+                        </div>
+                        <div className="text-[10px] text-on-surface/40">
+                          {Number(row.technical_domains || 0).toLocaleString('pt-BR')} domínio(s) técnicos
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-on-surface/70">
+                        DNS {Number(row.dns_events || 0).toLocaleString('pt-BR')} · Proxy {Number(row.proxy_events || 0).toLocaleString('pt-BR')}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(row.last_seen)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           {/* By-IP table */}
           {!navLoading && navView === 'by_ip' && navData?.rows && (
             <div className="overflow-x-auto rounded-xl border border-outline/10 bg-surface-high shadow-sm">
@@ -630,7 +723,7 @@ export default function Reports() {
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Total</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Bloqueados</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Liberados</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Domínios únicos</th>
+                    <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Sites únicos</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Fontes</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Primeiro acesso</th>
                     <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">Último acesso</th>
@@ -666,7 +759,7 @@ export default function Reports() {
                       <td className="px-3 py-2 text-xs font-semibold text-on-surface">{Number(row.total).toLocaleString('pt-BR')}</td>
                       <td className="px-3 py-2"><Pill color="red">{Number(row.blocked).toLocaleString('pt-BR')}</Pill></td>
                       <td className="px-3 py-2"><Pill color="green">{Number(row.allowed).toLocaleString('pt-BR')}</Pill></td>
-                      <td className="px-3 py-2 text-xs text-on-surface/70">{Number(row.unique_domains).toLocaleString('pt-BR')}</td>
+                      <td className="px-3 py-2 text-xs text-on-surface/70">{Number(row.unique_sites ?? row.unique_domains).toLocaleString('pt-BR')}</td>
                       <td className="px-3 py-2 text-xs text-on-surface/70">
                         DNS {Number(row.dns_events || 0).toLocaleString('pt-BR')} · Proxy {Number(row.proxy_events || 0).toLocaleString('pt-BR')}
                       </td>
