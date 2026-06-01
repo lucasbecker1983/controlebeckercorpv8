@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowLeft, CheckCircle2, Clock3, FileText, Globe2, HelpCircle,
   Loader2, LockKeyhole, MessageSquarePlus, Send, ShieldCheck, Sparkles,
@@ -10,6 +10,10 @@ import { storageGet, storageRemove, storageSet } from '../services/browserStorag
 
 const TOKEN_KEY = 'sgcg_support_token';
 const USER_KEY = 'sgcg_support_user';
+
+const supportAuthConfig = (supportToken) => ({
+  headers: { 'X-SGCG-Support-Token': supportToken },
+});
 
 const categories = [
   { id: 'site_not_opening', label: 'Site ou sistema não abre', icon: Globe2, hint: 'Use quando uma página, sistema ou aplicativo não carregar.' },
@@ -33,6 +37,16 @@ const urgencies = [
   { id: 'work_blocked', label: 'Estou sem conseguir trabalhar' },
   { id: 'stopped', label: 'Serviço parado' },
 ];
+
+const emptyTicketForm = {
+  category: 'site_not_opening',
+  title: '',
+  requested_site: '',
+  affected_area: '',
+  impact: 'person',
+  urgency: 'normal',
+  description: '',
+};
 
 function readJson(key) {
   try {
@@ -68,26 +82,19 @@ export default function SupportPortal() {
   const [selected, setSelected] = useState(null);
   const [comments, setComments] = useState([]);
   const [message, setMessage] = useState('');
-  const [form, setForm] = useState({
-    category: 'site_not_opening',
-    title: '',
-    requested_site: '',
-    affected_area: '',
-    impact: 'person',
-    urgency: 'normal',
-    description: '',
-  });
+  const [form, setForm] = useState(emptyTicketForm);
   const [view, setView] = useState('new');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(false);
+  const noticeRef = useRef(null);
 
-  const authHeaders = useMemo(() => ({ headers: { 'X-SGCG-Support-Token': token } }), [token]);
+  const authHeaders = useMemo(() => supportAuthConfig(token), [token]);
   const selectedCategory = categories.find((item) => item.id === form.category) || categories[0];
   const SelectedCategoryIcon = selectedCategory.icon;
 
-  const loadTickets = async () => {
-    if (!token) return;
-    const res = await api.get('/api/support/public/tickets', authHeaders);
+  const loadTickets = async (nextToken = token) => {
+    if (!nextToken) return;
+    const res = await api.get('/api/support/public/tickets', supportAuthConfig(nextToken));
     setTickets(res.data?.tickets || []);
   };
 
@@ -107,17 +114,27 @@ export default function SupportPortal() {
       });
   }, [token]);
 
+  useEffect(() => {
+    if (notice) noticeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [notice]);
+
   const submitLogin = async (event) => {
     event.preventDefault();
     setLoading(true);
     setNotice('');
     try {
       const res = await api.post('/api/support/public/login', login);
-      storageSet(TOKEN_KEY, res.data.token);
-      storageSet(USER_KEY, JSON.stringify(res.data.user || {}));
-      setToken(res.data.token);
-      setUser(res.data.user);
+      const nextToken = String(res.data?.token || '');
+      if (!nextToken) throw new Error('missing_support_token');
+      const nextUser = res.data?.user || {};
+      storageSet(TOKEN_KEY, nextToken);
+      storageSet(USER_KEY, JSON.stringify(nextUser));
+      setToken(nextToken);
+      setUser(nextUser);
+      setLogin((current) => ({ ...current, password: '' }));
+      setView('new');
       setNotice('Entrada confirmada. Você já pode abrir e acompanhar chamados.');
+      await loadTickets(nextToken);
     } catch (error) {
       setNotice(error?.response?.data?.error || 'Não foi possível entrar.');
     } finally {
@@ -130,11 +147,16 @@ export default function SupportPortal() {
     setLoading(true);
     setNotice('');
     try {
-      const res = await api.post('/api/support/public/tickets', form, authHeaders);
-      setForm({ category: 'site_not_opening', title: '', requested_site: '', affected_area: '', impact: 'person', urgency: 'normal', description: '' });
-      setNotice(`Chamado aberto com protocolo ${res.data.ticket.protocol}.`);
-      setView('list');
-      await loadTickets();
+      const res = await api.post('/api/support/public/tickets', form, supportAuthConfig(token));
+      const ticket = res.data?.ticket;
+      if (!ticket?.id || !ticket?.protocol) throw new Error('missing_ticket_response');
+      setForm(emptyTicketForm);
+      setTickets((current) => [ticket, ...current.filter((item) => item.id !== ticket.id)]);
+      setSelected(ticket);
+      setComments([]);
+      setNotice(`Chamado aberto com protocolo ${ticket.protocol}.`);
+      setView('detail');
+      await loadTickets(token);
     } catch (error) {
       setNotice(error?.response?.data?.error || 'Não foi possível abrir o chamado.');
     } finally {
@@ -156,6 +178,19 @@ export default function SupportPortal() {
     setComments((current) => [...current, res.data.comment]);
     setMessage('');
     await loadTickets();
+  };
+
+  const selectCategory = (item) => {
+    setForm((current) => ({
+      ...current,
+      category: item.id,
+      title: item.label,
+    }));
+  };
+
+  const clearTicketForm = () => {
+    setForm(emptyTicketForm);
+    setNotice('');
   };
 
   const logout = () => {
@@ -222,7 +257,12 @@ export default function SupportPortal() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <SupportBell publicToken={token} compact onClick={() => setView('list')} />
+            <SupportBell
+              publicToken={token}
+              compact
+              onClick={() => { setView('list'); loadTickets(); }}
+              onTicketClick={(ticket) => openTicket(ticket)}
+            />
             <button type="button" onClick={logout} className="h-10 rounded-lg border border-white/20 px-3 text-xs font-black text-white hover:bg-white/10">Sair</button>
           </div>
         </div>
@@ -248,7 +288,7 @@ export default function SupportPortal() {
         </aside>
 
         <div className="min-w-0">
-          {notice ? <div className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-sky-950">{notice}</div> : null}
+          {notice ? <div ref={noticeRef} className="mb-4 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-bold text-sky-950">{notice}</div> : null}
 
           {view === 'new' ? (
             <form onSubmit={submitTicket} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
@@ -265,7 +305,7 @@ export default function SupportPortal() {
                   const Icon = item.icon;
                   const active = form.category === item.id;
                   return (
-                    <button key={item.id} type="button" onClick={() => setForm((c) => ({ ...c, category: item.id }))} className={`min-h-[96px] rounded-lg border p-3 text-left transition ${active ? 'border-sky-800 bg-sky-50 text-sky-950 ring-2 ring-sky-800/10' : 'border-slate-200 bg-white hover:border-sky-200'}`}>
+                    <button key={item.id} type="button" onClick={() => selectCategory(item)} className={`min-h-[96px] rounded-lg border p-3 text-left transition ${active ? 'border-sky-800 bg-sky-50 text-sky-950 ring-2 ring-sky-800/10' : 'border-slate-200 bg-white hover:border-sky-200'}`}>
                       <Icon size={20} />
                       <div className="mt-2 text-sm font-black">{item.label}</div>
                       <div className="mt-1 text-xs font-semibold leading-5 text-slate-500">{item.hint}</div>
@@ -301,10 +341,16 @@ export default function SupportPortal() {
                 </Field>
               </div>
 
-              <button type="submit" disabled={loading} className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white shadow-lg shadow-sky-900/15 hover:bg-sky-950 disabled:opacity-60">
-                {loading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
-                Abrir chamado
-              </button>
+              <div className="mt-5 grid gap-2 sm:grid-cols-[1fr_auto]">
+                <button type="submit" disabled={loading} className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-sky-900 px-4 text-base font-black text-white shadow-lg shadow-sky-900/15 hover:bg-sky-950 disabled:opacity-60">
+                  {loading ? <Loader2 className="animate-spin" size={18} /> : <Send size={18} />}
+                  Abrir chamado
+                </button>
+                <button type="button" onClick={clearTicketForm} disabled={loading} className="flex h-12 items-center justify-center rounded-lg border border-slate-300 bg-white px-5 text-base font-black text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 disabled:opacity-60">
+                  Limpar
+                </button>
+              </div>
+              {notice ? <div className="mt-3 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-bold text-sky-950">{notice}</div> : null}
             </form>
           ) : null}
 

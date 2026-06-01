@@ -9,6 +9,7 @@ const router = Router();
 
 const TOKEN_BYTES = 32;
 const SESSION_HOURS = 12;
+let schemaReady: Promise<void> | null = null;
 
 const normalizeIp = (value: unknown) => {
     const raw = String(value || '').split(',')[0].trim();
@@ -57,7 +58,7 @@ const priorityLabels: Record<string, string> = {
     critical: 'Urgente',
 };
 
-export async function ensureSchema() {
+async function createSchema() {
     await pool.query(`
         CREATE TABLE IF NOT EXISTS support_portal_sessions (
             id BIGSERIAL PRIMARY KEY,
@@ -94,8 +95,11 @@ export async function ensureSchema() {
             requester_unread BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            closed_at TIMESTAMPTZ
+            closed_at TIMESTAMPTZ,
+            archived_at TIMESTAMPTZ
         );
+
+        ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
 
         CREATE TABLE IF NOT EXISTS support_ticket_comments (
             id BIGSERIAL PRIMARY KEY,
@@ -117,12 +121,23 @@ export async function ensureSchema() {
         );
 
         CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets (status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_support_tickets_archive ON support_tickets (archived_at, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_support_tickets_priority ON support_tickets (priority, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_support_tickets_requester ON support_tickets (requester_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_support_comments_ticket ON support_ticket_comments (ticket_id, created_at);
         CREATE INDEX IF NOT EXISTS idx_support_events_ticket ON support_ticket_events (ticket_id, created_at);
         REVOKE ALL ON support_portal_sessions, support_tickets, support_ticket_comments, support_ticket_events FROM PUBLIC;
     `);
+}
+
+export async function ensureSchema() {
+    if (!schemaReady) {
+        schemaReady = createSchema().catch((error) => {
+            schemaReady = null;
+            throw error;
+        });
+    }
+    return schemaReady;
 }
 
 function classifyPriority(input: { category: string; impact: string; urgency: string }) {
@@ -151,6 +166,27 @@ function publicTicket(row: any) {
         status_label: readableStatus[row.status] || row.status,
         category_label: categoryLabels[row.category] || row.category,
         priority_label: priorityLabels[row.priority] || row.priority,
+        archived: Boolean(row.archived_at),
+    };
+}
+
+function notificationItem(row: any) {
+    const snippet = String(row.snippet || row.description || row.title || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return {
+        id: row.id,
+        protocol: row.protocol,
+        title: row.title,
+        requester_name: row.requester_name,
+        status: row.status,
+        status_label: readableStatus[row.status] || row.status,
+        priority: row.priority,
+        priority_label: priorityLabels[row.priority] || row.priority,
+        snippet: snippet.length > 180 ? `${snippet.slice(0, 177)}...` : snippet,
+        updated_at: row.updated_at,
+        comment_author_type: row.comment_author_type || null,
+        comment_author_name: row.comment_author_name || null,
     };
 }
 
@@ -266,10 +302,28 @@ router.get('/public/notifications', async (req, res) => {
     const { rows } = await pool.query(
         `SELECT COUNT(*)::int AS unread
            FROM support_tickets
-          WHERE requester_id = $1 AND requester_unread = TRUE`,
+          WHERE requester_id = $1 AND requester_unread = TRUE AND archived_at IS NULL`,
         [session.collaborator_id],
     );
-    res.json({ unread: rows[0]?.unread || 0 });
+    const notifications = await pool.query(
+        `SELECT t.id, t.protocol, t.requester_name, t.title, t.description, t.priority, t.status, t.updated_at,
+                COALESCE(c.body, t.description) AS snippet,
+                c.author_type AS comment_author_type,
+                c.author_name AS comment_author_name
+           FROM support_tickets t
+           LEFT JOIN LATERAL (
+                SELECT author_type, author_name, body, created_at
+                  FROM support_ticket_comments
+                 WHERE ticket_id = t.id AND author_type = 'admin'
+                 ORDER BY created_at DESC
+                 LIMIT 1
+           ) c ON TRUE
+          WHERE t.requester_id = $1 AND t.requester_unread = TRUE AND t.archived_at IS NULL
+          ORDER BY t.updated_at DESC
+          LIMIT 5`,
+        [session.collaborator_id],
+    );
+    res.json({ unread: rows[0]?.unread || 0, notifications: notifications.rows.map(notificationItem) });
 });
 
 router.get('/public/tickets', async (req, res) => {
@@ -278,17 +332,13 @@ router.get('/public/tickets', async (req, res) => {
     if (!session) return;
     const { rows } = await pool.query(
         `SELECT id, protocol, category, title, requested_site, affected_area, impact, urgency,
-                priority, status, admin_unread, requester_unread, created_at, updated_at, closed_at
+                priority, status, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at
            FROM support_tickets
           WHERE requester_id = $1
           ORDER BY updated_at DESC
           LIMIT 100`,
         [session.collaborator_id],
     );
-    await pool.query(
-        `UPDATE support_tickets SET requester_unread = FALSE WHERE requester_id = $1 AND requester_unread = TRUE`,
-        [session.collaborator_id],
-    ).catch(() => null);
     res.json({ tickets: rows.map(publicTicket) });
 });
 
@@ -389,7 +439,7 @@ router.post('/public/tickets/:id/comments', async (req, res) => {
     );
     await pool.query(
         `UPDATE support_tickets
-            SET updated_at = NOW(), admin_unread = TRUE
+            SET updated_at = NOW(), admin_unread = TRUE, archived_at = NULL
           WHERE id = $1`,
         [req.params.id],
     );
@@ -400,30 +450,55 @@ router.post('/public/tickets/:id/comments', async (req, res) => {
 router.get('/notifications', requireJwt, async (_req, res) => {
     await ensureSchema();
     const { rows } = await pool.query(
-        `SELECT COUNT(*)::int AS unread,
+        `SELECT COUNT(*) FILTER (WHERE admin_unread = TRUE)::int AS unread,
                 COUNT(*) FILTER (WHERE status IN ('open', 'triage', 'analysis', 'waiting_approval', 'in_progress'))::int AS active
            FROM support_tickets
-          WHERE admin_unread = TRUE OR status IN ('open', 'triage', 'analysis', 'waiting_approval', 'in_progress')`,
+          WHERE archived_at IS NULL
+            AND (admin_unread = TRUE OR status IN ('open', 'triage', 'analysis', 'waiting_approval', 'in_progress'))`,
     );
-    res.json({ unread: rows[0]?.unread || 0, active: rows[0]?.active || 0 });
+    const notifications = await pool.query(
+        `SELECT t.id, t.protocol, t.requester_name, t.title, t.description, t.priority, t.status, t.updated_at,
+                COALESCE(c.body, t.description) AS snippet,
+                c.author_type AS comment_author_type,
+                c.author_name AS comment_author_name
+           FROM support_tickets t
+           LEFT JOIN LATERAL (
+                SELECT author_type, author_name, body, created_at
+                  FROM support_ticket_comments
+                 WHERE ticket_id = t.id AND author_type = 'collaborator'
+                 ORDER BY created_at DESC
+                 LIMIT 1
+           ) c ON TRUE
+          WHERE t.admin_unread = TRUE AND t.archived_at IS NULL
+          ORDER BY t.updated_at DESC
+          LIMIT 5`,
+    );
+    res.json({ unread: rows[0]?.unread || 0, active: rows[0]?.active || 0, notifications: notifications.rows.map(notificationItem) });
 });
 
 router.get('/tickets', requireJwt, async (req, res) => {
     await ensureSchema();
     const status = String(req.query.status || '').trim();
     const params: any[] = [];
-    let where = '';
-    if (status && status !== 'all') {
+    let where = 'WHERE archived_at IS NULL';
+    if (status === 'archived') {
+        where = 'WHERE archived_at IS NOT NULL';
+    } else if (status === 'active') {
+        where = `WHERE archived_at IS NULL AND status NOT IN ('resolved', 'denied', 'canceled')`;
+    } else if (status === 'closed') {
+        where = `WHERE archived_at IS NULL AND status IN ('resolved', 'denied', 'canceled')`;
+    } else if (status && status !== 'all') {
         params.push(status);
-        where = `WHERE status = $${params.length}`;
+        where = `WHERE archived_at IS NULL AND status = $${params.length}`;
     }
     const { rows } = await pool.query(
         `SELECT id, protocol, requester_name, requester_username, requester_department,
                 requester_ip, category, title, requested_site, affected_area, impact, urgency,
-                priority, status, assigned_to, admin_unread, requester_unread, created_at, updated_at, closed_at
+                priority, status, assigned_to, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at
            FROM support_tickets
            ${where}
           ORDER BY
+            archived_at DESC NULLS LAST,
             CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
             updated_at DESC
           LIMIT 250`,
@@ -467,6 +542,10 @@ router.patch('/tickets/:id', requireJwt, async (req: AuthenticatedRequest, res) 
             SET status = COALESCE(NULLIF($1, ''), status),
                 priority = COALESCE(NULLIF($2, ''), priority),
                 assigned_to = COALESCE(NULLIF($3, ''), assigned_to),
+                archived_at = CASE
+                    WHEN COALESCE(NULLIF($1, ''), status) IN ('resolved', 'denied', 'canceled') THEN archived_at
+                    ELSE NULL
+                END,
                 requester_unread = TRUE,
                 updated_at = NOW(),
                 closed_at = CASE
@@ -499,12 +578,47 @@ router.post('/tickets/:id/comments', requireJwt, async (req: AuthenticatedReques
     );
     await pool.query(
         `UPDATE support_tickets
-            SET updated_at = NOW(), requester_unread = TRUE
+            SET updated_at = NOW(), requester_unread = TRUE, archived_at = NULL
           WHERE id = $1`,
         [req.params.id],
     );
     await logEvent(req.params.id, 'comment_added', 'admin', actor);
     res.status(201).json({ comment: rows[0] });
+});
+
+router.post('/tickets/:id/archive', requireJwt, async (req: AuthenticatedRequest, res) => {
+    await ensureSchema();
+    const { rows } = await pool.query(
+        `UPDATE support_tickets
+            SET archived_at = COALESCE(archived_at, NOW()),
+                admin_unread = FALSE,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [req.params.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Chamado não encontrado.' });
+    const actor = req.auth?.username || req.auth?.name || 'SGCG';
+    await logEvent(req.params.id, 'ticket_archived', 'admin', actor);
+    await audit(req, 'support_ticket_archived', true, { ticket_id: req.params.id }, { protocol: rows[0].protocol });
+    res.json({ ticket: publicTicket(rows[0]) });
+});
+
+router.post('/tickets/:id/unarchive', requireJwt, async (req: AuthenticatedRequest, res) => {
+    await ensureSchema();
+    const { rows } = await pool.query(
+        `UPDATE support_tickets
+            SET archived_at = NULL,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [req.params.id],
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Chamado não encontrado.' });
+    const actor = req.auth?.username || req.auth?.name || 'SGCG';
+    await logEvent(req.params.id, 'ticket_unarchived', 'admin', actor);
+    await audit(req, 'support_ticket_unarchived', true, { ticket_id: req.params.id }, { protocol: rows[0].protocol });
+    res.json({ ticket: publicTicket(rows[0]) });
 });
 
 router.post('/tickets/:id/mark-read', requireJwt, async (req, res) => {

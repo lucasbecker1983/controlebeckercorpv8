@@ -20,11 +20,16 @@ Uso:
 import subprocess
 import sys
 import os
+import ipaddress
 from datetime import datetime
 
 IPSET_NAME = "sgcg_whatsapp_allowed"
 SOCIAL_BLOCKED_SET = "sgcg_social_blocked"
-DNS_RESOLVER = "208.67.222.222"  # OpenDNS — livre em todas as VLANs
+DNS_RESOLVERS = [
+    "127.0.0.1",       # Unbound local — mesmo caminho DNS usado pelos clientes
+    "208.67.222.222",  # OpenDNS — livre em todas as VLANs
+    "1.1.1.1",         # Cloudflare — cobre rotacoes distintas de CDN/Meta
+]
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "/opt/controlebeckercorp-v8")
 DB_URL = os.environ.get(
     "DATABASE_URL",
@@ -74,27 +79,47 @@ WHATSAPP_DOMAINS = [
     "whatsapp.net",
     # Dependências Meta usadas pelo WhatsApp Web/sessão. Sem esses hosts,
     # o bloqueio amplo de facebook.com pode quebrar login, push e mídia.
+    "api.facebook.com",
     "b-graph.facebook.com",
+    "chat-e2ee-mini.facebook.com",
+    "connect.facebook.net",
     "dgw-mini.c10r.facebook.com",
     "edge-mqtt.facebook.com",
+    "edge-mqtt-fallback.facebook.com",
+    "ep7.facebook.com",
+    "gateway.facebook.com",
     "graph.facebook.com",
     "graph-fallback.facebook.com",
+    "mqtt.fallback.c10r.facebook.com",
     "mqtt.c10r.facebook.com",
     "star.c10r.facebook.com",
     "star.fallback.c10r.facebook.com",
     "z-m-gateway.facebook.com",
+    "z-p42-chat-e2ee-ig.facebook.com",
 ]
 
 WHATSAPP_DOMAINS.extend([f"e{i}.whatsapp.net" for i in range(1, 17)])
 
 
 def resolve(domain: str) -> list[str]:
-    result = subprocess.run(
-        ["dig", f"@{DNS_RESOLVER}", domain, "A", "+short"],
-        capture_output=True, text=True
-    )
-    return [line.strip() for line in result.stdout.splitlines()
-            if line.strip() and not line.strip().endswith('.')]
+    ips: list[str] = []
+    for resolver in DNS_RESOLVERS:
+        result = subprocess.run(
+            ["dig", f"@{resolver}", domain, "A", "+short"],
+            capture_output=True, text=True
+        )
+        for line in result.stdout.splitlines():
+            value = line.strip()
+            if not value or value.endswith("."):
+                continue
+            try:
+                ipaddress.IPv4Address(value)
+            except ValueError:
+                print(f"  [AVISO] resposta DNS ignorada para {domain} via {resolver}: {value}")
+                continue
+            if value not in ips:
+                ips.append(value)
+    return ips
 
 
 def is_in_blocked_set(ip: str) -> bool:
@@ -168,6 +193,37 @@ def ensure_forward_rule(proto: str, ports: list[str], comment: str):
         "-j", "ACCEPT",
     ], check=True)
     print(f"  + Regra {comment} inserida antes dos DROPs sociais.")
+
+
+def ensure_whatsapp_return_rule():
+    comment = "SGCG WHATSAPP RETURN ALLOW"
+    rules = subprocess.run(["iptables", "-S", "FORWARD"], capture_output=True, text=True).stdout
+    if comment in rules:
+        print(f"  Regra {comment} já existe.")
+        return
+
+    check_cmd = [
+        "iptables", "-C", "FORWARD",
+        "-i", "enp8s0",
+        "-o", "enp6s0+",
+        "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED",
+        "-m", "set", "--match-set", IPSET_NAME, "src",
+        "-j", "ACCEPT",
+    ]
+    if subprocess.run(check_cmd, capture_output=True).returncode == 0:
+        print(f"  Regra {comment} já existe.")
+        return
+
+    subprocess.run([
+        "iptables", "-I", "FORWARD", "1",
+        "-i", "enp8s0",
+        "-o", "enp6s0+",
+        "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED",
+        "-m", "set", "--match-set", IPSET_NAME, "src",
+        "-m", "comment", "--comment", comment,
+        "-j", "ACCEPT",
+    ], check=True)
+    print(f"  + Regra {comment} inserida antes do SGCG_GUARD.")
 
 
 def ensure_whatsapp_allow_rule():
@@ -246,6 +302,7 @@ def main():
     print(f"  ipset.conf atualizado. Novos/atuais resolvidos: {len(whatsapp_blocked_ips)} IPs.")
 
     ensure_whatsapp_allow_rule()
+    ensure_whatsapp_return_rule()
     ensure_whatsapp_call_rules()
 
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Concluído.")

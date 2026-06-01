@@ -796,6 +796,50 @@ router.get('/reports/:reportKey', async (req, res) => {
 
 const WHATSAPP_IPSET = 'sgcg_whatsapp_allowed';
 const WHATSAPP_UPDATE_SCRIPT = `${env.projectRoot}/scripts/update_whatsapp_allowlist.py`;
+const GOVBR_IPSET = 'sgcg_govbr_allowed';
+const CRITICAL_VLAN_GATEWAYS = [
+    { vlan_id: 10, gateway: '192.168.10.1' },
+    { vlan_id: 30, gateway: '192.168.30.1' },
+    { vlan_id: 40, gateway: '192.168.40.1' },
+    { vlan_id: 50, gateway: '192.168.50.1' },
+    { vlan_id: 70, gateway: '192.168.70.1' },
+    { vlan_id: 80, gateway: '192.168.80.1' },
+    { vlan_id: 99, gateway: '192.168.99.1' },
+];
+const CRITICAL_SERVICES = [
+    {
+        key: 'conectividade-social-v2',
+        label: 'Conectividade Social v2',
+        domain: 'conectividadesocialv2.caixa.gov.br',
+        url: 'https://conectividadesocialv2.caixa.gov.br/cad-maquina',
+        ipset: GOVBR_IPSET,
+        expectedPath: '/cad-maquina/',
+    },
+    {
+        key: 'whatsapp-web',
+        label: 'WhatsApp Web',
+        domain: 'web.whatsapp.com',
+        url: 'https://web.whatsapp.com/',
+        ipset: WHATSAPP_IPSET,
+        expectedPath: '/',
+    },
+    {
+        key: 'whatsapp-push',
+        label: 'WhatsApp sessão/push',
+        domain: 'edge-mqtt.facebook.com',
+        url: null,
+        ipset: WHATSAPP_IPSET,
+        expectedPath: null,
+    },
+    {
+        key: 'govbr-sso',
+        label: 'SSO gov.br',
+        domain: 'sso.acesso.gov.br',
+        url: 'https://sso.acesso.gov.br/',
+        ipset: GOVBR_IPSET,
+        expectedPath: '/',
+    },
+];
 
 const parseIpsetMembers = (output: string): Array<{ ip: string; comment: string }> => {
     const lines = output.split('\n');
@@ -810,6 +854,126 @@ const parseIpsetMembers = (output: string): Array<{ ip: string; comment: string 
             return { ip, comment: comment?.replace(/"/g, '') || '' };
         });
 };
+
+const resolveDomain = async (server: string, domain: string) => {
+    const result = await runCommand('dig', [`@${server}`, domain, 'A', '+time=2', '+tries=1', '+short'], { allowFailure: true });
+    return result.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.split('.').length === 4 && line.split('.').every((part) => /^\d+$/.test(part)));
+};
+
+const testIpset = async (setName: string, ip: string) => {
+    if (!ip) return false;
+    const result = await runCommand('ipset', ['test', setName, ip], { allowFailure: true });
+    return result.code === 0;
+};
+
+const probeUrlFromGateway = async (gateway: string, url: string) => {
+    const result = await runCommand(
+        'curl',
+        [
+            '-k',
+            '-sS',
+            '-L',
+            '--interface',
+            gateway,
+            '-o',
+            '/dev/null',
+            '-w',
+            'code=%{http_code} redirects=%{num_redirects} dns=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total} remote=%{remote_ip} final=%{url_effective}',
+            '--max-time',
+            '10',
+            url,
+        ],
+        { allowFailure: true },
+    );
+    const text = `${result.stdout} ${result.stderr}`.trim();
+    const read = (name: string) => text.match(new RegExp(`${name}=([^\\s]+)`))?.[1] || null;
+    return {
+        ok: result.code === 0 && Number(read('code') || 0) >= 200 && Number(read('code') || 0) < 400,
+        code: read('code'),
+        redirects: read('redirects'),
+        dns_seconds: read('dns'),
+        connect_seconds: read('connect'),
+        tls_seconds: read('tls'),
+        total_seconds: read('total'),
+        remote_ip: read('remote'),
+        final_url: read('final'),
+        error: result.code === 0 ? null : text || 'Falha no teste HTTPS',
+    };
+};
+
+const readForwardDomains = async () => {
+    const result = await runCommand('unbound-control', ['list_forwards'], { allowFailure: true });
+    return result.stdout
+        .split('\n')
+        .map((line) => line.trim().split(/\s+/)[0]?.replace(/\.$/, ''))
+        .filter(Boolean);
+};
+
+router.get('/critical-services', async (_req, res) => {
+    try {
+        const [whatsappSet, govbrSet, forwardDomains] = await Promise.all([
+            runCommand('ipset', ['list', WHATSAPP_IPSET], { allowFailure: true }),
+            runCommand('ipset', ['list', GOVBR_IPSET], { allowFailure: true }),
+            readForwardDomains(),
+        ]);
+        const ipsetTotals = {
+            whatsapp: whatsappSet.code === 0 ? parseIpsetMembers(whatsappSet.stdout).length : 0,
+            govbr_caixa: govbrSet.code === 0 ? parseIpsetMembers(govbrSet.stdout).length : 0,
+        };
+
+        const services = await Promise.all(CRITICAL_SERVICES.map(async (service) => {
+            const localIps = await resolveDomain('127.0.0.1', service.domain);
+            const vlanDns = await Promise.all(CRITICAL_VLAN_GATEWAYS.map(async (vlan) => ({
+                ...vlan,
+                ips: await resolveDomain(vlan.gateway, service.domain),
+            })));
+            const uniqueIps = Array.from(new Set([...localIps, ...vlanDns.flatMap((item) => item.ips)]));
+            const ipsetCoverage = await Promise.all(uniqueIps.map(async (ip) => ({ ip, in_ipset: await testIpset(service.ipset, ip) })));
+            const https = service.url
+                ? await Promise.all(CRITICAL_VLAN_GATEWAYS.map(async (vlan) => ({
+                    vlan_id: vlan.vlan_id,
+                    gateway: vlan.gateway,
+                    ...(await probeUrlFromGateway(vlan.gateway, service.url as string)),
+                })))
+                : [];
+            const dnsOk = vlanDns.length > 0 && vlanDns.every((item) => item.ips.length > 0);
+            const ipsetOk = uniqueIps.length > 0 && ipsetCoverage.every((item) => item.in_ipset);
+            const httpsOk = !service.url || https.every((item) => item.ok);
+            const forwardOk = forwardDomains.includes(service.domain) || forwardDomains.some((domain) => service.domain.endsWith(`.${domain}`));
+            return {
+                ...service,
+                local_ips: localIps,
+                unique_ips: uniqueIps,
+                dns_by_vlan: vlanDns,
+                ipset_coverage: ipsetCoverage,
+                https_by_vlan: https,
+                forward_configured: forwardOk,
+                status: dnsOk && ipsetOk && httpsOk ? 'ok' : 'attention',
+                checks: {
+                    dns_ok: dnsOk,
+                    ipset_ok: ipsetOk,
+                    https_ok: httpsOk,
+                    forward_ok: forwardOk,
+                },
+            };
+        }));
+
+        res.json({
+            updated_at: new Date().toISOString(),
+            vlan_gateways: CRITICAL_VLAN_GATEWAYS,
+            ipsets: {
+                whatsapp: { name: WHATSAPP_IPSET, total: ipsetTotals.whatsapp, active: whatsappSet.code === 0 },
+                govbr_caixa: { name: GOVBR_IPSET, total: ipsetTotals.govbr_caixa, active: govbrSet.code === 0 },
+            },
+            services,
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 router.get('/whatsapp-allowlist', async (_req, res) => {
     try {

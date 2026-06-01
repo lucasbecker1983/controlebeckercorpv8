@@ -50,6 +50,7 @@ FORWARD_ZONE_DOMAINS = [
     "conectividade.caixa.gov.br",
     "serpro.gov.br",
     "estaleiro.serpro.gov.br",
+    "pgfn.gov.br",
     "ebc.com.br",
     "go-mpulse.net",
     "akamaiedge.net",
@@ -65,6 +66,7 @@ SEED_DOMAINS = [
     "servicos.acesso.gov.br",
     "barra.sistema.gov.br",
     "receita.fazenda.gov.br",
+    "cav.receita.fazenda.gov.br",
     "dados.gov.br",
     "autenticacao.empresafacil.pr.gov.br",
     "empresafacil.pr.gov.br",
@@ -82,8 +84,11 @@ SEED_DOMAINS = [
     "js-agent.newrelic.com",
     "bam.nr-data.net",
     "hcaptcha.com",
+    "api.hcaptcha.com",
     "js.hcaptcha.com",
     "newassets.hcaptcha.com",
+    "imgs.hcaptcha.com",
+    "accounts.hcaptcha.com",
     "www.googletagmanager.com",
     "www.google-analytics.com",
     "www.google.com",
@@ -111,6 +116,7 @@ SEED_DOMAINS = [
     "www.caixa.gov.br",
     "conectividade.caixa.gov.br",
     "conectividadesocial.caixa.gov.br",
+    "conectividadesocialv2.caixa.gov.br",
     "conectividade-social.caixa.gov.br",
     "cmt.caixa.gov.br",
     "cns.caixa.gov.br",
@@ -118,6 +124,7 @@ SEED_DOMAINS = [
     "www.conectividade.caixa.gov.br",
     "consulta-crf.caixa.gov.br",
     "certificado.caixa.gov.br",
+    "www.conectividadesocialv2.caixa.gov.br",
     "login.caixa.gov.br",
     "internetbanking.caixa.gov.br",
     "gerenciador.caixa.gov.br",
@@ -126,6 +133,11 @@ SEED_DOMAINS = [
     "www.esocial.gov.br",
     "login.esocial.gov.br",
     "portal.esocial.gov.br",
+    "regularize.pgfn.gov.br",
+    "www.regularize.pgfn.gov.br",
+    "salas-apps.pr.sebrae.com.br",
+    "sebrae.com.br",
+    "www.sebrae.com.br",
 ]
 
 RELATED_SUFFIXES = tuple(sorted(set(FORWARD_ZONE_DOMAINS + [
@@ -134,12 +146,15 @@ RELATED_SUFFIXES = tuple(sorted(set(FORWARD_ZONE_DOMAINS + [
     "nr-data.net",
     "newrelic.com",
     "hcaptcha.com",
+    "w.hcaptcha.com",
     "gstatic.com",
     "googleapis.com",
     "googletagmanager.com",
     "google-analytics.com",
     "cloudflare.com",
     "cloudfront.net",
+    "sebrae.com.br",
+    "pgfn.gov.br",
 ])))
 
 DOMAIN_HINTS = (
@@ -155,6 +170,9 @@ DOMAIN_HINTS = (
     "fazenda",
     "govbr",
     "go-mpulse",
+    "hcaptcha",
+    "sebrae",
+    "pgfn",
 )
 
 DOMAINS = sorted(set(FORWARD_ZONE_DOMAINS + SEED_DOMAINS))
@@ -222,6 +240,9 @@ def fetch_recent_related_domains() -> set[str]:
                      OR query_name ILIKE '%%receita%%'
                      OR query_name ILIKE '%%fazenda%%'
                      OR query_name ILIKE '%%go-mpulse%%'
+                     OR query_name ILIKE '%%hcaptcha%%'
+                     OR query_name ILIKE '%%sebrae%%'
+                     OR query_name ILIKE '%%pgfn%%'
                    )
                  LIMIT 1500
                 """
@@ -248,6 +269,9 @@ def fetch_recent_related_domains() -> set[str]:
                      OR url ILIKE '%%receita%%'
                      OR url ILIKE '%%fazenda%%'
                      OR url ILIKE '%%go-mpulse%%'
+                     OR url ILIKE '%%hcaptcha%%'
+                     OR url ILIKE '%%sebrae%%'
+                     OR url ILIKE '%%pgfn%%'
                    )
                  LIMIT 1500
                 """

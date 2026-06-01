@@ -97,7 +97,10 @@ export default function Topbar({
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <SupportBell onClick={() => { window.location.href = '/chamados'; }} />
+          <SupportBell
+            onClick={() => { window.location.href = '/chamados'; }}
+            onTicketClick={(ticket) => { window.location.href = `/chamados?ticket=${ticket.id}`; }}
+          />
           <button
             type="button"
             onClick={onToggleTheme}

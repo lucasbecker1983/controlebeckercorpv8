@@ -2167,6 +2167,7 @@ function useModuleData() {
     contingency: null,
     contingencyAudit: [],
     scheduledPolicyWindows: [],
+    criticalServices: null,
   });
   const [loading, setLoading] = useState(true);
   const [loadingState, setLoadingState] = useState({ critical: true, secondary: false });
@@ -2234,6 +2235,7 @@ function useModuleData() {
       { key: 'contingency', endpoint: 'contingency/status', timeoutMs: 12000 },
       { key: 'contingencyAudit', endpoint: 'contingency/audit', timeoutMs: 12000 },
       { key: 'scheduledPolicyWindows', endpoint: 'scheduled-policy-windows', timeoutMs: 12000 },
+      { key: 'criticalServices', endpoint: 'critical-services', timeoutMs: 20000 },
     ];
     const secondary = await Promise.allSettled(
       secondaryRequests.map((request) => fetchJson(request.endpoint, request.timeoutMs)),
@@ -2255,6 +2257,7 @@ function useModuleData() {
         else if (key === 'realtimeRadar') next.realtimeRadar = value?.events ? value : current.realtimeRadar;
         else if (key === 'contingencyAudit') next.contingencyAudit = Array.isArray(value) ? value : current.contingencyAudit;
         else if (key === 'scheduledPolicyWindows') next.scheduledPolicyWindows = Array.isArray(value) ? value : current.scheduledPolicyWindows;
+        else if (key === 'criticalServices') next.criticalServices = value?.services ? value : current.criticalServices;
         else next[key] = value ?? current[key];
       });
       return next;
@@ -3140,6 +3143,9 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       detail: contingency?.reason || 'Operação dentro do padrão.',
     },
   ];
+
+  const criticalServiceItems = Array.isArray(data.criticalServices?.services) ? data.criticalServices.services : [];
+  const criticalServicesOk = criticalServiceItems.filter((item) => item.status === 'ok').length;
 
   const activeAlerts = useMemo(() => {
     const alerts = [];
@@ -4223,6 +4229,24 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     {contingencyActive
                       ? `Fallback público ativo por ${formatRemaining(contingency?.remaining_seconds)}.`
                       : 'Sem fallback público liberado.'}
+                  </div>
+                </ListRow>
+                <ListRow>
+                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Serviços críticos</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {criticalServiceItems.length ? criticalServiceItems.map((item) => (
+                      <StateBadge
+                        key={item.key}
+                        label={`${item.label}: ${item.status === 'ok' ? 'OK' : 'atenção'}`}
+                        tone={item.status === 'ok' ? 'success' : 'warning'}
+                        title={`${item.domain} · DNS ${item.checks?.dns_ok ? 'OK' : 'falha'} · ipset ${item.checks?.ipset_ok ? 'OK' : 'fora'} · HTTPS ${item.checks?.https_ok ? 'OK' : 'atenção'}`}
+                      />
+                    )) : <StateBadge label="Carregando leitura crítica" tone="neutral" />}
+                  </div>
+                  <div className="mt-3 text-sm leading-6 text-on-surface/62">
+                    {criticalServiceItems.length
+                      ? `${criticalServicesOk}/${criticalServiceItems.length} serviço(s) com DNS, bypass e HTTPS validados.`
+                      : 'A leitura consulta WhatsApp, Conectividade Social v2, Caixa/gov.br e dependências por VLAN.'}
                   </div>
                 </ListRow>
               </div>

@@ -204,7 +204,7 @@ const BASELINE_ALLOW_CATALOG = {
         'appjacarezinho.govbr.cloud',
         'pncp.gov.br',
         'receita.pr.gov.br',
-        'salas-apps-pr.sebrae.com.br',
+        'salas-apps.pr.sebrae.com.br',
         'sebrae.com.br',
         'webapp1-jacarezinho.cidade360.cloud',
         'www8.receita.fazenda.gov.br',

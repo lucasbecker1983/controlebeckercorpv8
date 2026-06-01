@@ -18,6 +18,109 @@ const ErrorBanner = ({ message }) => (
     ) : null
 );
 
+const secondsLabel = (value) => {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '—';
+    return `${(number * 1000).toFixed(0)} ms`;
+};
+
+const CriticalServicesPanel = ({ data, onRefresh }) => {
+    const services = Array.isArray(data?.services) ? data.services : [];
+    const okCount = services.filter((item) => item.status === 'ok').length;
+    const total = services.length;
+
+    return (
+        <div className="bg-container border border-outline/20 p-5 rounded-[24px] shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                    <h3 className="text-on-surface font-black uppercase text-xs tracking-[0.18em] flex items-center gap-2">
+                        <Shield size={16} className="text-info" /> Serviços críticos liberados
+                    </h3>
+                    <p className="mt-1 text-sm text-on-surface/62">
+                        WhatsApp, gov.br, Caixa e Conectividade Social com DNS, ipset e HTTPS por VLAN.
+                    </p>
+                </div>
+                <button onClick={onRefresh} className="inline-flex items-center justify-center gap-2 rounded-xl border border-outline/20 bg-surface px-3 py-2 text-xs font-black uppercase text-on-surface/70 transition hover:border-info/30 hover:text-info">
+                    <RefreshCw size={14} /> Atualizar
+                </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Estado geral</div>
+                    <div className={`mt-2 text-2xl font-black ${okCount === total && total ? 'text-info' : 'text-orange-500'}`}>
+                        {okCount}/{total || 0}
+                    </div>
+                </div>
+                <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">WhatsApp ipset</div>
+                    <div className="mt-2 text-2xl font-black text-on-surface">{data?.ipsets?.whatsapp?.total ?? '—'}</div>
+                </div>
+                <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                    <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Caixa/gov.br ipset</div>
+                    <div className="mt-2 text-2xl font-black text-on-surface">{data?.ipsets?.govbr_caixa?.total ?? '—'}</div>
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                {services.map((service) => {
+                    const vlanOk = (service.https_by_vlan || []).filter((item) => item.ok).length;
+                    const vlanTotal = (service.https_by_vlan || []).length;
+                    const firstHttps = (service.https_by_vlan || []).find((item) => item.ok) || (service.https_by_vlan || [])[0];
+                    return (
+                        <div key={service.key} className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="font-black text-on-surface">{service.label}</span>
+                                        <span className={`rounded-full px-2 py-0.5 text-[9px] font-black uppercase ${service.status === 'ok' ? 'bg-info/12 text-info' : 'bg-orange-500/12 text-orange-500'}`}>
+                                            {service.status === 'ok' ? 'Operacional' : 'Atenção'}
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 truncate font-mono text-[11px] text-on-surface/52">{service.domain}</div>
+                                </div>
+                                {service.url ? (
+                                    <a href={service.url} target="_blank" rel="noreferrer" className="rounded-lg p-2 text-on-surface/45 transition hover:bg-outline/10 hover:text-info" title="Abrir serviço">
+                                        <ExternalLink size={16} />
+                                    </a>
+                                ) : null}
+                            </div>
+                            <div className="mt-4 grid grid-cols-2 gap-2 text-[11px]">
+                                <div className="rounded-xl bg-container/70 p-3">
+                                    <div className="text-on-surface/45 font-black uppercase">DNS VLAN</div>
+                                    <div className={service.checks?.dns_ok ? 'text-info font-black' : 'text-danger font-black'}>{service.checks?.dns_ok ? 'OK' : 'Falha'}</div>
+                                </div>
+                                <div className="rounded-xl bg-container/70 p-3">
+                                    <div className="text-on-surface/45 font-black uppercase">Bypass ipset</div>
+                                    <div className={service.checks?.ipset_ok ? 'text-info font-black' : 'text-danger font-black'}>{service.checks?.ipset_ok ? 'OK' : 'Fora'}</div>
+                                </div>
+                                <div className="rounded-xl bg-container/70 p-3">
+                                    <div className="text-on-surface/45 font-black uppercase">HTTPS</div>
+                                    <div className={service.checks?.https_ok ? 'text-info font-black' : 'text-danger font-black'}>
+                                        {vlanTotal ? `${vlanOk}/${vlanTotal}` : 'N/A'}
+                                    </div>
+                                </div>
+                                <div className="rounded-xl bg-container/70 p-3">
+                                    <div className="text-on-surface/45 font-black uppercase">Tempo</div>
+                                    <div className="font-black text-on-surface">{secondsLabel(firstHttps?.total_seconds)}</div>
+                                </div>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-1.5">
+                                {(service.ipset_coverage || []).slice(0, 5).map((item) => (
+                                    <span key={`${service.key}-${item.ip}`} className={`rounded-lg px-2 py-1 font-mono text-[10px] ${item.in_ipset ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}>
+                                        {item.ip}
+                                    </span>
+                                ))}
+                                {(service.ipset_coverage || []).length > 5 ? <span className="rounded-lg bg-outline/10 px-2 py-1 text-[10px] font-bold text-on-surface/50">+{service.ipset_coverage.length - 5}</span> : null}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 // --- VLAN TAB (CORREÇÃO DE MÉTRICAS E PERSPECTIVA) ---
 const VlanTab = () => {
     const [ifaces, setIfaces] = useState([]);
@@ -443,6 +546,7 @@ const DnsTab = () => {
     const [stats, setStats] = useState({ is_running: null, is_resolving: null, stats: { total_queries: 0, cache_hits: 0, avg_latency: 0 } });
     const [breakdown, setBreakdown] = useState(DEFAULT_VLANS);
     const [zones, setZones] = useState([]);
+    const [criticalServices, setCriticalServices] = useState(null);
     const [form, setForm] = useState({ domain: '', ip: '', type: 'FWD' });
     const [verifyStatus, setVerifyStatus] = useState({});
     const [error, setError] = useState('');
@@ -489,9 +593,19 @@ const DnsTab = () => {
             failures.push(fetchErrorMessage(e, 'zonas DNS'));
             setError(`Falha parcial em: ${failures.join(', ')}.`);
         });
+
+    };
+
+    const loadCriticalServices = () => {
+        api.get('/api/bloqueios-liberacoes/critical-services').then((res) => {
+            if (res.data) setCriticalServices(res.data);
+        }).catch((e) => {
+            setError(fetchErrorMessage(e, 'Falha ao carregar serviços críticos.'));
+        });
     };
     
     useEffect(() => { load(); const i = setInterval(load, 2000); return () => clearInterval(i); }, []);
+    useEffect(() => { loadCriticalServices(); const i = setInterval(loadCriticalServices, 30000); return () => clearInterval(i); }, []);
     
     const vlanTotalQueries = breakdown.reduce((sum, item) => sum + (item.queries || 0), 0);
     const dnsStatusLabel = stats.is_resolving === true
@@ -573,6 +687,8 @@ const DnsTab = () => {
                 <div className="bg-container border border-outline/20 p-5 rounded-[24px] flex items-center gap-4 shadow-sm"><div className="p-3 rounded-xl bg-primary/10 text-primary"><Activity size={24}/></div><div><h3 className="text-on-surface opacity-50 font-bold uppercase text-[10px]">Consultas (Recentes)</h3><p className="text-xl font-black text-primary">{vlanTotalQueries.toLocaleString()}</p></div></div>
                 <button onClick={flushCache} className="bg-danger/10 border border-danger/20 p-5 rounded-[24px] flex items-center justify-between hover:bg-danger/20 transition-all group active:scale-95 shadow-sm"><div className="flex items-center gap-4"><div className="p-3 rounded-xl bg-danger/20 text-danger group-hover:scale-110 transition-transform"><Trash2 size={24}/></div><div className="text-left"><h3 className="text-danger font-bold uppercase text-[10px]">Manutenção</h3><p className="text-lg font-black text-danger">Limpar Cache</p></div></div></button>
             </div>
+
+            <CriticalServicesPanel data={criticalServices} onRefresh={() => { load(); loadCriticalServices(); }} />
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 space-y-4">

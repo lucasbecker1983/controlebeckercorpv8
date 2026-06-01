@@ -1,8 +1,12 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Clock3, FileText, Inbox, Loader2, MessageSquare, Send, ShieldCheck, UserRound } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, Archive, CheckCircle2, Clock3, FileText, Inbox, Loader2, MessageSquare, RotateCcw, Send, ShieldCheck, UserRound } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
 
 const statuses = [
+  ['active', 'Abertos'],
+  ['closed', 'Resolvidos'],
+  ['archived', 'Arquivados'],
   ['all', 'Todos'],
   ['open', 'Aberto'],
   ['triage', 'Em triagem'],
@@ -12,6 +16,9 @@ const statuses = [
   ['resolved', 'Resolvido'],
   ['denied', 'Não autorizado'],
 ];
+
+const workflowStatuses = statuses.filter(([id]) => !['active', 'closed', 'archived', 'all'].includes(id));
+const closedStatuses = new Set(['resolved', 'denied', 'canceled']);
 
 const priorities = [
   ['low', 'Baixa'],
@@ -43,50 +50,104 @@ function Stat({ icon: Icon, label, value, tone = 'sky' }) {
 }
 
 export default function SupportTickets() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openedFromQueryRef = useRef('');
   const [tickets, setTickets] = useState([]);
   const [selected, setSelected] = useState(null);
   const [comments, setComments] = useState([]);
   const [events, setEvents] = useState([]);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('active');
   const [reply, setReply] = useState('');
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
 
   const stats = useMemo(() => {
-    const active = tickets.filter((t) => !['resolved', 'denied', 'canceled'].includes(t.status)).length;
+    const active = tickets.filter((t) => !t.archived && !closedStatuses.has(t.status)).length;
     return {
       active,
-      unread: tickets.filter((t) => t.admin_unread).length,
-      urgent: tickets.filter((t) => t.priority === 'critical' || t.priority === 'high').length,
+      unread: tickets.filter((t) => !t.archived && t.admin_unread).length,
+      urgent: tickets.filter((t) => !t.archived && (t.priority === 'critical' || t.priority === 'high')).length,
     };
   }, [tickets]);
 
-  const loadTickets = async () => {
-    setLoading(true);
+  const loadTickets = async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const res = await api.get('/api/support/tickets', { params: { status: statusFilter } });
       setTickets(res.data?.tickets || []);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
-  useEffect(() => { loadTickets(); }, [statusFilter]);
+  useEffect(() => {
+    let alive = true;
+    loadTickets();
+    const timer = window.setInterval(() => {
+      if (alive) loadTickets({ silent: true });
+    }, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [statusFilter]);
 
-  const openTicket = async (ticket) => {
-    setSelected(ticket);
-    const res = await api.get(`/api/support/tickets/${ticket.id}`);
+  const openTicketById = async (ticketId, preview = null) => {
+    if (!ticketId) return;
+    if (preview) setSelected(preview);
+    const res = await api.get(`/api/support/tickets/${ticketId}`);
     setSelected(res.data.ticket);
     setComments(res.data.comments || []);
     setEvents(res.data.events || []);
-    setTickets((current) => current.map((item) => item.id === ticket.id ? { ...item, admin_unread: false } : item));
+    setTickets((current) => current.map((item) => String(item.id) === String(ticketId) ? { ...item, admin_unread: false } : item));
   };
+
+  const openTicket = async (ticket) => {
+    openedFromQueryRef.current = String(ticket.id);
+    setSearchParams({ ticket: String(ticket.id) });
+    await openTicketById(ticket.id, ticket);
+  };
+
+  useEffect(() => {
+    const ticketId = searchParams.get('ticket');
+    if (ticketId === openedFromQueryRef.current) return;
+    openedFromQueryRef.current = ticketId || '';
+    if (ticketId) openTicketById(ticketId);
+  }, [searchParams]);
 
   const updateTicket = async (patch) => {
     if (!selected) return;
     const res = await api.patch(`/api/support/tickets/${selected.id}`, patch);
     setSelected(res.data.ticket);
     setNotice('Chamado atualizado.');
+    await loadTickets();
+  };
+
+  const archiveTicket = async () => {
+    if (!selected) return;
+    const res = await api.post(`/api/support/tickets/${selected.id}/archive`);
+    setSelected(res.data.ticket);
+    setNotice('Chamado arquivado.');
+    if (statusFilter !== 'archived') {
+      setSelected(null);
+      setComments([]);
+      setEvents([]);
+      setSearchParams({});
+    }
+    await loadTickets();
+  };
+
+  const unarchiveTicket = async () => {
+    if (!selected) return;
+    const res = await api.post(`/api/support/tickets/${selected.id}/unarchive`);
+    setSelected(res.data.ticket);
+    setNotice('Chamado restaurado.');
+    if (statusFilter === 'archived') {
+      setSelected(null);
+      setComments([]);
+      setEvents([]);
+      setSearchParams({});
+    }
     await loadTickets();
   };
 
@@ -111,7 +172,7 @@ export default function SupportTickets() {
             </p>
           </div>
           <div className="flex rounded-lg border border-outline/12 bg-surface-low p-1">
-            {statuses.slice(0, 5).map(([id, label]) => (
+            {statuses.slice(0, 4).map(([id, label]) => (
               <button key={id} type="button" onClick={() => setStatusFilter(id)} className={`h-9 rounded-md px-3 text-xs font-black ${statusFilter === id ? 'bg-primary text-white' : 'text-on-surface/62 hover:text-on-surface'}`}>{label}</button>
             ))}
           </div>
@@ -136,6 +197,7 @@ export default function SupportTickets() {
                 <span className="text-[11px] font-black text-on-surface/50">{ticket.protocol}</span>
                 <span className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${priorityClass(ticket.priority)}`}>{ticket.priority_label}</span>
                 {ticket.admin_unread ? <span className="rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-black text-white">Novo</span> : null}
+                {ticket.archived ? <span className="rounded-full bg-slate-700 px-2.5 py-1 text-[11px] font-black text-white">Arquivado</span> : null}
               </div>
               <h2 className="mt-2 line-clamp-2 text-sm font-black text-on-surface">{ticket.title}</h2>
               <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-on-surface/55"><UserRound size={14} /> {ticket.requester_name}</div>
@@ -155,6 +217,7 @@ export default function SupportTickets() {
                     <span className="text-xs font-black text-on-surface/50">{selected.protocol}</span>
                     <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${priorityClass(selected.priority)}`}>{selected.priority_label}</span>
                     <span className="rounded-full border border-outline/14 bg-surface-low px-2.5 py-1 text-xs font-black text-on-surface/65">{selected.status_label}</span>
+                    {selected.archived ? <span className="rounded-full bg-slate-700 px-2.5 py-1 text-xs font-black text-white">Arquivado</span> : null}
                   </div>
                   <h2 className="mt-3 text-2xl font-black text-on-surface">{selected.title}</h2>
                   <p className="mt-2 text-sm font-semibold leading-6 text-on-surface/62">{selected.description}</p>
@@ -171,7 +234,7 @@ export default function SupportTickets() {
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/50">Status</span>
                   <select value={selected.status} onChange={(e) => updateTicket({ status: e.target.value })} className="h-11 w-full rounded-lg border border-outline/18 bg-surface-low px-3 text-sm font-bold outline-none">
-                    {statuses.filter(([id]) => id !== 'all').map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                    {workflowStatuses.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
                   </select>
                 </label>
                 <label className="block">
@@ -181,6 +244,15 @@ export default function SupportTickets() {
                   </select>
                 </label>
                 <button type="button" onClick={() => updateTicket({ status: 'resolved' })} className="mt-5 flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 text-sm font-black text-white hover:bg-emerald-800"><CheckCircle2 size={17} /> Resolver</button>
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {selected.archived ? (
+                  <button type="button" onClick={unarchiveTicket} className="flex h-10 items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 text-sm font-black text-sky-900 hover:bg-sky-100"><RotateCcw size={16} /> Restaurar chamado</button>
+                ) : closedStatuses.has(selected.status) ? (
+                  <button type="button" onClick={archiveTicket} className="flex h-10 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-sm font-black text-slate-700 hover:bg-slate-50"><Archive size={16} /> Arquivar chamado</button>
+                ) : null}
+                {selected.archived_at ? <span className="flex h-10 items-center rounded-lg border border-outline/12 bg-surface-low px-3 text-xs font-bold text-on-surface/55">Arquivado em {new Date(selected.archived_at).toLocaleString('pt-BR')}</span> : null}
               </div>
 
               {selected.category === 'release_request' ? (

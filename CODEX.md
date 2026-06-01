@@ -173,7 +173,7 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
   - `whatsapp.com`, `pontorh.com.br` e `gov.br` continuaram resolvendo
   - amostra do journal apos ajuste: `777` respostas, media `9.97 ms`, maximo `127.87 ms`, `37` acima de `50 ms`
 - observacao operacional:
-  - o Unbound principal ainda possui `forward-zone "."` para `9.9.9.9` e `1.1.1.2`; portanto a primeira consulta fria depende desses forwarders
+  - em `2026-05-28`, o encaminhamento raiz do Unbound principal foi revisado para `9.9.9.9`, `149.112.112.112`, `1.1.1.1` e `1.0.0.1`, com `forward-first: yes`; portanto a primeira consulta fria depende desses forwarders e pode cair para recursao plena se todos falharem
   - para consultas ja em cache, a meta operacional e `0-1 ms`
 
 ## Ajuste de navegacao lenta nas VLANs - 2026-05-28
@@ -7412,3 +7412,510 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `unbound-control list_forwards` confirmou `gov.br`, `www.gov.br`, `acesso.gov.br`, `sso.acesso.gov.br`, `autenticacao.empresafacil.pr.gov.br`, `caixa.gov.br`, `conectividade.caixa.gov.br`, `esocial.gov.br`, `serpro.gov.br`, `go-mpulse.net` e dependencias relacionadas como `forward 1.1.1.1 1.0.0.1`
   - `conntrack` passou a mostrar conexoes de `192.168.10.131` para `200.155.79.200:443` e `161.148.164.31:443` como `[ASSURED]`, em vez de ficarem travadas em `SYN_RECV`
   - `tcpdump -ni any` confirmou pacote de retorno `161.148.164.31.443 > 192.168.10.131` saindo por `enp6s0.10`
+
+## WhatsApp/Web WhatsApp - estabilizacao da allowlist dinamica - 2026-05-28
+
+- sintoma reportado:
+  - WhatsApp intermitente nas VLANs, incluindo dependencias do WhatsApp Web
+- achados runtime:
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx`, `postgresql`, `backend-proxy`, `backend-proxy-ingester`, `bcc-backend` e `bcc-frontend` estavam ativos/online
+  - o cron do WhatsApp estava configurado para executar `scripts/update_whatsapp_allowlist.py` a cada 6 horas
+  - a allowlist `sgcg_whatsapp_allowed` existia, mas a coleta anterior usava somente `208.67.222.222`; isso podia divergir dos IPs entregues pelo Unbound local aos clientes
+  - durante refresh manual, uma resposta de erro textual do `dig` foi interpretada como IP, mostrando fragilidade no parser
+  - `edge-mqtt.facebook.com` e `mqtt.c10r.facebook.com`, dependencias de sessao/push do WhatsApp Web, resolviam nos gateways para IPs como `57.144.66.144` e `157.240.12.9`, que nao estavam garantidos pela coleta antiga
+- correcao aplicada:
+  - `scripts/update_whatsapp_allowlist.py` passou a validar respostas com `ipaddress.IPv4Address`, ignorando qualquer linha que nao seja IPv4 valido
+  - a coleta agora consulta `127.0.0.1`, `208.67.222.222` e `1.1.1.1`, cobrindo o mesmo Unbound usado pelos clientes e rotacoes externas de CDN/Meta
+  - refresh manual executado apos a correcao elevou `sgcg_whatsapp_allowed` para `55` IPs atuais, incluindo dependencias Meta do WhatsApp Web como `57.144.66.144`, `157.240.12.9`, `157.240.226.19`, `157.240.226.1`, `157.240.226.61`, `57.145.6.141` e outros IPs rotacionados
+  - `/etc/ipset.conf` foi persistido pelo proprio script e verificado sem linhas de erro `dig`
+- validacao:
+  - `python3 -m py_compile scripts/update_whatsapp_allowlist.py` sem erro
+  - `python3 scripts/update_whatsapp_allowlist.py` concluiu com sucesso
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `ufw status verbose` confirmou `Status: active`, com UFW como firewall oficial
+  - `ipset list sgcg_whatsapp_allowed` confirmou `Number of entries: 55`
+  - nas VLANs `10`, `30`, `40`, `50`, `70`, `80` e `99`, `web.whatsapp.com`, `static.whatsapp.net`, `graph.whatsapp.com`, `chat.cdn.whatsapp.net`, `mmx-ds.cdn.whatsapp.net` e `edge-mqtt.facebook.com` resolveram via seus gateways
+  - `https://web.whatsapp.com/` retornou `HTTP 200` usando origem dos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1`, com tempo total aproximado entre `0.29s` e `0.52s`
+
+## Conectividade Social v2 Caixa - liberacao do cadastro de maquina - 2026-05-28
+
+- sintoma reportado:
+  - `https://conectividadesocialv2.caixa.gov.br/cad-maquina` nao abria para usuarios
+- achados runtime:
+  - a URL resolvia para `200.201.160.54` e respondia `301` para `/cad-maquina/`
+  - seguindo o redirecionamento, o HTML da pagina `Cadastro de Maquina` retornava `HTTP 200`
+  - o dominio novo `conectividadesocialv2.caixa.gov.br` nao estava semeado explicitamente em `scripts/update_govbr_allowlist.py`
+  - antes da correcao, `ipset test sgcg_govbr_allowed 200.201.160.54` retornava que o IP nao estava no conjunto, deixando o destino sem o bypass institucional de Caixa/gov.br
+- correcao aplicada:
+  - `scripts/update_govbr_allowlist.py` passou a incluir `conectividadesocialv2.caixa.gov.br` e `www.conectividadesocialv2.caixa.gov.br` nos dominios criticos da Caixa
+  - `python3 scripts/update_govbr_allowlist.py` executou com sucesso (`ok members=215`)
+  - `/etc/unbound/unbound.conf.d/custom-zones.conf` passou a conter forwards explicitos para `conectividadesocialv2.caixa.gov.br` e `www.conectividadesocialv2.caixa.gov.br` via `1.1.1.1,1.0.0.1`
+  - `/etc/squid/acl/proxy_whitelist.acl` e `/etc/squid/acl/proxy_protected_ssl.acl` receberam os dois dominios
+  - `/etc/ipset.conf` persistiu `200.201.160.54` com comentario `conectividadesocialv2.caixa.gov.br`
+- validacao:
+  - `python3 -m py_compile scripts/update_govbr_allowlist.py scripts/update_whatsapp_allowlist.py` sem erro
+  - `unbound-checkconf /etc/unbound/unbound.conf` e `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - `squid -k parse` sem erro fatal; avisos de IPv6/ACL vazia ja conhecidos no ambiente
+  - `ipset test sgcg_govbr_allowed 200.201.160.54` confirmou o IP dentro do conjunto
+  - DNS nos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1` retornou `200.201.160.54`
+  - `https://conectividadesocialv2.caixa.gov.br/cad-maquina` retornou `HTTP 200` apos `1` redirect em todas as VLANs testadas, com tempo total aproximado entre `0.18s` e `0.20s`
+  - via Squid explicito `127.0.0.1:3129`, a mesma URL retornou `HTTP 200`
+  - asset principal `main.3f2c4d4f75a7c75ce527.js` retornou `HTTP 200` com `Content-Length: 1006240`
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx` e `postgresql` permaneceram ativos
+
+## SGCG frontend - visibilidade de servicos criticos liberados - 2026-05-28
+
+- objetivo:
+  - expor no frontend do SGCG o estado operacional das liberacoes criticas corrigidas nesta rodada, incluindo WhatsApp/Web WhatsApp, Conectividade Social v2 Caixa e SSO gov.br
+- backend:
+  - adicionado `GET /api/bloqueios-liberacoes/critical-services` em `backend-proxy/src/routes/blocking-release-routes.ts`
+  - o endpoint e autenticado pelo mesmo stack do modulo e retorna `updated_at`, gateways de VLAN, totais dos ipsets `sgcg_whatsapp_allowed` e `sgcg_govbr_allowed`, DNS local por VLAN, cobertura dos IPs nos ipsets, teste HTTPS por gateway, forwards Unbound e status consolidado por servico
+  - servicos monitorados inicialmente:
+    - `Conectividade Social v2` com URL `https://conectividadesocialv2.caixa.gov.br/cad-maquina`
+    - `WhatsApp Web` com URL `https://web.whatsapp.com/`
+    - `WhatsApp sessao/push` cobrindo `edge-mqtt.facebook.com`
+    - `SSO gov.br` com URL `https://sso.acesso.gov.br/`
+- frontend:
+  - em `frontend/src/pages/Network.jsx`, a aba DNS agora mostra o painel `Servicos criticos liberados`, com resumo OK/total, totais dos ipsets, cards por servico, DNS por VLAN, bypass ipset, HTTPS por VLAN, tempo, IPs resolvidos e link externo quando aplicavel
+  - o painel de DNS atualiza a telemetria normal a cada `2s` e os servicos criticos a cada `30s`, evitando testes HTTPS pesados em loop curto
+  - em `frontend/src/pages/BlockingReleases.jsx`, a sintese executiva do modulo passou a exibir a linha `Servicos criticos`, com badges `OK`/`atencao` por servico e resumo `X/Y servico(s) com DNS, bypass e HTTPS validados`
+- validacao:
+  - `cd backend-proxy && npm run build` concluiu com sucesso
+  - `pm2 restart backend-proxy --update-env` deixou o processo online
+  - `curl -sk https://127.0.0.1:6779/api/bloqueios-liberacoes/critical-services` retornou `401 Token ausente`, confirmando rota publicada atras da autenticacao esperada
+  - `cd frontend && npm run build` concluiu com sucesso e gerou `dist/assets/index-Dm50-AIw.js`
+  - `pm2 restart bcc-frontend --update-env` deixou o frontend online em `0.0.0.0:6777`
+  - `curl -sk https://127.0.0.1:6777/controle-rede` e `curl -sk https://127.0.0.1:6777/bloqueios-liberacoes` retornaram HTML `200`
+  - `rg` confirmou `Servicos criticos liberados` no bundle `frontend/dist/assets/index-Dm50-AIw.js`
+  - `git diff --check` sem erros
+
+## SSO gov.br - refresh da rotacao detectada pelo frontend - 2026-05-28
+
+- sintoma reportado no SGCG:
+  - card `SSO gov.br` apareceu como `Atencao`
+  - DNS por VLAN estava `OK`, HTTPS estava `7/7`, mas `Bypass ipset` aparecia `Fora`
+  - IP exibido: `189.9.176.13`
+- achado runtime:
+  - `dig @127.0.0.1 sso.acesso.gov.br A +time=2 +tries=1 +short` retornou `189.9.176.13`
+  - `ipset test sgcg_govbr_allowed 189.9.176.13` confirmou inicialmente que o IP nao estava no conjunto
+  - isso indica rotacao recente do SSO gov.br entre execucoes do timer da allowlist
+- acao executada:
+  - `python3 scripts/update_govbr_allowlist.py` executado manualmente
+  - resultado: `ok members=225`
+- validacao:
+  - `ipset test sgcg_govbr_allowed 189.9.176.13` passou a confirmar o IP dentro do conjunto
+  - `ipset list sgcg_govbr_allowed` mostra `189.9.176.13 comment "sso.acesso.gov.br"`
+  - o alerta do frontend foi util para apontar exatamente a camada faltante: DNS e HTTPS funcionavam, mas o bypass institucional ainda nao tinha acompanhado a nova resolucao
+
+## Politica SGCG - sites e aplicativos de relacionamento - 2026-05-28
+
+- solicitacao:
+  - criar nova ACL/politica para sites e aplicativos de relacionamento, incluindo Tinder, Timo/Taimi, Badoo, Alii-Streamers Legais, Vibe, Crush Live, SuperLive, Chatta e similares
+  - bloquear em todas as VLANs operacionais do modulo e exibir em `Politicas e Excecoes -> Politicas & Escopos`
+- implementacao:
+  - criado script idempotente `scripts/create_relationship_acl_policy_20260528.js`
+  - criada/atualizada a politica nomeada `Sites e aplicativos de relacionamento` em `domain_policies`
+  - `policy_type=block`, `scope_type=vlan`, `scope_value=10,30,40,50,70`, `enabled=true`
+  - VLANs `80` e `99` permaneceram fora porque estao cadastradas como isentas/fora do padrao no SGCG (`exempt=true`, `blocking_enabled=false`, `monitoring_enabled=false`)
+  - a politica recebeu `59` dominios, incluindo `tinder.com`, `gotinder.com`, `badoo.com`, `badoocdn.com`, `taimi.com`, `web-timo.vercel.app`, `aliiparty.com`, `alii.global`, `vibedate.io`, `vibedating.net`, `vibebe.app`, `vybe.dating`, `vibematchapp.com`, `crushfun.live`, `superlive.chat`, `superlivetv.com`, `chatta.com`, `chatta.it`, `chattalive.com`, alem de Bumble, Hinge, Happn, OkCupid, POF, Match, Grindr, HER, Tantan, Lovoo, Mamba, Boo, Coffee Meets Bagel, Feeld, Pure, Hily, Jaumo, Waplog, Skout, MeetMe, Tagged, Yubo, Fruitz e Flava
+  - `domainPolicyManagerService` sincronizou a politica para `blocking_policies`, gerando `59` linhas ativas para cada VLAN `10`, `30`, `40`, `50` e `70`
+  - `blockingReleaseService.apply('codex-relationship-acl-20260528')` reaplicou o motor `ACL + DNS`
+- validacao:
+  - consulta em `domain_policies` confirmou `id=19`, `name='Sites e aplicativos de relacionamento'`, `policy_type='block'`, `scope_type='vlan'`, `scope_value='10,30,40,50,70'`, `enabled=true`
+  - consulta em `blocking_policies` confirmou `59` entradas por VLAN `10`, `30`, `40`, `50` e `70`
+  - `rg` confirmou dominios como `tinder.com`, `badoo.com`, `superlive.chat`, `crushfun.live`, `aliiparty.com`, `chatta.com`, `web-timo.vercel.app` e `taimi.com` nos arquivos `/etc/squid/acl/blocklist-vlan-10.acl`, `blocklist-vlan-30.acl`, `blocklist-vlan-40.acl`, `blocklist-vlan-50.acl` e `blocklist-vlan-70.acl`
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `squid -k parse` sem erro fatal; avisos de IPv6/ACL vazia seguem conhecidos no ambiente
+  - `/bloqueios-liberacoes?tab=policies` respondeu HTML `200`
+  - `dig @192.168.10.1 tinder.com A` retornou `NXDOMAIN`
+  - `dig @192.168.30.1 badoo.com A` retornou `NXDOMAIN`
+  - `dig @192.168.40.1 crushfun.live A` retornou `NXDOMAIN`
+  - `dig @192.168.50.1 superlive.chat A +short` retornou vazio
+  - `dig @192.168.70.1 aliiparty.com A` retornou `NXDOMAIN`
+  - `pm2 list` confirmou `backend-proxy`, `backend-proxy-ingester`, `bcc-backend` e `bcc-frontend` online
+
+## WhatsApp sessao/push - ajuste de dependencia Meta na VLAN 30 - 2026-05-28
+
+- sintoma reportado no SGCG:
+  - card `WhatsApp sessao/push` apareceu como `Atencao`
+- achado runtime:
+  - `dig @127.0.0.1 edge-mqtt.facebook.com A +short` retornava `mqtt.c10r.facebook.com` e IP Meta atual
+  - o IP atual estava presente no `sgcg_whatsapp_allowed`
+  - nas VLANs `10`, `40`, `50`, `70`, `80` e `99`, `edge-mqtt.facebook.com` resolvia normalmente
+  - na VLAN `30`, `dig @192.168.30.1 edge-mqtt.facebook.com A` retornava `NXDOMAIN`
+  - causa: `mqtt.c10r.facebook.com` estava liberado na VLAN `30`, mas `edge-mqtt.facebook.com` nao tinha sido sincronizado para `release_policies`/allowlist da VLAN `30`; como `facebook.com` e bloqueado por `Redes Sociais`, o CNAME era bloqueado antes de chegar no destino permitido
+- correcao aplicada:
+  - ressincronizada a politica nomeada `id=18` (`WhatsApp Web - dependencias Meta`) via `domainPolicyManagerService.update`
+  - `blockingReleaseService.apply('codex-whatsapp-push-vlan30')` reaplicou o motor `ACL + DNS`
+  - `release_policies` passou a conter `edge-mqtt.facebook.com` nas VLANs `10`, `30`, `40`, `50` e `70`
+- validacao:
+  - `/etc/unbound/becker/allowlist-vlan-30.rpz` contem `edge-mqtt.facebook.com CNAME rpz-passthru.` e wildcard correspondente
+  - `/etc/squid/acl/allowlist-vlan-30.acl` contem `edge-mqtt.facebook.com` e `mqtt.c10r.facebook.com`
+  - `dig @192.168.30.1 edge-mqtt.facebook.com A` passou a retornar `NOERROR`, CNAME `mqtt.c10r.facebook.com` e IP `57.144.66.144`
+  - `dig` nos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1` retornou `57.144.66.144`
+  - `ipset test sgcg_whatsapp_allowed 57.144.66.144` confirmou o IP dentro do conjunto
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `pm2 list` confirmou os servicos SGCG online
+
+## WhatsApp Web - carregamento lento por dependencias Meta faltantes - 2026-05-28
+
+- sintoma reportado:
+  - `WhatsApp Web esta um lixo para abrir`
+- achados runtime:
+  - servicos base `unbound`, `sgcg-vip-dns.service`, `squid`, `postgresql`, `nginx` e `isc-dhcp-server` ativos
+  - `backend-proxy`, `backend-proxy-ingester`, `bcc-backend` e `bcc-frontend` online no PM2
+  - DNS de `web.whatsapp.com` nos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1` respondia `NOERROR` em `0-1 ms`
+  - `curl -k -L --interface <gateway> https://web.whatsapp.com/` retornava `HTTP 200`, mas o radar DNS mostrava bloqueios recentes de dependencias Meta usadas pelo WhatsApp Web/sessao:
+    - `gateway.facebook.com`
+    - `chat-e2ee-mini.facebook.com`
+    - `edge-mqtt-fallback.facebook.com`
+    - `ep7.facebook.com`
+    - `api.facebook.com`
+    - `connect.facebook.net`
+    - `z-p42-chat-e2ee-ig.facebook.com`
+  - esses nomes resolvem para endpoints `*.c10r.facebook.com`, `scontent.xx.fbcdn.net` ou IPs Meta compartilhados; bloquear `facebook.com` amplo sem essas excecoes causa carregamento ruim, reconexao ou fallback lento no WhatsApp Web
+- correcao aplicada:
+  - a politica nomeada `id=18` (`WhatsApp Web - dependencias Meta`) foi ampliada para incluir as dependencias estritamente necessarias sem liberar `facebook.com` amplo
+  - dominios adicionados na politica protegida: `api.facebook.com`, `chat-e2ee-mini.facebook.com`, `connect.facebook.net`, `edge-mqtt-fallback.facebook.com`, `ep7.facebook.com`, `gateway.facebook.com`, `mqtt.fallback.c10r.facebook.com`, `z-p42-chat-e2ee-ig.facebook.com`
+  - `domainPolicyManagerService.update(18, ...)` ressincronizou `release_policies` para VLANs `10`, `30`, `40`, `50` e `70`
+  - `blockingReleaseService.apply('codex-whatsapp-web-slow-20260528')` reaplicou o motor `ACL + DNS`
+  - `scripts/update_whatsapp_allowlist.py` passou a resolver tambem essas dependencias Meta e seus fallbacks, usando `127.0.0.1`, `208.67.222.222` e `1.1.1.1`
+  - `python3 scripts/update_whatsapp_allowlist.py` elevou `sgcg_whatsapp_allowed` para `81` entradas, adicionando IPs atuais como `57.144.66.8`, `57.144.66.145`, `57.145.6.144`, `157.240.12.1`, `157.240.12.175`, `157.240.226.13`, `31.13.91.21`, `31.13.94.52` e outros IPs rotacionados
+  - `unbound-control flush_zone` foi executado para `whatsapp.com`, `whatsapp.net`, `facebook.com` e `fbcdn.net`
+- validacao:
+  - `/etc/unbound/becker/allowlist-vlan-10.rpz`, `allowlist-vlan-30.rpz` e `allowlist-vlan-50.rpz` passaram a conter `chat-e2ee-mini.facebook.com`, `connect.facebook.net`, `edge-mqtt-fallback.facebook.com` e `gateway.facebook.com` com `rpz-passthru`
+  - `/etc/squid/acl/allowlist-vlan-10.acl`, `allowlist-vlan-30.acl` e `allowlist-vlan-50.acl` passaram a conter os mesmos hosts
+  - `gateway.facebook.com`, `chat-e2ee-mini.facebook.com`, `edge-mqtt-fallback.facebook.com`, `ep7.facebook.com`, `connect.facebook.net` e `z-p42-chat-e2ee-ig.facebook.com` resolveram nos gateways testados das VLANs `10`, `30`, `50` e `70`
+  - `https://web.whatsapp.com/` retornou `HTTP 200` em todas as VLANs testadas, com tempo total aproximado entre `0.28s` e `0.37s`
+  - consulta ao radar DNS nos 3 minutos apos a correcao retornou `[]` para bloqueios de `whatsapp`, `facebook`, `c10r` e `fbcdn`
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `squid -k parse` sem erro fatal; avisos de IPv6/ACL vazia ja conhecidos no ambiente
+
+## WhatsApp Web - WebSocket 443/5222 e regra explicita de retorno - 2026-05-28
+
+- sintoma reportado:
+  - WhatsApp Web voltou a falhar apos abrir temporariamente
+  - console do navegador mostrava falhas em:
+    - `wss://web.whatsapp.com/ws/chat?ED=CAgIEggF`
+    - `wss://web.whatsapp.com:5222/ws/chat?ED=CAgIEggF`
+- achados runtime:
+  - testes sinteticos de WebSocket com `Upgrade: websocket` nos gateways das VLANs retornaram `HTTP/1.1 101 Switching Protocols` em `443` e `5222`
+  - `openssl s_client -connect web.whatsapp.com:443 -servername web.whatsapp.com` e porta `5222` negociaram TLS corretamente com certificado Meta/WhatsApp valido
+  - os IPs atuais de `web.whatsapp.com` estavam dentro do `sgcg_whatsapp_allowed`
+  - havia conexoes reais de clientes para IPs Meta/WhatsApp presas em `SYN_RECV`, por exemplo `192.168.10.131 -> 57.144.67.32:443/5222`, sinal de retorno incompleto para o cliente mesmo com a saida permitida
+  - regra existente permitia saida para `sgcg_whatsapp_allowed`, mas nao havia uma regra explicita de retorno equivalente a que ja existe para `sgcg_govbr_allowed`
+- correcao aplicada:
+  - `scripts/update_whatsapp_allowlist.py` passou a garantir a regra:
+    - `SGCG WHATSAPP RETURN ALLOW`
+    - `-i enp8s0 -o enp6s0+ -m conntrack --ctstate ESTABLISHED,RELATED -m set --match-set sgcg_whatsapp_allowed src -j ACCEPT`
+  - `python3 scripts/update_whatsapp_allowlist.py` executado apos a mudanca
+  - regra inserida e persistida em `/etc/iptables/rules.v4`
+  - `ipset save > /etc/ipset.conf` executado apos o refresh
+  - entradas antigas `SYN_RECV` para IPs `57.144.*` e `157.240.*` foram removidas seletivamente do conntrack para forcar reconexao limpa
+- validacao:
+  - `iptables -S FORWARD` confirmou `SGCG WHATSAPP RETURN ALLOW` antes do `SGCG_GUARD`
+  - `iptables -vnL FORWARD` mostrou a regra de retorno com contador ativo (`4525` pacotes / `3253K` no momento da validacao)
+  - novas conexoes WebSocket por gateway continuaram retornando `HTTP/1.1 101 Switching Protocols` em `5222`
+  - apos a limpeza seletiva, `conntrack -L | rg 'SYN_RECV.*(57.144|157.240)'` nao retornou entradas
+  - radar DNS recente mostrou apenas bloqueios esperados de `facebook.com` e `web.facebook.com`; dependencias WhatsApp/Meta protegidas aparecem como `allowed`
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `squid -k parse` sem erro fatal; avisos de IPv6/ACL vazia ja conhecidos no ambiente
+  - PM2 confirmou `backend-proxy`, `backend-proxy-ingester`, `bcc-backend` e `bcc-frontend` online
+
+## Receita Federal, hCaptcha, PGFN e SEBRAE PR - conectividade da maquina 192.168.10.118 - 2026-05-28
+
+- sintoma reportado:
+  - maquina `192.168.10.118` na `VLAN 10` nao conseguia concluir fluxo de emissao de parcelamento no portal da Receita Federal
+  - o mesmo endpoint tambem nao conseguia acessar `https://salas-apps.pr.sebrae.com.br/painelcontrole/administrador.php`
+- achados runtime:
+  - o endpoint esta na interface `enp6s0.10`, com ARP ativo `cc:47:40:0c:e0:55`
+  - `ping` a partir do gateway nao respondeu, mas havia ARP e conexoes reais no `conntrack`, indicando host ativo com ICMP provavelmente bloqueado no Windows
+  - logs do Unbound mostraram o proprio `192.168.10.118` consultando `www8.receita.fazenda.gov.br`, `api.hcaptcha.com`, subdominios dinamicos `*.w.hcaptcha.com`, `newassets.hcaptcha.com` e `salas-apps.pr.sebrae.com.br`
+  - nao havia `NXDOMAIN` para esses dominios no endpoint; o problema era cobertura incompleta da allowlist/bypass persistente para dependencias dinamicas de emissao e para o dominio correto do SEBRAE
+  - o catalogo baseline tinha `salas-apps-pr.sebrae.com.br` com hifen, mas o dominio real e `salas-apps.pr.sebrae.com.br` com ponto
+- correcao aplicada:
+  - `scripts/update_govbr_allowlist.py` passou a cobrir `cav.receita.fazenda.gov.br`, `api.hcaptcha.com`, `imgs.hcaptcha.com`, `accounts.hcaptcha.com`, wildcard relacionado `w.hcaptcha.com`, `pgfn.gov.br`, `regularize.pgfn.gov.br`, `www.regularize.pgfn.gov.br`, `salas-apps.pr.sebrae.com.br`, `sebrae.com.br` e `www.sebrae.com.br`
+  - a rotina tambem passou a coletar dominios recentes contendo `hcaptcha`, `sebrae` e `pgfn` a partir dos logs/tabelas operacionais
+  - `backend-proxy/src/services/blocking-release-service.ts` corrigiu o seed institucional de `salas-apps-pr.sebrae.com.br` para `salas-apps.pr.sebrae.com.br`
+  - executado `DATABASE_URL=postgres://postgres:change_me@127.0.0.1:5432/controlebeckercorp_v8 python3 scripts/update_govbr_allowlist.py`, com resultado `ok members=232`
+  - `backend-proxy` foi recompilado e reiniciado via PM2
+  - entradas antigas de `conntrack` do `192.168.10.118` para Receita/hCaptcha/SEBRAE/PGFN foram removidas seletivamente para forcar reconexao limpa
+- validacao:
+  - `python3 -m py_compile scripts/update_govbr_allowlist.py` sem erro
+  - `cd backend-proxy && npm run build` concluiu com sucesso
+  - `pm2 restart backend-proxy --update-env` deixou `backend-proxy` online
+  - `unbound-checkconf /etc/unbound/unbound.conf` e `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - `squid -k parse` sem erro fatal
+  - `net_dns_rules` confirmou `FWD` via `1.1.1.1,1.0.0.1` para `cav.receita.fazenda.gov.br`, `api.hcaptcha.com`, `imgs.hcaptcha.com`, `accounts.hcaptcha.com`, `regularize.pgfn.gov.br`, `www.regularize.pgfn.gov.br` e `salas-apps.pr.sebrae.com.br`
+  - `sgcg_govbr_allowed` passou a conter IPs atuais como `189.9.84.33` (`www8.receita.fazenda.gov.br`), `161.148.116.86` (`cav.receita.fazenda.gov.br`), `104.19.229.21/104.19.230.21` (`newassets.hcaptcha.com`), `104.18.12.205/104.18.13.205` (`*.w.hcaptcha.com`), `189.9.113.*` (`regularize.pgfn.gov.br`) e `201.44.246.153` (`salas-apps.pr.sebrae.com.br`)
+  - rotas de `192.168.10.118` para os IPs de Receita, e-CAC, hCaptcha, PGFN e SEBRAE saem por `enp8s0` via `186.251.14.25`
+  - `https://www8.receita.fazenda.gov.br/simplesnacional/servicos/grupo.aspx?grp=14` retornou `HTTP 200`
+  - `https://cav.receita.fazenda.gov.br/autenticacao/login` retornou `HTTP 200`
+  - `https://sso.acesso.gov.br/` retornou `HTTP 200` apos `1` redirect
+  - `https://api.hcaptcha.com/` retornou `HTTP 200` apos `1` redirect
+  - `https://newassets.hcaptcha.com/` retornou `HTTP 200`
+  - `https://regularize.pgfn.gov.br/` retornou `HTTP 200` apos `2` redirects
+  - `https://salas-apps.pr.sebrae.com.br/painelcontrole/administrador.php` retornou `HTTP 200`
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx`, `postgresql` e `sgcg-govbr-allowlist.timer` estavam ativos
+  - `iptables-save -t filter` e `iptables-save -t nat` sem duplicatas
+
+## Politica de Lista Branca - liberacao do Reddit - 2026-05-28
+
+- solicitacao:
+  - colocar `https://www.reddit.com/` na lista branca/permitida
+- achados:
+  - `reddit.com` e `redditmedia.com` faziam parte da politica ativa `Redes Sociais`, bloqueada nas VLANs `10`, `30`, `40`, `50` e `70`
+  - o SGCG nao permite politica global generica fora do caso especial de bloqueio de pornografia; portanto a liberacao foi aplicada como politica nomeada por VLAN nas VLANs operacionais
+- correcao aplicada:
+  - criada politica nomeada `Liberacao Reddit` (`domain_policies.id=20`)
+  - `policy_type='allow'`, `scope_type='vlan'`, `scope_value='10,30,40,50,70'`, `enabled=true`
+  - dominios cobertos:
+    - `reddit.com`
+    - `www.reddit.com`
+    - `old.reddit.com`
+    - `redd.it`
+    - `redditstatic.com`
+    - `www.redditstatic.com`
+    - `redditmedia.com`
+    - `www.redditmedia.com`
+    - `redditinc.com`
+    - `reddit.map.fastly.net`
+  - o motor `blockingReleaseService.apply('codex-reddit-allowlist-20260528')` reaplicou `ACL + DNS`
+  - a politica gerou `35` linhas ativas em `release_policies` (`7` dominios normalizados por VLAN nas VLANs `10`, `30`, `40`, `50` e `70`)
+- observacao de precedencia:
+  - as linhas de bloqueio herdadas de `Redes Sociais` continuam no banco como politica base, mas a politica de lista branca do Reddit entrou nos artefatos de allowlist por VLAN e o compilador removeu o bloqueio efetivo dos artefatos gerados para esses dominios
+- validacao:
+  - `/etc/unbound/becker/allowlist-vlan-10.rpz`, `allowlist-vlan-30.rpz`, `allowlist-vlan-40.rpz`, `allowlist-vlan-50.rpz` e `allowlist-vlan-70.rpz` contem `reddit.com`, `old.reddit.com`, `redd.it`, `redditstatic.com`, `redditmedia.com`, `redditinc.com` e `reddit.map.fastly.net` como `rpz-passthru`
+  - `/etc/squid/acl/allowlist-vlan-10.acl`, `allowlist-vlan-30.acl`, `allowlist-vlan-40.acl`, `allowlist-vlan-50.acl` e `allowlist-vlan-70.acl` contem os mesmos dominios de Reddit
+  - os artefatos efetivos de blocklist por VLAN deixaram de conter `reddit.com` e `redditmedia.com`
+  - DNS para `www.reddit.com`, `reddit.com`, `redd.it`, `redditstatic.com` e `redditmedia.com` resolveu nos gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1` e `192.168.70.1`
+  - `https://www.reddit.com/` retornou `HTTP 200` usando origem dos gateways das VLANs `10`, `30`, `40`, `50` e `70`, com tempo total aproximado entre `0.06s` e `0.07s`
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros
+  - `squid -k parse` sem erro fatal
+  - `ufw`, `unbound`, `squid`, `postgresql`, `nginx` e `isc-dhcp-server` ativos
+  - `iptables-save -t filter` e `iptables-save -t nat` sem duplicatas
+
+## Revisao de conectividade generica, Unbound e SGCG_GUARD - 2026-05-28
+
+- sintoma reportado:
+  - apos ajustes no Unbound, dominios nao previamente conhecidos pareciam nao abrir; exemplo informado: `dcc.godaddy.com` com `ERR_CONNECTION_TIMED_OUT`
+- achados runtime:
+  - `dcc.godaddy.com` resolvia corretamente no Unbound como `dcc.godaddy.com.edgekey.net` -> `e6001.x.akamaiedge.net` -> `23.201.216.12`
+  - o HTTPS a partir dos gateways das VLANs abria com `HTTP 200`, indicando que o problema nao era `NXDOMAIN` nem falta de cache local
+  - o `conntrack` de clientes reais mostrava varias conexoes TCP em `SYN_RECV`, e o `SGCG_GUARD` aplicava `connlimit >100` antes da regra stateful geral do UFW
+  - o encaminhamento raiz do Unbound principal ainda usava `1.1.1.2`, resolvedor Cloudflare filtrado, o que podia reduzir funcionalidade para dominios frios/genericos
+- correcao aplicada:
+  - `/etc/sgcg/hardening-rules.sh` passou a remover e recriar uma regra explicita `SGCG:stateful-return-before-guard` em `FORWARD`, permitindo somente retorno `RELATED,ESTABLISHED` de `enp8s0` para `enp6s0+` antes do `SGCG_GUARD`
+  - `SGCG_GUARD` agora faz `RETURN` para pacotes `RELATED,ESTABLISHED` logo apos descartar `INVALID`, impedindo que conexoes ja rastreadas caiam nos limites de novas conexoes
+  - `SGCG:connlimit` passou de `>100` em todo TCP para `>300` apenas em novos SYN TCP, preservando protecao contra abuso sem derrubar navegacao moderna com muitas conexoes paralelas
+  - o script passou a limpar previamente os bloqueios WAN das portas internas `6778`, `6777` e `8901` para nao gerar duplicatas ao reiniciar o servico
+  - `/etc/unbound/unbound.conf.d/beckercorp_v8.conf` e `/etc/unbound/sgcg-vip-clean.conf` tiveram o encaminhamento raiz revisado para resolvedores normais: `9.9.9.9`, `149.112.112.112`, `1.1.1.1` e `1.0.0.1`
+  - adicionado `forward-first: yes` no encaminhamento raiz para manter performance por forwarder e permitir fallback para recursao plena se todos os forwarders falharem
+  - reiniciados `sgcg-hardening.service`, `unbound` e `sgcg-vip-dns.service`
+- validacao:
+  - `bash -n /etc/sgcg/hardening-rules.sh` sem erro
+  - `sgcg-hardening.service` ativo e persistiu `/etc/iptables/rules.v4`
+  - `iptables -vnL FORWARD` confirmou `SGCG:stateful-return-before-guard` na posicao `1`, com contador ativo
+  - `iptables -vnL SGCG_GUARD` confirmou `RETURN RELATED,ESTABLISHED` antes de scans/flood/connlimit e `SGCG:connlimit` como SYN `>300`
+  - `iptables-save -t filter` retornou `duplicates=0`; `iptables-save -t nat` retornou `duplicates=0`
+  - `unbound-checkconf /etc/unbound/unbound.conf` e `unbound-checkconf -f /etc/unbound/sgcg-vip-clean.conf` sem erros
+  - `dcc.godaddy.com`, `www.reddit.com`, `pontorh.com.br`, `gov.br` e `salas-apps.pr.sebrae.com.br` resolveram via `192.168.10.1`
+  - `facebook.com`, `youtube.com` e `pornhub.com` continuaram sem IP via `192.168.10.1`
+  - `https://dcc.godaddy.com/` retornou `HTTP 200` usando origem dos gateways `192.168.10.1`, `192.168.30.1`, `192.168.50.1` e `192.168.70.1`
+  - consultas diretas do PontoRH para OpenDNS `208.67.222.222` e `208.67.220.220` continuaram resolvendo `pontorh.com.br`
+  - `ufw`, `unbound`, `sgcg-vip-dns.service`, `squid`, `isc-dhcp-server`, `nginx` e `postgresql` ativos
+
+## SSL interno da Central de Chamados - 2026-06-01
+
+- solicitacao:
+  - aplicar HTTPS interno para a parte do colaborador na Central de Chamados do SGCG
+- estado aplicado:
+  - vhost `/etc/nginx/sites-available/console.interno.jacarezinho` ja atende `80` com redirecionamento para `443` e `443 ssl http2`
+  - certificado interno em uso: `/etc/sgcg/pki/console-interno-jacarezinho.crt`
+  - chave interna em uso: `/etc/sgcg/pki/console-interno-jacarezinho.key`
+  - CA raiz interna em uso: `/etc/sgcg/pki/sgcg-internal-root-ca.crt`
+  - SANs confirmados no certificado:
+    - `console.interno.jacarezinho`
+    - `console.jacarezinho.interno`
+    - `suporte.interno.jacarezinho`
+    - `suporte.jacarezinho.interno`
+    - `chamados.interno.jacarezinho`
+    - `chamados.jacarezinho.interno`
+    - `console.local.jacarezinho`
+    - `console.jacarezinho.local`
+    - `192.168.10.1`
+- URLs operacionais:
+  - colaborador: `https://suporte.jacarezinho.interno/`
+  - colaborador: `https://chamados.jacarezinho.interno/`
+  - caminho alternativo: `https://console.interno.jacarezinho/suporte`
+  - admin SGCG: `https://console.interno.jacarezinho/chamados`
+- distribuicao da CA:
+  - `http://suporte.jacarezinho.interno/sgcg-root-ca.crt` entrega a CA raiz interna como `application/x-x509-ca-cert`
+  - `http://suporte.jacarezinho.interno/` redireciona para `https://suporte.jacarezinho.interno/`
+- validacao executada:
+  - `nginx -t` concluiu com sintaxe OK e teste bem-sucedido
+  - `systemctl reload nginx` aplicado sem erro
+  - `openssl x509 -in /etc/sgcg/pki/console-interno-jacarezinho.crt -noout -subject -issuer -dates -ext subjectAltName` confirmou emissor `SGCG Jacarezinho Internal Root CA`
+  - `dig +short @127.0.0.1 suporte.jacarezinho.interno` -> `192.168.10.1`
+  - `dig +short @127.0.0.1 chamados.jacarezinho.interno` -> `192.168.10.1`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve suporte.jacarezinho.interno:443:127.0.0.1 -I https://suporte.jacarezinho.interno` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve chamados.jacarezinho.interno:443:127.0.0.1 -I https://chamados.jacarezinho.interno` -> `HTTP/2 200`
+  - `curl --cacert /etc/sgcg/pki/sgcg-internal-root-ca.crt --resolve console.interno.jacarezinho:443:127.0.0.1 -I https://console.interno.jacarezinho/suporte` -> `HTTP/2 200`
+  - `curl -sSI -H 'Host: suporte.jacarezinho.interno' http://127.0.0.1/sgcg-root-ca.crt` -> `HTTP/1.1 200 OK`
+- observacao operacional:
+  - para o navegador do colaborador nao exibir alerta, instalar a CA raiz interna `sgcg-root-ca.crt` como Autoridade de Certificacao Raiz Confiavel nas estacoes/dispositivos
+
+## Portal de Atendimento ao Colaborador - correcao do pos-login - 2026-06-01
+
+- sintoma reportado:
+  - ao informar usuario e senha no Portal de Atendimento ao Colaborador e clicar em `Entrar`, aparecia `Entrada confirmada. Voce ja pode abrir e acompanhar chamados.`, mas a tela permanecia no formulario de login
+  - era necessario clicar em `Entrar` mais de uma vez para acessar efetivamente o portal
+- correcao aplicada:
+  - `frontend/src/pages/SupportPortal.jsx` passou a criar o cabecalho `X-SGCG-Support-Token` por funcao utilitaria, evitando depender de estado React ainda nao atualizado no mesmo ciclo do login
+  - `loadTickets()` agora aceita o token recem-retornado pela API e carrega os chamados imediatamente apos autenticar
+  - `submitLogin()` valida a presenca do token, grava usuario/token, limpa a senha, fixa a view inicial em `Novo chamado` e ja executa o carregamento com o token novo
+- validacao:
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-frontend --update-env` aplicado e `bcc-frontend` ficou `online`
+  - `https://suporte.jacarezinho.interno/` respondeu `HTTP/2 200` via Nginx interno com a CA SGCG
+  - bundle publicado contem a nova protecao `missing_support_token` e o fluxo atualizado do token de suporte
+
+## Central de Chamados - sino bidirecional com previa e abertura direta - 2026-06-01
+
+- solicitacao:
+  - atualizar automaticamente o fluxo entre Portal de Atendimento ao Colaborador e SGCG
+  - quando o colaborador abrir chamado, o sino do SGCG deve mostrar notificacao quase imediata
+  - ao clicar no sino, deve aparecer a mensagem ou parte dela; ao clicar na mensagem, abrir a pagina de chamados diretamente no chamado
+  - o mesmo comportamento deve existir no portal do colaborador quando a equipe SGCG responder
+- backend:
+  - `/api/support/notifications` agora retorna `unread`, `active` e `notifications[]` com `id`, `protocol`, `title`, `requester_name`, `priority_label`, `status_label`, `snippet` e metadados do ultimo comentario relevante
+  - no SGCG, a previa prioriza o ultimo comentario do colaborador; se nao houver comentario, usa a descricao do chamado
+  - `/api/support/public/notifications` agora retorna `unread` e `notifications[]` para o colaborador autenticado pelo `X-SGCG-Support-Token`
+  - no portal publico, a previa prioriza o ultimo comentario da equipe SGCG; se nao houver comentario, usa a descricao do chamado
+  - `GET /api/support/public/tickets` deixou de limpar `requester_unread`; a notificacao do colaborador agora so e limpa ao abrir o detalhe do chamado
+- frontend:
+  - `frontend/src/components/SupportBell.jsx` passou de contador simples para menu de notificacoes com polling a cada `3s` e refresh ao focar a janela
+  - o menu exibe protocolo, prioridade, titulo, trecho da mensagem e solicitante quando aplicavel
+  - no SGCG, clicar na previa navega para `/chamados?ticket=<id>`
+  - `frontend/src/pages/SupportTickets.jsx` passou a ler `ticket` na query string e abrir diretamente o chamado, marcando `admin_unread=false` apenas ao abrir o detalhe
+  - no Portal de Atendimento ao Colaborador, clicar na previa do sino abre diretamente o chamado no detalhe; clicar em `Ver central de chamados` abre a lista sem limpar as notificacoes
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` aplicados; ambos ficaram `online`
+  - `GET http://127.0.0.1:6778/api/support/notifications` sem JWT retornou `401`
+  - `GET http://127.0.0.1:6778/api/support/public/notifications` sem token de suporte retornou `401`
+  - `https://suporte.jacarezinho.interno/` respondeu `HTTP/2 200`
+  - `https://console.interno.jacarezinho/chamados` respondeu `HTTP/2 200`
+
+## CA interna SGCG - instalador PowerShell Windows - 2026-06-01
+
+- solicitacao:
+  - criar um instalador Windows em `.ps1` para instalar a CA raiz interna do SGCG nos dispositivos
+- artefato criado:
+  - `sgcg-endpoint-identity-msi/tools/windows/INSTALAR-CA-SGCG.ps1`
+- comportamento:
+  - baixa a CA raiz por padrao de `http://suporte.jacarezinho.interno/sgcg-root-ca.crt`
+  - usa fallback automatico para `http://192.168.10.1/sgcg-root-ca.crt`
+  - valida o subject esperado `CN=SGCG Jacarezinho Internal Root CA`
+  - valida expiracao antes de instalar
+  - instala em `Cert:\LocalMachine\Root` por padrao, exigindo PowerShell como Administrador
+  - aceita `-CurrentUserOnly` para instalacao em `Cert:\CurrentUser\Root` quando nao houver privilegio administrativo
+  - verifica a instalacao pelo thumbprint e imprime subject, issuer, thumbprint e validade
+- uso recomendado no Windows:
+  - abrir PowerShell como Administrador
+  - executar `powershell.exe -ExecutionPolicy Bypass -File .\INSTALAR-CA-SGCG.ps1`
+- observacao:
+  - apos instalar a CA, fechar e reabrir o navegador para que ele recarregue a confianca do sistema
+
+## Central de Chamados - alerta visual no SGCG - 2026-06-01
+
+- solicitacao:
+  - no SGCG, exibir algo mais visivel quando houver solicitacao de chamado aberto
+  - desejado: popup, aba do navegador piscando ou ambos
+- implementacao:
+  - `frontend/src/components/SupportBell.jsx` agora, no modo administrativo do SGCG, exibe um popup flutuante quando detecta chamado nao lido novo
+  - o popup mostra `Novo chamado recebido`, protocolo, titulo, trecho da mensagem e solicitante
+  - clicar no popup abre diretamente o chamado pela mesma acao do sino
+  - enquanto existir chamado nao lido no SGCG, o titulo da aba alterna entre o titulo normal e `(<quantidade>) Chamado novo - SGCG`
+  - a piscada da aba e limitada ao SGCG administrativo; o portal publico do colaborador nao altera o titulo da aba
+- validacao:
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-frontend --update-env` aplicado e `bcc-frontend` ficou `online`
+  - `https://console.interno.jacarezinho/chamados` respondeu `HTTP/2 200`
+
+## Central de Chamados - criacao no Portal e contagem real do sino - 2026-06-01
+
+- sintomas reportados:
+  - ao abrir chamado pelo Portal de Atendimento ao Colaborador, a tela permanecia com todas as informacoes preenchidas, dando a impressao de que o chamado nao foi criado
+  - a aba do navegador indicava chamado novo, mas o sino nao exibia o chamado e a Central de Chamados parecia nao listar a solicitacao
+- causa identificada:
+  - havia erros `tuple concurrently updated` nas rotas de chamados, causados por concorrencia entre polling/notificacoes e a rotina de garantia de schema
+  - a notificacao administrativa contava chamados ativos como `unread`, mas o menu do sino listava apenas chamados com `admin_unread = TRUE`; isso fazia a aba piscar mesmo sem item novo no sino
+- backend:
+  - `ensureSchema()` passou a reutilizar uma promessa compartilhada (`schemaReady`), evitando DDL concorrente em requisicoes simultaneas
+  - `/api/support/notifications` agora separa corretamente `unread` de `active`; o contador do sino passa a refletir apenas `admin_unread = TRUE`
+- frontend:
+  - ao criar chamado com sucesso, o Portal limpa o formulario, adiciona o chamado retornado na lista local e abre diretamente o detalhe do chamado criado
+  - o envio do chamado usa o token atual de suporte diretamente em `X-SGCG-Support-Token`, evitando cabecalho antigo
+  - mensagens de erro/sucesso tambem aparecem perto do botao `Abrir chamado`, alem do topo da tela
+- evidencias:
+  - consulta ao banco mostrou o chamado `SGCG-CH-20260601-00003` criado em `2026-06-01 11:04:55-03`
+  - estado atual da contagem administrativa: `unread=0`, `active=1`; assim chamado ativo antigo nao deve mais piscar a aba como se fosse novo
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` aplicados; ambos ficaram `online`
+  - `https://suporte.jacarezinho.interno/` respondeu `HTTP 200` via resolve interno para `192.168.10.1`
+  - `https://console.interno.jacarezinho/chamados` respondeu `HTTP 200` via resolve interno para `192.168.10.1`
+  - `GET http://127.0.0.1:6778/api/support/notifications` sem JWT retornou `401`
+  - `GET http://127.0.0.1:6778/api/support/public/notifications` sem token de suporte retornou `401`
+
+## Portal do Colaborador - atalhos de categoria e limpar formulario - 2026-06-01
+
+- solicitacao:
+  - ao clicar em um card pre-pronto de `Novo chamado`, preencher automaticamente `Titulo curto` com o nome do card
+  - adicionar botao `Limpar` ao lado de `Abrir chamado`
+- implementacao:
+  - `frontend/src/pages/SupportPortal.jsx` ganhou `selectCategory(item)`, que define a categoria e preenche o titulo com `item.label`
+  - criado `clearTicketForm()`, que restaura o formulario para o estado inicial e limpa mensagens exibidas
+  - os botoes finais do formulario agora ficam em linha no desktop: `Abrir chamado` como acao principal e `Limpar` como acao secundaria
+- validacao:
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-frontend --update-env` aplicado; `bcc-frontend` ficou `online`
+  - `https://127.0.0.1:6777/` respondeu `HTTP 200`
+
+## Central de Chamados - arquivamento de chamados resolvidos - 2026-06-01
+
+- decisao:
+  - chamados resolvidos nao serao apagados; serao guardados por arquivamento logico
+  - o historico permanece no banco para consulta, auditoria e recorrencia de problemas
+- backend:
+  - `support_tickets` recebeu a coluna `archived_at TIMESTAMPTZ`
+  - criado indice `idx_support_tickets_archive`
+  - `publicTicket()` agora retorna `archived`
+  - `/api/support/tickets` ganhou filtros administrativos:
+    - `active`: chamados nao arquivados e ainda em atendimento
+    - `closed`: chamados nao arquivados com status final (`resolved`, `denied`, `canceled`)
+    - `archived`: chamados com `archived_at IS NOT NULL`
+    - `all`: todos nao arquivados
+  - `/api/support/tickets/:id/archive` marca `archived_at`, limpa `admin_unread` e registra evento/auditoria
+  - `/api/support/tickets/:id/unarchive` remove `archived_at` e registra evento/auditoria
+  - sino/notificacoes administrativas ignoram chamados arquivados
+  - se colaborador ou equipe responder em um chamado arquivado, o chamado sai do arquivo automaticamente (`archived_at = NULL`) para voltar ao fluxo normal
+  - Portal do Colaborador continua listando o historico dos chamados do proprio usuario, inclusive arquivados
+- frontend:
+  - Central de Chamados agora inicia em `Abertos`
+  - filtros principais: `Abertos`, `Resolvidos`, `Arquivados`, `Todos`
+  - chamados arquivados exibem badge `Arquivado`
+  - detalhe de chamado resolvido/negado/cancelado mostra botao `Arquivar chamado`
+  - detalhe de chamado arquivado mostra botao `Restaurar chamado` e data de arquivamento
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` aplicados; ambos ficaram `online`
+  - `GET http://127.0.0.1:6778/api/support/public/notifications` sem token retornou `401`, executando tambem a garantia de schema
+  - `information_schema.columns` confirmou `support_tickets.archived_at` como `timestamp with time zone`
+  - contagem atual: `visible=5`, `archived=0`
+  - `https://127.0.0.1:6777/` respondeu `HTTP 200`
+  - `git diff --check` sem erros
