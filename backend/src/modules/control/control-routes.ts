@@ -15,14 +15,9 @@ const ALLOWED_SERVICES = [
     'clamav-daemon', 'clamav-freshclam', 'clamav-clamonacc'
 ];
 
-const CLAMAV_SCAN_PATHS = [
-    env.cftvMount,
-    env.nextcloudMount,
-].filter(Boolean);
+const CLAMAV_SCAN_PATHS: string[] = [];
 const CLAMAV_ALLOWED_SCAN_ROOTS = [
     env.projectRoot,
-    env.cftvMount,
-    env.nextcloudMount,
 ].filter(Boolean);
 const CLAMAV_QUARANTINE_DIR = '/root/quarantine';
 let clamavScanPromise: Promise<void> | null = null;

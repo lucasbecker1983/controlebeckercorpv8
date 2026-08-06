@@ -39,8 +39,6 @@ export const env = {
     sshLanAllowPort: toNumber(process.env.SSH_LAN_ALLOW_PORT, 22),
     sshExternalPort: toNumber(process.env.SSH_EXTERNAL_PORT, 18122),
     storageGroup: process.env.STORAGE_GROUP || 'becker_share',
-    cftvMount: process.env.CFTV_MOUNT || '/mnt/cftv_storage',
-    nextcloudMount: process.env.NEXTCLOUD_MOUNT || '/mnt/nextcloud_data',
     smtpRejectUnauthorized: toBool(process.env.SMTP_REJECT_UNAUTHORIZED, false),
     hotspotSmsProvider: process.env.HOTSPOT_SMS_PROVIDER || 'smsgate',
     hotspotSmsBaseUrl: process.env.HOTSPOT_SMS_BASE_URL || '',

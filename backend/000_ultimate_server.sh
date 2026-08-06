@@ -30,7 +30,6 @@ import proxyRoutes from './modules/proxy/proxy-routes';
 import securityRoutes from './modules/security/security-routes';
 
 // Monitores
-import { startCftvRetentionMonitor } from './modules/cftv/cftv-monitor';
 import { startMonitor } from './modules/control/monitor';
 import { startBackupScanner } from './modules/backups/backup-monitor';
 import { startLinkMonitor } from './modules/connectivity/downtime-monitor';
@@ -72,7 +71,6 @@ app.listen(PORT, '0.0.0.0', () => {
     try { startMonitor(); } catch(e) {}
     try { startBackupScanner(); } catch(e) {}
     try { startLinkMonitor(); } catch(e) {}
-    try { startCftvRetentionMonitor(); } catch(e) {}
 });
 EOF
 

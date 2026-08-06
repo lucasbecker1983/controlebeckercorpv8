@@ -309,7 +309,7 @@ Arquivo: `backend/src/modules/server/server-routes.ts`
   - uso de memória
   - tráfego WAN/LAN
   - estado das interfaces
-  - ocupação dos discos `/`, `/mnt/cftv_storage`, `/mnt/nextcloud_data`
+  - ocupação dos discos operacionais
   - insights operacionais
 
 #### Users
@@ -876,4 +876,3 @@ O projeto é uma console operacional full-stack voltada para administração de 
 - um modo de resgate para contingência
 
 É um sistema funcionalmente rico, mas com alto acoplamento ao ambiente, presença de segredos em código e múltiplos caminhos legados. Para evolução segura, o primeiro passo recomendado é padronizar configuração por ambiente, consolidar serviços oficiais e documentar o schema do banco.
-

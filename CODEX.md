@@ -4149,7 +4149,7 @@ Três problemas identificados e corrigidos no fluxo de `Liberação emergencial 
 - `clamav-daemon`: `active`
 - `clamav-freshclam`: `active` — assinaturas `daily 27986 / 2026-04-29`
 - `clamav-clamonacc`: `active`
-- superficies de varredura acessiveis: `/mnt/cftv_storage`, `/mnt/nextcloud_data`
+- superficie de varredura operacional limitada a raiz do projeto
 
 ### Build
 
