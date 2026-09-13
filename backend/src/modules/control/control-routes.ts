@@ -1,19 +1,36 @@
 import { Router } from 'express';
-import { execCmd } from '../../utils/sys';
+import { execCmd, execCmdStrict } from '../../utils/sys';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
 import { execFile } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { ragService } from './rag-service';
+import type { AuthenticatedRequest } from '../../middleware/auth';
+import { authSecurityService } from '../auth/auth-security-service';
 
 const router = Router();
 
 const ALLOWED_SERVICES = [
     'squid', 'postgresql', 'nginx', 'ufw', 'ssh',
-    'fail2ban', env.wireguardService, 'isc-dhcp-server', 'smbd', 'unbound',
+    'fail2ban', env.wireguardService, 'isc-dhcp-server', 'unbound',
     'clamav-daemon', 'clamav-freshclam', 'clamav-clamonacc'
 ];
+
+const SERVER_POWER_ACTIONS = {
+    reboot: {
+        command: 'sudo systemctl reboot',
+        auditAction: 'control.server.reboot',
+        label: 'reinicialização do servidor',
+    },
+    poweroff: {
+        command: 'sudo systemctl poweroff',
+        auditAction: 'control.server.poweroff',
+        label: 'desligamento do servidor',
+    },
+} as const;
+
+const canManageServerPower = (role?: string) => ['admin', 'god'].includes(String(role || '').trim().toLowerCase());
 
 const CLAMAV_SCAN_PATHS: string[] = [];
 const CLAMAV_ALLOWED_SCAN_ROOTS = [
@@ -533,7 +550,6 @@ router.get('/services', async (req, res) => {
         { name: 'fail2ban', label: 'Intrusion Prev.' },
         { name: env.wireguardService, label: 'VPN WireGuard' },
         { name: 'isc-dhcp-server', label: 'Servidor DHCP' },
-        { name: 'smbd', label: 'Compartilhamento' },
         { name: 'unbound', label: 'DNS Unbound' },
         { name: 'clamav-daemon', label: 'ClamAV Daemon' },
         { name: 'clamav-freshclam', label: 'Assinaturas ClamAV' },
@@ -706,6 +722,80 @@ router.delete('/clamav/runs', async (_req, res) => {
 });
 
 // --- AÇÕES INDIVIDUAIS ---
+router.post('/server-power', async (req: AuthenticatedRequest, res) => {
+    const action = String(req.body?.action || '').trim().toLowerCase() as keyof typeof SERVER_POWER_ACTIONS;
+    const requestedAction = SERVER_POWER_ACTIONS[action];
+    const meta = authSecurityService.requestMeta(req);
+
+    if (!requestedAction) {
+        return res.status(400).json({ error: 'Ação de energia inválida.' });
+    }
+
+    if (!req.auth?.id || !canManageServerPower(req.auth.role)) {
+        await authSecurityService.logActivity({
+            userId: req.auth?.id || null,
+            username: req.auth?.username || 'desconhecido',
+            action: requestedAction.auditAction,
+            moduleName: 'operacoes-tecnicas',
+            route: meta.route,
+            method: meta.method,
+            ipAddress: meta.ipAddress,
+            userAgent: meta.userAgent,
+            success: false,
+            status: 'negado',
+            detail: { reason: 'admin-or-god-required' },
+        }).catch((error) => console.error('[CONTROL] Falha ao registrar recusa de energia:', error));
+        return res.status(403).json({ error: 'Apenas administradores ou GOD podem controlar a energia do servidor.' });
+    }
+
+    try {
+        await authSecurityService.logActivity({
+            userId: req.auth.id,
+            username: req.auth.username,
+            action: requestedAction.auditAction,
+            moduleName: 'operacoes-tecnicas',
+            route: meta.route,
+            method: meta.method,
+            ipAddress: meta.ipAddress,
+            userAgent: meta.userAgent,
+            success: true,
+            status: 'autorizado',
+            detail: { action, execution: 'pending-systemctl' },
+        }).catch((error) => console.error('[CONTROL] Falha ao registrar autorização de energia:', error));
+        await execCmdStrict(requestedAction.command);
+        await authSecurityService.logActivity({
+            userId: req.auth.id,
+            username: req.auth.username,
+            action: requestedAction.auditAction,
+            moduleName: 'operacoes-tecnicas',
+            route: meta.route,
+            method: meta.method,
+            ipAddress: meta.ipAddress,
+            userAgent: meta.userAgent,
+            success: true,
+            status: 'solicitado',
+            detail: { action },
+        }).catch((error) => console.error('[CONTROL] Falha ao registrar ação de energia:', error));
+        return res.status(202).json({ success: true, message: `Solicitação de ${requestedAction.label} aceita.` });
+    } catch (error) {
+        console.error(`[CONTROL] Falha ao solicitar ${requestedAction.label}:`, error);
+        await authSecurityService.logActivity({
+            userId: req.auth.id,
+            username: req.auth.username,
+            action: requestedAction.auditAction,
+            moduleName: 'operacoes-tecnicas',
+            route: meta.route,
+            method: meta.method,
+            ipAddress: meta.ipAddress,
+            userAgent: meta.userAgent,
+            success: false,
+            status: 'falha',
+            detail: { action, reason: 'systemctl-failed' },
+        }).catch((logError) => console.error('[CONTROL] Falha ao registrar erro de energia:', logError));
+        return res.status(500).json({ error: `Não foi possível solicitar a ${requestedAction.label}.` });
+    }
+});
+
 router.post('/service-action', async (req, res) => {
     const { service, action } = req.body;
 

@@ -393,11 +393,14 @@ Arquivo: `backend/src/modules/backups/backups-routes.ts`
 
 Características:
 
-- cria `pg_dump`
-- empacota `backend`, `frontend`, `backend-proxy`, `doc_generator`, `scripts`
-- exclui `node_modules`, `dist`, `.git`, `backups`, logs
-- restauração usa script temporário `restore_process.sh`
-- restauração reinicia serviços via `pm2`
+- cria dump PostgreSQL em formato custom, validado com `pg_restore --list`
+- empacota `backend`, `frontend`, `backend-proxy`, `doc_generator`, `scripts` e, quando presente, `data/`
+- exclui e rejeita em validação `node_modules`, `dist`, `.git`, `backups`, logs, cache e cobertura; esses artefatos são recompostos no restore
+- criação e restauração são tarefas assíncronas acompanháveis em `GET /api/backups/jobs/:jobId`, evitando timeout HTTP em bancos grandes
+- o restore exige administrador, valida o arquivo antes de alterar o sistema e cria snapshot local de rollback de código e banco em `backups/restore-safety/`
+- a restauração repõe o banco, executa `vacuumdb --analyze-in-stages`, reinstala dependências, recompila backend/frontend/proxy e reinicia somente `bcc-backend`, `bcc-frontend`, `backend-proxy` e `backend-proxy-ingester`
+- a rotina operacional é `scripts/sgcg-backup-restore.sh`; o status e log ficam privados em `backups/.jobs/`
+- a retenção de telemetria é de 30 dias: `scripts/sgcg-telemetry-retention.sh` remove em lotes de 10 mil linhas os dados antigos de `access_events` e `dns_policy_events`, executa `VACUUM` seguido de análise de estatísticas e é agendada diariamente pelo timer `sgcg-telemetry-retention.timer`
 
 #### Security
 

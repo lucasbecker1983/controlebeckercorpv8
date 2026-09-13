@@ -21,6 +21,7 @@ import GovernanceVisual from './pages/GovernanceVisual';
 import GovernancePolicies from './pages/GovernancePolicies';
 import GovernanceCompliance from './pages/GovernanceCompliance';
 import GovernanceAudit from './pages/GovernanceAudit';
+import CentralAudit from './pages/CentralAudit';
 import ApprovalsExceptions from './pages/ApprovalsExceptions';
 import Lgpd from './pages/Lgpd';
 import Reports from './pages/Reports';
@@ -238,6 +239,7 @@ export default function App() {
           <Route path="/governanca-politicas" element={<GovernancePolicies />} />
           <Route path="/governanca-conformidade" element={<GovernanceCompliance />} />
           <Route path="/governanca-auditoria" element={<GovernanceAudit />} />
+          <Route path="/auditoria-central" element={<CentralAudit />} />
           <Route path="/bloqueios-liberacoes" element={<BlockingReleases />} />
           <Route path="/governanca-visual" element={<GovernanceVisual />} />
           <Route path="/governanca-dados" element={<DataGovernance />} />
@@ -246,7 +248,7 @@ export default function App() {
           <Route path="/trilha-institucional" element={<Navigate to="/relatorios" />} />
           <Route path="/relatorios" element={<Reports />} />
           <Route path="/chamados" element={<SupportTickets />} />
-          <Route path="/control" element={<Control />} />
+          <Route path="/control" element={<Control user={user} />} />
           <Route path="/assistente-ia" element={<AiAssistant />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/security" element={<Security />} />

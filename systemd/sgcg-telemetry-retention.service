@@ -1,0 +1,17 @@
+[Unit]
+Description=SGCG controlled telemetry retention (30 days)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=DB_NAME=controlebeckercorp_v8
+Environment=RETENTION_DAYS=30
+Environment=BATCH_SIZE=10000
+Environment=PAUSE_SECONDS=0.5
+ExecStart=/opt/controlebeckercorp-v8/scripts/sgcg-telemetry-retention.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

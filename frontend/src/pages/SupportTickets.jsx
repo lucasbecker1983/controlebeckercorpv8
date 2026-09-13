@@ -19,6 +19,7 @@ const statuses = [
 
 const workflowStatuses = statuses.filter(([id]) => !['active', 'closed', 'archived', 'all'].includes(id));
 const closedStatuses = new Set(['resolved', 'denied', 'canceled']);
+const resolverOptions = ['Lucas Becker', 'Jhoelber Pinheiro'];
 
 const priorities = [
   ['low', 'Baixa'],
@@ -58,6 +59,7 @@ export default function SupportTickets() {
   const [events, setEvents] = useState([]);
   const [statusFilter, setStatusFilter] = useState('active');
   const [reply, setReply] = useState('');
+  const [resolverName, setResolverName] = useState(resolverOptions[0]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('');
 
@@ -115,12 +117,25 @@ export default function SupportTickets() {
     if (ticketId) openTicketById(ticketId);
   }, [searchParams]);
 
+  useEffect(() => {
+    if (selected?.resolved_by_name && resolverOptions.includes(selected.resolved_by_name)) {
+      setResolverName(selected.resolved_by_name);
+    }
+  }, [selected?.id, selected?.resolved_by_name]);
+
   const updateTicket = async (patch) => {
     if (!selected) return;
-    const res = await api.patch(`/api/support/tickets/${selected.id}`, patch);
-    setSelected(res.data.ticket);
-    setNotice('Chamado atualizado.');
-    await loadTickets();
+    const nextPatch = patch.status && closedStatuses.has(patch.status)
+      ? { ...patch, resolved_by_name: patch.resolved_by_name || resolverName }
+      : patch;
+    try {
+      const res = await api.patch(`/api/support/tickets/${selected.id}`, nextPatch);
+      setSelected(res.data.ticket);
+      setNotice('Chamado atualizado.');
+      await loadTickets();
+    } catch (error) {
+      setNotice(error?.response?.data?.error || 'Não foi possível atualizar o chamado.');
+    }
   };
 
   const archiveTicket = async () => {
@@ -233,7 +248,7 @@ export default function SupportTickets() {
               <div className="mt-5 grid gap-3 md:grid-cols-3">
                 <label className="block">
                   <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/50">Status</span>
-                  <select value={selected.status} onChange={(e) => updateTicket({ status: e.target.value })} className="h-11 w-full rounded-lg border border-outline/18 bg-surface-low px-3 text-sm font-bold outline-none">
+                  <select value={selected.status} onChange={(e) => updateTicket({ status: e.target.value, resolved_by_name: closedStatuses.has(e.target.value) ? resolverName : '' })} className="h-11 w-full rounded-lg border border-outline/18 bg-surface-low px-3 text-sm font-bold outline-none">
                     {workflowStatuses.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
                   </select>
                 </label>
@@ -243,7 +258,22 @@ export default function SupportTickets() {
                     {priorities.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
                   </select>
                 </label>
-                <button type="button" onClick={() => updateTicket({ status: 'resolved' })} className="mt-5 flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 text-sm font-black text-white hover:bg-emerald-800"><CheckCircle2 size={17} /> Resolver</button>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/50">Encerrado por</span>
+                  <select value={resolverName} onChange={(e) => setResolverName(e.target.value)} className="h-11 w-full rounded-lg border border-outline/18 bg-surface-low px-3 text-sm font-bold outline-none">
+                    {resolverOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+                {closedStatuses.has(selected.status) && selected.resolved_by_name ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-900">
+                    Chamado encerrado por {selected.resolved_by_name}
+                    {selected.closed_at ? ` em ${new Date(selected.closed_at).toLocaleString('pt-BR')}` : ''}
+                  </div>
+                ) : <div />}
+                <button type="button" onClick={() => updateTicket({ status: 'resolved', resolved_by_name: resolverName })} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-emerald-700 px-3 text-sm font-black text-white hover:bg-emerald-800"><CheckCircle2 size={17} /> Resolver</button>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">

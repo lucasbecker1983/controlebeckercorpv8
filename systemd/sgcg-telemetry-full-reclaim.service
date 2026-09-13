@@ -1,0 +1,16 @@
+[Unit]
+Description=SGCG one-time telemetry physical reclaim (maintenance window)
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=DB_NAME=controlebeckercorp_v8
+ExecStart=/opt/controlebeckercorp-v8/scripts/sgcg-telemetry-full-reclaim.sh
+KillMode=control-group
+TimeoutStartSec=infinity
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

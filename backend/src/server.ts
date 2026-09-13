@@ -29,6 +29,7 @@ import identityRoutes from './modules/identity/identity-routes';
 import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-routes';
 import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/collaborators/collaborators-routes';
 import supportRoutes, { supportSchemaService } from './modules/support/support-routes';
+import centralAuditRoutes, { centralAuditService } from './modules/central-audit/central-audit-routes';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
 import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
@@ -36,7 +37,6 @@ import { institutionalAuditService } from './modules/institutional/institutional
 import vlanScheduleRoutes from "./modules/network/vlan-schedule-routes";
 
 // Monitores
-import { startCftvRetentionMonitor } from './modules/cftv/cftv-monitor';
 import { startMonitor } from './modules/control/monitor';
 import { startBackupScanner } from './modules/backups/backup-monitor';
 import { startLinkMonitor } from './modules/connectivity/downtime-monitor';
@@ -121,6 +121,7 @@ app.use('/api/identity', identityRoutes);
 app.use('/api/hotspot', hotspotRoutes);
 app.use('/api/collaborators', collaboratorsRoutes);
 app.use('/api/support', supportRoutes);
+app.use('/api/central-audit', centralAuditRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -150,6 +151,9 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     supportSchemaService.ensureSchema().catch((error) => {
         console.error('[SUPPORT] Falha ao garantir schema da central de chamados:', error);
+    });
+    centralAuditService.ensureSchema().catch((error) => {
+        console.error('[CENTRAL-AUDIT] Falha ao garantir schema do centro de auditoria:', error);
     });
     const hotspotSessionSweeper = setInterval(() => {
         hotspotSchemaService.expireExpiredSessions().catch((error) => {
@@ -194,5 +198,4 @@ app.listen(PORT, '0.0.0.0', () => {
     startLinkMonitor().catch((error) => {
         console.error('[LINK-SENTINEL] Falha ao iniciar sentinela de link:', error);
     });
-    try { startCftvRetentionMonitor(); } catch(e) {}
 });

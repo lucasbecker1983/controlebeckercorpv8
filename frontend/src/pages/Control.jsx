@@ -18,7 +18,7 @@ const formatDateTime = (value) => {
     return date.toLocaleString('pt-BR');
 };
 
-export default function ControlPage() {
+export default function ControlPage({ user }) {
     const [services, setServices] = useState([]);
     const [clamav, setClamav] = useState(null);
     const [emergencyBypasses, setEmergencyBypasses] = useState([]);
@@ -45,6 +45,10 @@ export default function ControlPage() {
     const [emergencyForm, setEmergencyForm] = useState({ duration_minutes: '30', reason: '' });
     const [totalBlockDialog, setTotalBlockDialog] = useState({ open: false, mode: 'activate', vlan: null });
     const [totalBlockForm, setTotalBlockForm] = useState({ reason: '' });
+    const [serverPowerDialog, setServerPowerDialog] = useState({ open: false, action: null });
+    const [serverPowerLoading, setServerPowerLoading] = useState(false);
+    const [serverPowerError, setServerPowerError] = useState('');
+    const canManageServerPower = ['admin', 'god'].includes(String(user?.role || '').trim().toLowerCase());
     
     const loadData = async () => {
         const [servicesRes, clamavRes, aiInsightsRes, ragStatusRes] = await Promise.allSettled([
@@ -227,6 +231,23 @@ export default function ControlPage() {
         }
     };
 
+    const submitServerPowerAction = async () => {
+        const action = serverPowerDialog.action;
+        if (!['reboot', 'poweroff'].includes(action)) return;
+
+        setServerPowerLoading(true);
+        setServerPowerError('');
+        try {
+            const response = await api.post('/api/control/server-power', { action });
+            setServerPowerDialog({ open: false, action: null });
+            alert(response?.data?.message || 'Solicitação de energia aceita. A conexão com o console será interrompida em instantes.');
+        } catch (error) {
+            setServerPowerError(error?.response?.data?.error || 'Não foi possível enviar o comando ao servidor.');
+        } finally {
+            setServerPowerLoading(false);
+        }
+    };
+
     const clearRuns = async () => {
         if (!confirm('Limpar todo o histórico de execuções do ClamAV? Achados vinculados também serão removidos.')) return;
         try {
@@ -365,6 +386,56 @@ export default function ControlPage() {
                     </p>
                 </div>
             </Surface>
+
+            {canManageServerPower ? (
+                <Surface id="control-server-power" className="border-danger/25 bg-danger/8 p-6">
+                    <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <div className="flex items-center gap-2 text-[11px] font-semibold tracking-tight text-danger">
+                                <LockKeyhole size={15} />
+                                Acesso restrito a administradores e GOD
+                            </div>
+                            <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Controle do servidor</h3>
+                            <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/68">
+                                Ações sobre todo o host. Elas interrompem o console, a rede e os serviços institucionais; confirme somente em uma janela técnica autorizada.
+                            </p>
+                        </div>
+                        <StatusChip label="Ação crítica" tone="danger" />
+                    </div>
+
+                    <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <Surface stripe={false} className="p-5">
+                            <div className="flex items-start gap-3">
+                                <div className="rounded-2xl border border-primary/20 bg-primary/10 p-3 text-primary"><RefreshCw size={24} /></div>
+                                <div>
+                                    <h4 className="font-black text-on-surface">Reiniciar o Servidor</h4>
+                                    <p className="mt-1 text-xs leading-5 text-on-surface/64">Reinicia o host e tenta recuperar os serviços configurados na inicialização.</p>
+                                </div>
+                            </div>
+                            <div className="mt-5">
+                                <ActionButton tone="primary" icon={RefreshCw} onClick={() => { setServerPowerError(''); setServerPowerDialog({ open: true, action: 'reboot' }); }}>
+                                    Reiniciar o Servidor
+                                </ActionButton>
+                            </div>
+                        </Surface>
+
+                        <Surface stripe={false} className="p-5">
+                            <div className="flex items-start gap-3">
+                                <div className="rounded-2xl border border-danger/20 bg-danger/10 p-3 text-danger"><Square size={24} /></div>
+                                <div>
+                                    <h4 className="font-black text-on-surface">Desligar Servidor</h4>
+                                    <p className="mt-1 text-xs leading-5 text-on-surface/64">Desliga o host. O retorno exige acesso físico ou o gerenciamento remoto autorizado.</p>
+                                </div>
+                            </div>
+                            <div className="mt-5">
+                                <ActionButton tone="danger" icon={Square} onClick={() => { setServerPowerError(''); setServerPowerDialog({ open: true, action: 'poweroff' }); }}>
+                                    Desligar Servidor
+                                </ActionButton>
+                            </div>
+                        </Surface>
+                    </div>
+                </Surface>
+            ) : null}
 
             <Surface id="control-ai-insights" className="p-6 space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1118,6 +1189,48 @@ export default function ControlPage() {
                                         : totalBlockDialog.mode === 'activate'
                                             ? 'Confirmar manutenção'
                                             : 'Restaurar navegação'}
+                                </ActionButton>
+                            </div>
+                        </div>
+                    </DialogShell>
+                )}
+
+                {serverPowerDialog.open && (
+                    <DialogShell
+                        open={Boolean(serverPowerDialog.open)}
+                        title={serverPowerDialog.action === 'reboot' ? 'Confirmar reinicialização do servidor' : 'Confirmar desligamento do servidor'}
+                        subtitle="Ação crítica restrita a administradores e GOD."
+                        onClose={() => !serverPowerLoading && setServerPowerDialog({ open: false, action: null })}
+                        size="max-w-lg"
+                    >
+                        <div className="space-y-5">
+                            <div className="rounded-2xl border border-danger/22 bg-danger/10 px-4 py-3 text-sm leading-6 text-on-surface/76">
+                                {serverPowerDialog.action === 'reboot'
+                                    ? 'Tem certeza que deseja reiniciar o servidor agora? A sessão atual, a rede e os serviços institucionais ficarão indisponíveis durante a reinicialização.'
+                                    : 'Tem certeza que deseja desligar o servidor agora? A sessão atual, a rede e todos os serviços institucionais serão interrompidos até o host ser ligado novamente.'}
+                            </div>
+
+                            {serverPowerError ? (
+                                <div className="rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300">
+                                    {serverPowerError}
+                                </div>
+                            ) : null}
+
+                            <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                                <ActionButton tone="ghost" disabled={serverPowerLoading} onClick={() => setServerPowerDialog({ open: false, action: null })}>
+                                    Cancelar
+                                </ActionButton>
+                                <ActionButton
+                                    tone="danger"
+                                    icon={serverPowerDialog.action === 'reboot' ? RefreshCw : Square}
+                                    disabled={serverPowerLoading}
+                                    onClick={submitServerPowerAction}
+                                >
+                                    {serverPowerLoading
+                                        ? 'Enviando comando...'
+                                        : serverPowerDialog.action === 'reboot'
+                                            ? 'Confirmar reinicialização'
+                                            : 'Confirmar desligamento'}
                                 </ActionButton>
                             </div>
                         </div>

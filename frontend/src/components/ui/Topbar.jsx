@@ -89,7 +89,17 @@ export default function Topbar({
           </div>
           <div className="hidden min-w-0 flex-1 grid-cols-5 items-stretch gap-2 lg:grid">
             <HeaderChip icon={NetworkIcon} label="Nicknetwork" value={gatewayOnline ? 'Gateway OK' : 'Gateway OFF'} tone={headerTone} />
-            <HeaderChip icon={linkAlert ? ShieldAlert : Globe2} label="Internet" value={externalOnline ? 'Google DNS OK' : 'Fora do ar'} tone={internetTone} />
+            <HeaderChip
+              icon={linkAlert ? ShieldAlert : Globe2}
+              label={(
+                <span className="inline-flex max-w-full items-baseline gap-1">
+                  <span>Internet</span>
+                  <span className="truncate text-[8px] font-medium tracking-normal opacity-65">Google DNS</span>
+                </span>
+              )}
+              value={externalOnline ? 'OK' : 'OFF'}
+              tone={internetTone}
+            />
             <HeaderChip icon={ShieldCheck} label="Status" value={externalOnline ? 'Online' : 'Offline'} tone={internetTone} />
             <HeaderChip icon={Clock3} label="Hora" value={currentTime} />
             <HeaderChip icon={Activity} label="Uptime" value={uptimeStr} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Bell, Inbox, MessageSquareText, X } from 'lucide-react';
+import { Bell, Inbox, MessageSquareText, MonitorUp, X } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function SupportBell({ publicToken = '', onClick, onTicketClick, compact = false }) {
@@ -8,10 +8,32 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
   const [open, setOpen] = useState(false);
   const [latestAlert, setLatestAlert] = useState(null);
   const [showAlert, setShowAlert] = useState(false);
+  const [desktopPermission, setDesktopPermission] = useState(() => (
+    typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+  ));
   const rootRef = useRef(null);
   const previousCountRef = useRef(0);
   const loadedRef = useRef(false);
+  const notifiedTicketRef = useRef('');
   const originalTitleRef = useRef(typeof document !== 'undefined' ? document.title : 'SGCG');
+
+  const showDesktopNotification = (item) => {
+    if (publicToken || typeof Notification === 'undefined' || Notification.permission !== 'granted' || !item?.id) return;
+    if (String(item.id) === notifiedTicketRef.current) return;
+    notifiedTicketRef.current = String(item.id);
+    const notification = new Notification('Novo chamado no SGCG', {
+      body: `${item.protocol || 'Chamado'} - ${item.title || 'Solicitação recebida'}`,
+      tag: `sgcg-support-${item.id}`,
+      renotify: true,
+      requireInteraction: true,
+      icon: '/LOGO-JACAREZINHO.png',
+    });
+    notification.onclick = () => {
+      window.focus();
+      openTicket(item);
+      notification.close();
+    };
+  };
 
   useEffect(() => {
     let alive = true;
@@ -28,6 +50,7 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
           if (!publicToken && nextCount > 0 && nextItems[0] && (!loadedRef.current || nextCount > previousCountRef.current)) {
             setLatestAlert(nextItems[0]);
             setShowAlert(true);
+            showDesktopNotification(nextItems[0]);
           }
           previousCountRef.current = nextCount;
           loadedRef.current = true;
@@ -92,6 +115,16 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
     if (onClick) onClick(item);
   };
 
+  const requestDesktopPermission = async () => {
+    if (publicToken || typeof Notification === 'undefined') {
+      setDesktopPermission('unsupported');
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setDesktopPermission(permission);
+    if (permission === 'granted' && items[0]) showDesktopNotification(items[0]);
+  };
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -128,6 +161,28 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
               {count ? `${count} novo${count > 1 ? 's' : ''}` : 'sem novos'}
             </span>
           </div>
+
+          {!publicToken && desktopPermission !== 'unsupported' ? (
+            <button
+              type="button"
+              onClick={requestDesktopPermission}
+              disabled={desktopPermission === 'granted' || desktopPermission === 'denied'}
+              className={`flex w-full items-center gap-2 border-b px-4 py-2.5 text-left text-xs font-black ${
+                desktopPermission === 'granted'
+                  ? 'border-outline/10 bg-emerald-50 text-emerald-800'
+                  : desktopPermission === 'denied'
+                    ? 'border-outline/10 bg-amber-50 text-amber-900'
+                    : 'border-outline/10 text-primary hover:bg-primary/6'
+              } disabled:cursor-default`}
+            >
+              <MonitorUp size={15} />
+              {desktopPermission === 'granted'
+                ? 'Notificações do Windows ativas'
+                : desktopPermission === 'denied'
+                  ? 'Notificações bloqueadas no navegador'
+                  : 'Ativar notificações no Windows'}
+            </button>
+          ) : null}
 
           {items.length ? (
             <div className="max-h-[360px] overflow-y-auto py-1">

@@ -547,6 +547,7 @@ const DnsTab = () => {
     const [breakdown, setBreakdown] = useState(DEFAULT_VLANS);
     const [zones, setZones] = useState([]);
     const [criticalServices, setCriticalServices] = useState(null);
+    const [forwardMetrics, setForwardMetrics] = useState(null);
     const [form, setForm] = useState({ domain: '', ip: '', type: 'FWD' });
     const [verifyStatus, setVerifyStatus] = useState({});
     const [error, setError] = useState('');
@@ -594,6 +595,13 @@ const DnsTab = () => {
             setError(`Falha parcial em: ${failures.join(', ')}.`);
         });
 
+        api.get('/api/dns/forward-metrics?domain=gov.br&hours=24').then((m) => {
+            if (m.data) setForwardMetrics(m.data);
+        }).catch((e) => {
+            failures.push(fetchErrorMessage(e, 'métricas gov.br'));
+            setError(`Falha parcial em: ${failures.join(', ')}.`);
+        });
+
     };
 
     const loadCriticalServices = () => {
@@ -608,6 +616,18 @@ const DnsTab = () => {
     useEffect(() => { loadCriticalServices(); const i = setInterval(loadCriticalServices, 30000); return () => clearInterval(i); }, []);
     
     const vlanTotalQueries = breakdown.reduce((sum, item) => sum + (item.queries || 0), 0);
+    const forwardTotal = forwardMetrics?.inferred_forwarded_queries || 0;
+    const forwardResolvers = Array.isArray(forwardMetrics?.external_resolvers) ? forwardMetrics.external_resolvers : [];
+    const forwardHourly = Array.isArray(forwardMetrics?.hourly) ? forwardMetrics.hourly : [];
+    const forwardHourlyMax = Math.max(1, ...forwardHourly.map((item) => item.total_queries || 0));
+    const hasForwardRule = forwardResolvers.length > 0;
+    const hasForwardBlocks = (forwardMetrics?.blocked_queries || 0) > 0;
+    const forwardHealthLabel = hasForwardRule && !hasForwardBlocks ? 'OK' : hasForwardRule ? 'Atenção' : 'Sem regra';
+    const forwardHealthTone = hasForwardRule && !hasForwardBlocks
+        ? 'bg-info/10 text-info border-info/20'
+        : hasForwardRule
+            ? 'bg-orange-500/10 text-orange-500 border-orange-500/20'
+            : 'bg-danger/10 text-danger border-danger/20';
     const dnsStatusLabel = stats.is_resolving === true
         ? 'RESOLVENDO'
         : stats.is_running === true
@@ -689,6 +709,109 @@ const DnsTab = () => {
             </div>
 
             <CriticalServicesPanel data={criticalServices} onRefresh={() => { load(); loadCriticalServices(); }} />
+
+            <div className="bg-container border border-outline/20 p-5 rounded-[24px] shadow-sm">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div>
+                        <h3 className="text-on-surface font-black uppercase text-xs tracking-[0.18em] flex items-center gap-2">
+                            <BarChart3 size={16} className="text-cyan-500" /> Uso do encaminhamento gov.br
+                        </h3>
+                        <p className="mt-1 text-sm text-on-surface/62">
+                            Consultas dos últimos 24h associadas à regra FWD de gov.br e subdomínios.
+                        </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded-lg border px-3 py-1 text-[11px] font-black uppercase ${forwardHealthTone}`}>
+                            {forwardHealthLabel}
+                        </span>
+                        {forwardResolvers.length ? forwardResolvers.map((resolver) => (
+                            <span key={resolver} className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 font-mono text-[11px] font-black text-cyan-600 dark:text-cyan-400">
+                                {resolver}
+                            </span>
+                        )) : (
+                            <span className="rounded-lg border border-orange-500/20 bg-orange-500/10 px-2.5 py-1 text-[11px] font-black uppercase text-orange-500">
+                                Sem FWD ativo
+                            </span>
+                        )}
+                    </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Encaminhadas</div>
+                        <div className="mt-2 text-2xl font-black text-cyan-600 dark:text-cyan-400">{forwardTotal.toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Clientes</div>
+                        <div className="mt-2 text-2xl font-black text-on-surface">{(forwardMetrics?.unique_clients || 0).toLocaleString()}</div>
+                    </div>
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">VLANs</div>
+                        <div className="mt-2 text-2xl font-black text-on-surface">{forwardMetrics?.vlan_count || 0}</div>
+                    </div>
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Último uso</div>
+                        <div className="mt-2 text-sm font-black text-on-surface">
+                            {forwardMetrics?.last_seen_at ? new Date(forwardMetrics.last_seen_at).toLocaleString('pt-BR') : 'Sem eventos'}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                        <div className="text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Gráfico 24h</div>
+                        <div className="text-[10px] font-bold text-on-surface/45">picos por hora</div>
+                    </div>
+                    <div className="flex h-32 items-end gap-1.5">
+                        {forwardHourly.length ? forwardHourly.map((item) => {
+                            const height = Math.max(8, Math.round(((item.total_queries || 0) / forwardHourlyMax) * 100));
+                            const hasErrors = (item.error_queries || 0) > 0;
+                            const hour = item.bucket ? new Date(item.bucket).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+                            return (
+                                <div key={item.bucket} className="flex min-w-0 flex-1 flex-col items-center justify-end gap-1">
+                                    <div
+                                        title={`${hour} · ${(item.total_queries || 0).toLocaleString()} consultas`}
+                                        className={`w-full rounded-t-md ${hasErrors ? 'bg-orange-500' : 'bg-cyan-500'} transition-all`}
+                                        style={{ height: `${height}%` }}
+                                    />
+                                    <span className="hidden text-[9px] font-bold text-on-surface/35 sm:block">{hour.slice(0, 2)}h</span>
+                                </div>
+                            );
+                        }) : (
+                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-container/70 text-xs font-bold text-on-surface/45">
+                                Sem amostras no período.
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Uso por VLAN</div>
+                        <div className="space-y-2">
+                            {(forwardMetrics?.by_vlan || []).slice(0, 6).map((item) => (
+                                <div key={item.vlan_id} className="flex items-center justify-between gap-3 rounded-xl bg-container/70 px-3 py-2">
+                                    <span className="truncate text-xs font-bold text-on-surface">{item.label}</span>
+                                    <span className="font-mono text-xs font-black text-cyan-600 dark:text-cyan-400">{item.total_queries.toLocaleString()}</span>
+                                </div>
+                            ))}
+                            {!(forwardMetrics?.by_vlan || []).length ? <div className="text-xs font-bold text-on-surface/45">Sem eventos no período.</div> : null}
+                        </div>
+                    </div>
+                    <div className="rounded-2xl border border-outline/12 bg-surface/70 p-4">
+                        <div className="mb-3 text-[10px] font-black uppercase tracking-[0.16em] text-on-surface/46">Subdomínios mais usados</div>
+                        <div className="space-y-2">
+                            {(forwardMetrics?.top_domains || []).slice(0, 6).map((item) => (
+                                <div key={item.query_name} className="flex items-center justify-between gap-3 rounded-xl bg-container/70 px-3 py-2">
+                                    <span className="truncate font-mono text-[11px] font-bold text-on-surface">{item.query_name}</span>
+                                    <span className="font-mono text-xs font-black text-cyan-600 dark:text-cyan-400">{item.total_queries.toLocaleString()}</span>
+                                </div>
+                            ))}
+                            {!(forwardMetrics?.top_domains || []).length ? <div className="text-xs font-bold text-on-surface/45">Sem eventos no período.</div> : null}
+                        </div>
+                    </div>
+                </div>
+            </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 space-y-4">

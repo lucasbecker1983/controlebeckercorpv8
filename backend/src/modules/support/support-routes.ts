@@ -1,7 +1,11 @@
 import { randomBytes } from 'crypto';
+import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { Router, Request } from 'express';
 import argon2 from 'argon2';
 import { pool } from '../../config/db';
+import { env } from '../../config/env';
 import { AuthenticatedRequest, requireJwt } from '../../middleware/auth';
 import { institutionalAuditService } from '../institutional/institutional-audit-service';
 
@@ -10,6 +14,12 @@ const router = Router();
 const TOKEN_BYTES = 32;
 const SESSION_HOURS = 12;
 let schemaReady: Promise<void> | null = null;
+const agentTokenHashFile = path.join(env.projectRoot, 'data', 'identity', 'agent-token.sha256');
+const supportNotifierTokenHashFile = path.join(env.projectRoot, 'data', 'support', 'notifier-token.sha256');
+const expectedAgentToken = process.env.SGCG_AGENT_TOKEN || '';
+const expectedAgentTokenHash = process.env.SGCG_AGENT_TOKEN_SHA256 || '';
+const expectedSupportNotifierToken = process.env.SGCG_SUPPORT_NOTIFIER_TOKEN || '';
+const expectedSupportNotifierTokenHash = process.env.SGCG_SUPPORT_NOTIFIER_TOKEN_SHA256 || '';
 
 const normalizeIp = (value: unknown) => {
     const raw = String(value || '').split(',')[0].trim();
@@ -27,6 +37,44 @@ const slug = (value: unknown) => String(value || '')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '');
+
+const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
+
+const readStoredTokenHash = (filePath: string) => {
+    try {
+        return fs.readFileSync(filePath, 'utf8').trim();
+    } catch {
+        return '';
+    }
+};
+
+const isValidAgentToken = (token: string) => {
+    if (!token) return false;
+    if (expectedAgentToken && token === expectedAgentToken) return true;
+    if (expectedSupportNotifierToken && token === expectedSupportNotifierToken) return true;
+
+    const tokenHash = sha256(token);
+    const configuredHashes = [
+        expectedAgentTokenHash,
+        expectedSupportNotifierTokenHash,
+        readStoredTokenHash(agentTokenHashFile),
+        readStoredTokenHash(supportNotifierTokenHashFile),
+    ].filter(Boolean);
+
+    return configuredHashes.some((configuredHash) => tokenHash === configuredHash);
+};
+
+const requireAgentToken = (req: Request, res: any) => {
+    const token = String(req.headers['x-agent-token'] || '').trim();
+    if (isValidAgentToken(token)) return true;
+    if (!expectedAgentToken && !expectedAgentTokenHash && !expectedSupportNotifierToken && !expectedSupportNotifierTokenHash
+        && !readStoredTokenHash(agentTokenHashFile) && !readStoredTokenHash(supportNotifierTokenHashFile)) {
+        res.status(503).json({ ok: false, error: 'agent_token_not_configured' });
+        return false;
+    }
+    res.status(401).json({ ok: false, error: 'invalid_agent_token' });
+    return false;
+};
 
 const readableStatus: Record<string, string> = {
     open: 'Aberto',
@@ -57,6 +105,9 @@ const priorityLabels: Record<string, string> = {
     high: 'Alta',
     critical: 'Urgente',
 };
+
+const finalStatuses = new Set(['resolved', 'denied', 'canceled']);
+const resolverNames = new Set(['Lucas Becker', 'Jhoelber Pinheiro']);
 
 async function createSchema() {
     await pool.query(`
@@ -96,10 +147,12 @@ async function createSchema() {
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             closed_at TIMESTAMPTZ,
-            archived_at TIMESTAMPTZ
+            archived_at TIMESTAMPTZ,
+            resolved_by_name TEXT
         );
 
         ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+        ALTER TABLE support_tickets ADD COLUMN IF NOT EXISTS resolved_by_name TEXT;
 
         CREATE TABLE IF NOT EXISTS support_ticket_comments (
             id BIGSERIAL PRIMARY KEY,
@@ -332,7 +385,7 @@ router.get('/public/tickets', async (req, res) => {
     if (!session) return;
     const { rows } = await pool.query(
         `SELECT id, protocol, category, title, requested_site, affected_area, impact, urgency,
-                priority, status, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at
+                priority, status, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at, resolved_by_name
            FROM support_tickets
           WHERE requester_id = $1
           ORDER BY updated_at DESC
@@ -476,6 +529,34 @@ router.get('/notifications', requireJwt, async (_req, res) => {
     res.json({ unread: rows[0]?.unread || 0, active: rows[0]?.active || 0, notifications: notifications.rows.map(notificationItem) });
 });
 
+router.get('/agent/notifications', async (req, res) => {
+    await ensureSchema();
+    if (!requireAgentToken(req, res)) return;
+    const { rows } = await pool.query(
+        `SELECT COUNT(*) FILTER (WHERE admin_unread = TRUE)::int AS unread
+           FROM support_tickets
+          WHERE archived_at IS NULL AND admin_unread = TRUE`,
+    );
+    const notifications = await pool.query(
+        `SELECT t.id, t.protocol, t.requester_name, t.title, t.description, t.priority, t.status, t.updated_at,
+                COALESCE(c.body, t.description) AS snippet,
+                c.author_type AS comment_author_type,
+                c.author_name AS comment_author_name
+           FROM support_tickets t
+           LEFT JOIN LATERAL (
+                SELECT author_type, author_name, body, created_at
+                  FROM support_ticket_comments
+                 WHERE ticket_id = t.id AND author_type = 'collaborator'
+                 ORDER BY created_at DESC
+                 LIMIT 1
+           ) c ON TRUE
+          WHERE t.admin_unread = TRUE AND t.archived_at IS NULL
+          ORDER BY t.updated_at DESC
+          LIMIT 10`,
+    );
+    res.json({ ok: true, unread: rows[0]?.unread || 0, notifications: notifications.rows.map(notificationItem) });
+});
+
 router.get('/tickets', requireJwt, async (req, res) => {
     await ensureSchema();
     const status = String(req.query.status || '').trim();
@@ -494,7 +575,7 @@ router.get('/tickets', requireJwt, async (req, res) => {
     const { rows } = await pool.query(
         `SELECT id, protocol, requester_name, requester_username, requester_department,
                 requester_ip, category, title, requested_site, affected_area, impact, urgency,
-                priority, status, assigned_to, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at
+                priority, status, assigned_to, admin_unread, requester_unread, created_at, updated_at, closed_at, archived_at, resolved_by_name
            FROM support_tickets
            ${where}
           ORDER BY
@@ -535,8 +616,12 @@ router.patch('/tickets/:id', requireJwt, async (req: AuthenticatedRequest, res) 
     const status = slug(req.body?.status);
     const priority = slug(req.body?.priority);
     const assignedTo = String(req.body?.assigned_to || '').trim();
+    const resolvedByName = String(req.body?.resolved_by_name || '').trim();
     if (status && !allowedStatus.has(status)) return res.status(400).json({ error: 'Status inválido.' });
     if (priority && !priorityLabels[priority]) return res.status(400).json({ error: 'Prioridade inválida.' });
+    if (status && finalStatuses.has(status) && !resolverNames.has(resolvedByName)) {
+        return res.status(400).json({ error: 'Informe quem encerrou o chamado.' });
+    }
     const { rows } = await pool.query(
         `UPDATE support_tickets
             SET status = COALESCE(NULLIF($1, ''), status),
@@ -551,15 +636,19 @@ router.patch('/tickets/:id', requireJwt, async (req: AuthenticatedRequest, res) 
                 closed_at = CASE
                     WHEN COALESCE(NULLIF($1, ''), status) IN ('resolved', 'denied', 'canceled') THEN COALESCE(closed_at, NOW())
                     ELSE NULL
+                END,
+                resolved_by_name = CASE
+                    WHEN COALESCE(NULLIF($1, ''), status) IN ('resolved', 'denied', 'canceled') THEN COALESCE(NULLIF($4, ''), resolved_by_name)
+                    ELSE NULL
                 END
-          WHERE id = $4
+          WHERE id = $5
           RETURNING *`,
-        [status || '', priority || '', assignedTo || '', req.params.id],
+        [status || '', priority || '', assignedTo || '', resolvedByName || '', req.params.id],
     );
     if (!rows[0]) return res.status(404).json({ error: 'Chamado não encontrado.' });
     const actor = req.auth?.username || req.auth?.name || 'SGCG';
-    await logEvent(req.params.id, 'ticket_updated', 'admin', actor, { status, priority, assigned_to: assignedTo || null });
-    await audit(req, 'support_ticket_updated', true, { ticket_id: req.params.id, status, priority }, { protocol: rows[0].protocol });
+    await logEvent(req.params.id, 'ticket_updated', 'admin', actor, { status, priority, assigned_to: assignedTo || null, resolved_by_name: resolvedByName || null });
+    await audit(req, 'support_ticket_updated', true, { ticket_id: req.params.id, status, priority, resolved_by_name: resolvedByName || null }, { protocol: rows[0].protocol });
     res.json({ ticket: publicTicket(rows[0]) });
 });
 

@@ -38,6 +38,8 @@ const urgencies = [
   { id: 'stopped', label: 'Serviço parado' },
 ];
 
+const closedStatuses = new Set(['resolved', 'denied', 'canceled']);
+
 const emptyTicketForm = {
   category: 'site_not_opening',
   title: '',
@@ -379,6 +381,12 @@ export default function SupportPortal() {
               <div className="flex flex-wrap items-center gap-2"><span className="font-black">{selected.protocol}</span><StatusBadge ticket={selected} /><span className="rounded-full border border-slate-200 px-2.5 py-1 text-xs font-black">{selected.status_label}</span></div>
               <h2 className="mt-3 text-2xl font-black">{selected.title}</h2>
               <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">{selected.description}</p>
+              {closedStatuses.has(selected.status) && selected.resolved_by_name ? (
+                <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-black text-emerald-950">
+                  Chamado encerrado por {selected.resolved_by_name}
+                  {selected.closed_at ? ` em ${new Date(selected.closed_at).toLocaleString('pt-BR')}` : ''}
+                </div>
+              ) : null}
               <div className="mt-5 grid gap-3">
                 {comments.map((comment) => (
                   <div key={comment.id} className={`rounded-lg border px-3 py-3 text-sm leading-6 ${comment.author_type === 'admin' ? 'border-sky-200 bg-sky-50 text-sky-950' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>

@@ -6,15 +6,61 @@ import { ActionButton, ModuleHeader, Surface } from '../components/ui/primitives
 export default function Backups() {
     const [files, setFiles] = useState([]);
     const [loading, setLoading] = useState(false);
+    const [job, setJob] = useState(null);
 
     const load = async () => { try { const res = await api.get('/api/backups'); setFiles(Array.isArray(res.data) ? res.data : []); } catch (e) { setFiles([]); } };
     useEffect(() => { load(); }, []);
 
+    useEffect(() => {
+        if (!job?.id || !['running'].includes(job.status)) return undefined;
+        const interval = window.setInterval(async () => {
+            try {
+                const response = await api.get(`/api/backups/jobs/${job.id}`);
+                setJob(response.data);
+                if (response.data.status !== 'running') {
+                    setLoading(false);
+                    if (response.data.status === 'success') await load();
+                }
+            } catch (_) {
+                // A tarefa continua no servidor mesmo se a consulta de progresso falhar momentaneamente.
+            }
+        }, 3000);
+        return () => window.clearInterval(interval);
+    }, [job?.id, job?.status]);
+
     const create = async () => {
-        if(!confirm("Gerar NOVO backup (Código + Banco)?")) return;
+        if(!confirm("Gerar NOVO backup consistente (código, dados persistentes e banco)? Dependências e builds serão excluídos.")) return;
         setLoading(true);
-        try { await api.post('/api/backups/create'); alert("Backup gerado!"); await load(); } catch(e) { alert("Erro ao criar."); }
-        setLoading(false);
+        try {
+            const response = await api.post('/api/backups/create');
+            setJob(response.data.job);
+        } catch(e) {
+            const current = e?.response?.data?.job;
+            if (current) setJob(current);
+            else alert(e?.response?.data?.error || 'Erro ao iniciar backup.');
+            setLoading(false);
+        }
+    };
+
+    const restore = async (filename) => {
+        const warning = [
+            `RESTAURAR o backup ${filename}?`,
+            'O SGCG ficará em manutenção durante a operação.',
+            'Antes de alterar, o sistema cria um snapshot local de rollback do código e do banco atuais.',
+            'A restauração recompõe banco, dependências, builds e somente os serviços SGCG.',
+        ].join('\n\n');
+        if (!confirm(warning)) return;
+        if (!confirm('Confirma a restauração deste backup? Esta ação substitui o estado atual após o snapshot de segurança.')) return;
+        setLoading(true);
+        try {
+            const response = await api.post('/api/backups/restore', { filename });
+            setJob(response.data.job);
+        } catch (e) {
+            const current = e?.response?.data?.job;
+            if (current) setJob(current);
+            else alert(e?.response?.data?.error || 'Erro ao iniciar restauração.');
+            setLoading(false);
+        }
     };
 
     const remove = async (filename) => {
@@ -44,10 +90,22 @@ export default function Backups() {
                 ]}
                 actions={[
                     <ActionButton key="backup" tone="primary" icon={Save} onClick={create} disabled={loading}>
-                        {loading ? 'Gerando...' : 'Criar Backup Agora'}
+                        {loading ? 'Tarefa em andamento...' : 'Criar Backup Agora'}
                     </ActionButton>,
                 ]}
             />
+
+            {job && (
+                <Surface className={`border ${job.status === 'success' ? 'border-emerald-500/30' : job.status === 'failed' ? 'border-red-500/30' : job.status === 'rolled_back' ? 'border-amber-500/30' : 'border-primary/30'}`}>
+                    <div className="flex items-start gap-3 p-4">
+                        <RefreshCcw size={18} className={`mt-0.5 shrink-0 ${job.status === 'running' ? 'animate-spin text-primary' : 'text-on-surface/70'}`} />
+                        <div>
+                            <div className="text-xs font-black uppercase tracking-[0.14em] text-on-surface">{job.kind === 'restore' ? 'Restauração' : 'Backup'} · {job.step}</div>
+                            <p className="mt-1 text-sm text-on-surface/75">{job.message}</p>
+                        </div>
+                    </div>
+                </Surface>
+            )}
 
             <Surface className="overflow-hidden">
                 <div className="overflow-x-auto">
@@ -68,6 +126,7 @@ export default function Backups() {
                                     <td className="p-4 text-on-surface opacity-80">{new Date(f.date).toLocaleString('pt-BR')}</td>
                                     <td className="p-4 flex justify-end gap-2">
                                         <button onClick={() => download(f.name)} className="p-2 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-500 hover:text-on-surface transition-all"><Download size={18}/></button>
+                                        <button disabled={loading} title="Restaurar este backup" onClick={() => restore(f.name)} className="p-2 bg-amber-500/10 text-amber-700 dark:text-amber-300 rounded-xl hover:bg-amber-500 hover:text-on-surface transition-all disabled:cursor-not-allowed disabled:opacity-50"><RefreshCcw size={18}/></button>
                                         <button onClick={() => remove(f.name)} className="p-2 bg-red-500/10 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-500 hover:text-on-surface transition-all"><Trash2 size={18}/></button>
                                     </td>
                                 </tr>

@@ -21,6 +21,8 @@ const DNS_LATENCY_PROBE_DOMAINS = [
     'receita.fazenda.gov.br',
     'dados.gov.br',
 ];
+const DEFAULT_FORWARD_METRICS_DOMAIN = 'gov.br';
+const MAX_FORWARD_METRICS_HOURS = 24 * 30;
 const VLAN_META = new Map<number, { name: string; ip: string }>([
     [10, { name: 'VLAN 10 (Secretaria)', ip: '192.168.10.1/24' }],
     [30, { name: 'VLAN 30 (Celulares)', ip: '192.168.30.1/24' }],
@@ -79,6 +81,21 @@ const syncUnboundCustomZones = async () => {
 const parseUnboundCounter = (raw: string, metric: string) => {
     const match = raw.match(new RegExp(`${metric}=([\\d.]+)`));
     return match ? Number(match[1]) : 0;
+};
+
+const normalizeForwardMetricsDomain = (value: unknown) => String(value || DEFAULT_FORWARD_METRICS_DOMAIN)
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .replace(/\/.*$/, '')
+    .replace(/^\*\./, '')
+    .replace(/\.$/, '') || DEFAULT_FORWARD_METRICS_DOMAIN;
+
+const normalizeForwardMetricsHours = (value: unknown) => {
+    const parsed = Number(value || 24);
+    if (!Number.isFinite(parsed)) return 24;
+    return Math.min(MAX_FORWARD_METRICS_HOURS, Math.max(1, Math.round(parsed)));
 };
 
 const getUnboundHealth = async () => {
@@ -294,6 +311,150 @@ router.get('/vlan-summary', async (_req, res) => {
         res.json(payload);
     } catch (error: any) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+router.get('/forward-metrics', async (req, res) => {
+    try {
+        await ensureBlockingReleaseSchema();
+        await ensureNetDnsRulesSchema();
+
+        const domain = normalizeForwardMetricsDomain(req.query.domain);
+        const hours = normalizeForwardMetricsHours(req.query.hours);
+        const ignoredPatterns = await dnsIgnoredService.loadActive().catch(() => []);
+        const noiseFilter = dnsIgnoredService.buildSqlFilter(ignoredPatterns, 'e.query_name');
+        const domainFilter = `(e.query_name = $1 OR e.query_name LIKE ('%.' || $1))`;
+        const windowFilter = `e.occurred_at >= NOW() - ($2::int * INTERVAL '1 hour')`;
+
+        const [summary, vlanRows, topDomains, resolverRows, hourlyRows, forwardZones] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COUNT(*)::int AS total_queries,
+                    COUNT(DISTINCT e.client_ip)::int AS unique_clients,
+                    COUNT(DISTINCT e.vlan_id)::int AS vlan_count,
+                    MAX(e.occurred_at) AS last_seen_at,
+                    COUNT(*) FILTER (WHERE e.action = 'blocked')::int AS blocked_queries,
+                    COUNT(*) FILTER (WHERE e.response_code = 'NOERROR')::int AS ok_queries
+                FROM dns_policy_events e
+                WHERE ${windowFilter}
+                  AND ${domainFilter}
+                  AND e.client_ip IS NOT NULL
+                  AND e.vlan_id IS NOT NULL
+                  ${noiseFilter}
+            `, [domain, hours]),
+            pool.query(`
+                SELECT
+                    e.vlan_id,
+                    COUNT(*)::int AS total_queries,
+                    COUNT(DISTINCT e.client_ip)::int AS unique_clients,
+                    MAX(e.occurred_at) AS last_seen_at
+                FROM dns_policy_events e
+                WHERE ${windowFilter}
+                  AND ${domainFilter}
+                  AND e.client_ip IS NOT NULL
+                  AND e.vlan_id IS NOT NULL
+                  ${noiseFilter}
+                GROUP BY e.vlan_id
+                ORDER BY total_queries DESC, e.vlan_id ASC
+            `, [domain, hours]),
+            pool.query(`
+                SELECT
+                    e.query_name,
+                    COUNT(*)::int AS total_queries,
+                    COUNT(DISTINCT e.client_ip)::int AS unique_clients,
+                    MAX(e.occurred_at) AS last_seen_at
+                FROM dns_policy_events e
+                WHERE ${windowFilter}
+                  AND ${domainFilter}
+                  AND e.client_ip IS NOT NULL
+                  AND e.vlan_id IS NOT NULL
+                  ${noiseFilter}
+                GROUP BY e.query_name
+                ORDER BY total_queries DESC, e.query_name ASC
+                LIMIT 10
+            `, [domain, hours]),
+            pool.query(`
+                SELECT
+                    e.resolver,
+                    COUNT(*)::int AS total_queries
+                FROM dns_policy_events e
+                WHERE ${windowFilter}
+                  AND ${domainFilter}
+                  AND e.client_ip IS NOT NULL
+                  AND e.vlan_id IS NOT NULL
+                  ${noiseFilter}
+                GROUP BY e.resolver
+                ORDER BY total_queries DESC, e.resolver ASC
+            `, [domain, hours]),
+            pool.query(`
+                SELECT
+                    date_trunc('hour', e.occurred_at) AS bucket,
+                    COUNT(*)::int AS total_queries,
+                    COUNT(*) FILTER (WHERE e.response_code != 'NOERROR')::int AS error_queries,
+                    COUNT(DISTINCT e.client_ip)::int AS unique_clients
+                FROM dns_policy_events e
+                WHERE ${windowFilter}
+                  AND ${domainFilter}
+                  AND e.client_ip IS NOT NULL
+                  AND e.vlan_id IS NOT NULL
+                  ${noiseFilter}
+                GROUP BY bucket
+                ORDER BY bucket ASC
+            `, [domain, hours]),
+            pool.query(`
+                SELECT domain, target_ip, type
+                FROM net_dns_rules
+                WHERE upper(type) = 'FWD'
+                  AND ($1 = lower(domain) OR $1 LIKE ('%.' || lower(domain)) OR lower(domain) LIKE ('%.' || $1))
+                ORDER BY length(domain) DESC, domain ASC
+            `, [domain]),
+        ]);
+
+        const totalQueries = Number(summary.rows[0]?.total_queries || 0);
+        const forwardTargets = Array.from(new Set(
+            forwardZones.rows.flatMap((row: any) => splitForwardAddrs(String(row.target_ip || ''))),
+        ));
+
+        res.json({
+            domain,
+            hours,
+            generated_at: new Date().toISOString(),
+            inference: 'dns_policy_events + net_dns_rules FWD',
+            forward_zones: forwardZones.rows,
+            external_resolvers: forwardTargets,
+            total_queries: totalQueries,
+            inferred_forwarded_queries: forwardTargets.length ? totalQueries : 0,
+            unique_clients: Number(summary.rows[0]?.unique_clients || 0),
+            vlan_count: Number(summary.rows[0]?.vlan_count || 0),
+            blocked_queries: Number(summary.rows[0]?.blocked_queries || 0),
+            ok_queries: Number(summary.rows[0]?.ok_queries || 0),
+            last_seen_at: summary.rows[0]?.last_seen_at || null,
+            by_vlan: vlanRows.rows.map((row: any) => ({
+                vlan_id: Number(row.vlan_id),
+                label: VLAN_META.get(Number(row.vlan_id))?.name || `VLAN ${row.vlan_id}`,
+                total_queries: Number(row.total_queries || 0),
+                unique_clients: Number(row.unique_clients || 0),
+                last_seen_at: row.last_seen_at || null,
+            })),
+            top_domains: topDomains.rows.map((row: any) => ({
+                query_name: row.query_name,
+                total_queries: Number(row.total_queries || 0),
+                unique_clients: Number(row.unique_clients || 0),
+                last_seen_at: row.last_seen_at || null,
+            })),
+            by_internal_resolver: resolverRows.rows.map((row: any) => ({
+                resolver: row.resolver || 'unbound',
+                total_queries: Number(row.total_queries || 0),
+            })),
+            hourly: hourlyRows.rows.map((row: any) => ({
+                bucket: row.bucket,
+                total_queries: Number(row.total_queries || 0),
+                error_queries: Number(row.error_queries || 0),
+                unique_clients: Number(row.unique_clients || 0),
+            })),
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message || 'Falha ao agregar métricas de encaminhamento DNS.' });
     }
 });
 

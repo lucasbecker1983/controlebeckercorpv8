@@ -29,6 +29,29 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
 - tambem deve atuar como diretor, projetista, analista, desenvolvedor de frontend, UX, UI e backend senior
 - essa responsabilidade exige olhar o SGCG de ponta a ponta: produto, experiencia do operador, interface, acessibilidade, arquitetura, backend, banco de dados, runtime Linux, seguranca, auditoria, governanca publica, continuidade operacional e validacao real no ambiente
 
+## Verificacao WhatsApp Web e dependencias Meta na VLAN 30 - 2026-07-02
+
+- pedido: verificar inconsistencia em `web.whatsapp.com`
+- diagnostico:
+  - `https://web.whatsapp.com/` retornava `HTTP 200` por IPv4, inclusive usando origem dos gateways das VLANs
+  - o `ipset sgcg_whatsapp_allowed` estava ativo com `202` entradas e continha os IPs atuais de `web.whatsapp.com`, `mmx-ds.cdn.whatsapp.net` e `edge-mqtt.facebook.com`
+  - a inconsistencia real estava na `VLAN 30`: `edge-mqtt.facebook.com` e `connect.facebook.net`, dependencias de sessao/push do WhatsApp Web, retornavam vazio via `192.168.30.1`
+- correcao aplicada:
+  - `release_policies` recebeu/reativou as dependencias Meta do WhatsApp Web para `scope_type='vlan'` e `scope_value='30'`
+  - `backend-proxy/src/services/blocking-release-service.ts` passou a manter a lista canonica ampliada de dependencias Meta do WhatsApp Web, incluindo `api.facebook.com`, `chat-e2ee-mini.facebook.com`, `connect.facebook.net`, `edge-mqtt-fallback.facebook.com`, `ep7.facebook.com`, `gateway.facebook.com`, `mqtt.fallback.c10r.facebook.com` e `z-p42-chat-e2ee-ig.facebook.com`
+  - `npm run build` foi executado em `backend-proxy`
+  - `backend-proxy` foi reiniciado via `pm2 restart backend-proxy --update-env`
+  - `scripts/update_whatsapp_allowlist.py` foi executado e adicionou IPs rotacionados recentes ao `sgcg_whatsapp_allowed`, mantendo as regras `SGCG WHATSAPP ALLOW`, `SGCG WHATSAPP RETURN ALLOW`, `SGCG WHATSAPP CALL TCP ALLOW` e `SGCG WHATSAPP CALL UDP ALLOW`
+- observacao operacional:
+  - a aplicacao completa via `blockingReleaseService.apply`/API ficou lenta por consultas `SELECT DISTINCT lower(query_name)` em `dns_policy_events` das ultimas 24h; a chamada foi interrompida para nao deixar sessao pendurada, mas a geracao ja havia materializado as entradas da `VLAN 30` em `/etc/unbound/becker/allowlist-vlan-30.rpz`
+  - nao restaram consultas ativas desse tipo em `pg_stat_activity`
+- validacao:
+  - `dig @192.168.30.1 edge-mqtt.facebook.com A` passou a retornar CNAME `mqtt.c10r.facebook.com` e IP Meta atual
+  - `dig @192.168.30.1 connect.facebook.net A` passou a retornar CNAME `scontent.xx.fbcdn.net` e IP Meta atual
+  - `web.whatsapp.com`, `static.whatsapp.net`, `graph.whatsapp.com`, `chat.cdn.whatsapp.net`, `edge-mqtt-fallback.facebook.com`, `gateway.facebook.com` e `chat-e2ee-mini.facebook.com` resolveram via `192.168.30.1`
+  - `curl -4 -k -L --interface 192.168.30.1 https://web.whatsapp.com/` retornou `HTTP 200`
+  - `https://web.whatsapp.com/` retornou `HTTP 200` tambem usando os gateways `192.168.10.1`, `192.168.40.1`, `192.168.50.1`, `192.168.70.1`, `192.168.80.1` e `192.168.99.1`
+
 ## Regra inegociavel de firewall
 
 - o firewall principal do servidor SGCG e o `UFW`
@@ -7919,3 +7942,446 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - contagem atual: `visible=5`, `archived=0`
   - `https://127.0.0.1:6777/` respondeu `HTTP 200`
   - `git diff --check` sem erros
+
+## Central de Chamados - responsavel pelo encerramento - 2026-06-01
+
+- solicitacao:
+  - ao resolver/finalizar um chamado, escolher quem resolveu: `Lucas Becker` ou `Jhoelber Pinheiro`
+  - no Portal do Colaborador, o chamado finalizado deve mostrar `Chamado encerrado por ...`
+- backend:
+  - `support_tickets` recebeu a coluna `resolved_by_name TEXT`
+  - `PATCH /api/support/tickets/:id` valida que status final (`resolved`, `denied`, `canceled`) tenha responsavel de encerramento
+  - responsaveis aceitos: `Lucas Becker` e `Jhoelber Pinheiro`
+  - ao reabrir ou mover para status nao final, `resolved_by_name` e limpo junto com `closed_at`
+  - eventos/auditoria de atualizacao passam a registrar `resolved_by_name`
+- frontend administrativo:
+  - Central de Chamados ganhou seletor `Encerrado por`
+  - botao `Resolver` envia o responsavel selecionado
+  - alterar o status para um status final tambem envia o responsavel selecionado
+  - detalhe do chamado finalizado mostra `Chamado encerrado por <nome>` com data/hora quando disponivel
+- Portal do Colaborador:
+  - detalhe do chamado finalizado exibe `Chamado encerrado por <nome>` e data/hora de fechamento quando disponivel
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` aplicados; ambos ficaram `online`
+  - `GET http://127.0.0.1:6778/api/support/public/notifications` sem token retornou `401`, executando a garantia de schema
+  - `information_schema.columns` confirmou `support_tickets.resolved_by_name` como `text`
+  - `https://127.0.0.1:6777/` respondeu `HTTP 200`
+  - `git diff --check` sem erros
+
+## Central de Chamados - notificacao nativa no Windows - 2026-06-01
+
+- solicitacao:
+  - quando um colaborador abrir chamado pelo Portal, usuarios administradores do SGCG devem receber notificacao no Windows
+- implementacao:
+  - `frontend/src/components/SupportBell.jsx` passou a usar a Web Notifications API no modo administrativo do SGCG
+  - no menu do sino, administradores podem clicar em `Ativar notificações no Windows`
+  - apos permissao do navegador, chamado novo dispara uma notificacao nativa com titulo `Novo chamado no SGCG`, protocolo e titulo do chamado
+  - a notificacao usa `requireInteraction`, `tag` por chamado e evita repetir o mesmo chamado em loop
+  - clicar na notificacao foca a janela do SGCG e abre diretamente o chamado
+  - o recurso e apenas administrativo; o Portal do Colaborador nao solicita notificacao do Windows
+- observacao operacional:
+  - o SGCG precisa estar aberto no navegador do administrador para receber a notificacao
+  - o navegador/Windows precisa permitir notificacoes para o site interno
+  - popup interno e piscada da aba continuam funcionando como redundancia
+- validacao:
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart bcc-frontend --update-env` aplicado; `bcc-frontend` ficou `online`
+  - `https://127.0.0.1:6777/` respondeu `HTTP 200`
+  - `git diff --check` sem erros
+
+## Central de Chamados - agente Windows com SGCG fechado - 2026-06-01
+
+- solicitacao:
+  - receber notificacao de chamado novo no Windows mesmo com o SGCG fechado
+- decisao tecnica:
+  - criado agente por tarefa agendada no logon dos administradores, em vez de servico puro do Windows
+  - motivo: notificacao visual na area de trabalho precisa rodar na sessao do usuario; servicos do sistema rodam em sessao isolada e nao exibem toast/balloon de forma confiavel
+- backend:
+  - criado `GET /api/support/agent/notifications`
+  - rota fica fora do JWT global, mas exige `X-Agent-Token`
+  - usa o mesmo token institucional dos agentes SGCG (`SGCG_AGENT_TOKEN`, `SGCG_AGENT_TOKEN_SHA256` ou `data/identity/agent-token.sha256`)
+  - retorna apenas chamados `admin_unread = TRUE` e `archived_at IS NULL`
+- agente Windows:
+  - criado `sgcg-endpoint-identity-msi/tools/windows/sgcg-support-notifier.ps1`
+  - consulta a API em intervalo configuravel (`poll_seconds`, padrao 8)
+  - guarda estado em `%ProgramData%\SGCG\SupportNotifier\state.json`
+  - grava logs em `%ProgramData%\SGCG\SupportNotifier\logs\support-notifier.log`
+  - evita repetir notificacao do mesmo chamado
+  - exibe notificacao pelo `System.Windows.Forms.NotifyIcon`
+  - clique na notificacao abre `https://console.interno.jacarezinho/chamados?ticket=<id>`
+- instalacao/remocao:
+  - criado `INSTALAR-NOTIFICADOR-CHAMADOS-SGCG.ps1`
+  - criado `INSTALAR-NOTIFICADOR-CHAMADOS-SGCG.cmd`
+  - criado `DESINSTALAR-NOTIFICADOR-CHAMADOS-SGCG.ps1`
+  - criado `DESINSTALAR-NOTIFICADOR-CHAMADOS-SGCG.cmd`
+  - criado `support-notifier.config.template.json`
+  - o diretorio instalado fica restrito a `Administrators` e `SYSTEM`, pois o arquivo de configuracao contem o token do agente
+- uso esperado:
+  - executar o instalador como Administrador no Windows dos administradores do SGCG
+  - informar o token `X-Agent-Token` quando solicitado, ou passar por parametro `-Token`
+  - a tarefa `SGCG Chamados - Notificador` inicia no logon de usuarios do grupo Administrators
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `pm2 restart bcc-backend --update-env` aplicado; `bcc-backend` ficou `online`
+  - `GET http://127.0.0.1:6778/api/support/agent/notifications` sem token retornou `401 {"ok":false,"error":"invalid_agent_token"}`
+  - `GET http://127.0.0.1:6778/api/support/agent/notifications` com token invalido retornou `401 {"ok":false,"error":"invalid_agent_token"}`
+  - `git diff --check` sem erros
+  - nao foi possivel executar os scripts PowerShell localmente no servidor Linux porque `pwsh` nao esta instalado
+
+### Instalador embutido com token dedicado - 2026-06-01 13:30
+
+- motivo:
+  - estacao do administrador nao tinha `C:\Program Files\JMB Tecnologia\SGCG Endpoint Identity\config.json`
+  - o servidor possuia apenas `data/identity/agent-token.sha256`, entao o token institucional original nao podia ser recuperado em texto claro
+- backend:
+  - `GET /api/support/agent/notifications` passou a aceitar tambem token dedicado ao notificador
+  - fontes aceitas para esse token dedicado:
+    - `SGCG_SUPPORT_NOTIFIER_TOKEN`
+    - `SGCG_SUPPORT_NOTIFIER_TOKEN_SHA256`
+    - `data/support/notifier-token.sha256`
+  - o token antigo dos agentes SGCG continua aceito pela mesma rota, preservando compatibilidade
+- pacote Windows:
+  - gerado instalador unico com agente e token embutidos em `sgcg-endpoint-identity-msi/tools/windows/generated/`
+  - gerado desinstalador `.ps1` no mesmo diretorio
+  - diretorio `generated/` fica ignorado pelo Git porque contem segredo operacional
+- correcao pos-teste em Windows pt-BR:
+  - instalador passou a aplicar ACL por SID fixo (`S-1-5-32-544` Administradores e `S-1-5-18` SYSTEM)
+  - tarefa agendada passou a usar grupo por SID (`S-1-5-32-544`) e `RunLevel Limited`
+  - isso evita falha `IdentityNotMappedException` em Windows localizado ao resolver `Administrators`
+  - `RunLevel Limited` substituiu `LeastPrivilege`, que nao existe no enum do modulo ScheduledTasks em Windows PowerShell
+  - pacote foi regenerado com novo token dedicado e hash atualizado em `data/support/notifier-token.sha256`
+- correcao de primeira execucao:
+  - rota local validada retornando `unread=1` para `SGCG-CH-20260601-00006`
+  - agente deixou de marcar os chamados pendentes como conhecidos sem notificar na primeira execucao
+  - instalador embutido passou a remover `%ProgramData%\SGCG\SupportNotifier\state.json` ao reinstalar
+  - objetivo: reinstalacao dispara notificacao para chamado pendente usado na validacao, em vez de manter estado antigo silencioso
+- correcao de processo/tarefa antiga:
+  - log do Windows indicou agente antigo procurando `C:\Users\Lucas Becker\Desktop\support-notifier.config.json`
+  - instalador embutido passou a parar/remover a tarefa `SGCG Chamados - Notificador` antes de recriar
+  - instalador tambem encerra processos `powershell.exe`/`pwsh.exe` cujo comando contenha `sgcg-support-notifier.ps1`
+  - objetivo: eliminar instancias antigas executadas do Desktop sem `-ConfigPath`
+- correcao de sessao interativa:
+  - como notificacao visual precisa rodar no usuario logado, o instalador embutido passou a registrar a tarefa para o usuario atual (`-UserId`, `-LogonType Interactive`) em vez de grupo por SID
+  - trigger passou a usar `New-ScheduledTaskTrigger -AtLogOn -User $currentUser`
+  - reinstalacao remove o log antigo para diagnostico nao ficar preso em mensagens obsoletas
+  - rota local validada com token novo retornando `unread=2` (`SGCG-CH-20260601-00007` e `SGCG-CH-20260601-00006`)
+- correcao de ACL para tarefa limitada:
+  - tarefa por usuario ficou com `RunLevel Limited`, mas o diretorio estava restrito a Administradores/SYSTEM
+  - instalador passou a conceder `Modify` ao SID do usuario atual no diretorio `%ProgramData%\SGCG\SupportNotifier`
+  - instalador tambem tenta iniciar o agente diretamente com `Start-Process` se `Start-ScheduledTask` nao registrar sucesso imediato
+  - token do pacote regenerado validado contra rota local com `unread=2`
+- ajuste de notificacao Toast:
+  - `sgcg-support-notifier.ps1` passou a tentar exibir Toast nativo via `Windows.UI.Notifications`
+  - Toast mostra titulo, protocolo/titulo do chamado e solicitante
+  - botao `Abrir chamado` usa `activationType="protocol"` para abrir a URL do ticket no navegador
+  - se Toast falhar por politica/configuracao do Windows, registra `toast_failed` e usa o balloon antigo como fallback
+  - pacote embutido foi regenerado com novo token; rota local validada com `200`
+- correcao de identidade do Toast:
+  - log em Windows mostrou `toast_shown`, mas sem exibicao visual
+  - agente passou a definir `SetCurrentProcessExplicitAppUserModelID("SGCG.Chamados.Notificador")`
+  - instalador embutido passou a criar atalho no Menu Iniciar do usuario (`SGCG Chamados.lnk`) com AppUserModelID via COM `IPropertyStore`
+  - Toast passou a usar `CreateToastNotifier($AppId)` em vez do nome simples do app
+  - pacote foi regenerado e token validado contra rota local com `unread=1`
+- correcao do atalho Toast e inicializacao:
+  - Windows retornou `E_NOINTERFACE` ao criar atalho porque o IID de `IPropertyStore` estava incorreto
+  - IID corrigido para `00000138-A8F2-4877-BA0A-FD2B6645FB94`
+  - instalador passou a criar tambem atalho em `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\SGCG Chamados Notificador.lnk`
+  - desinstalador remove atalhos do Menu Iniciar e Startup e encerra processos antigos do notificador
+  - pacote regenerado e token validado contra rota local com `unread=1`
+- simplificacao apos `E_NOINTERFACE` persistente:
+  - Windows continuou sem expor `IPropertyStore` em `ShellLink`, entao a criacao de AppUserModelID customizado foi removida
+  - agente passou a usar o AppUserModelID existente `Microsoft.Windows.PowerShell`
+  - instalador cria atalhos por `WScript.Shell` simples para Menu Iniciar e Startup, sem COM `IPropertyStore`
+  - pacote regenerado e token validado contra rota local com `unread=1`
+- popup visual garantido:
+  - apos novo teste, Toast nativo continuou sem aparecer visualmente apesar de chamadas aceitas
+  - agente passou a exibir tambem um popup proprio em WinForms, `TopMost`, no canto inferior direito
+  - popup mostra protocolo/titulo/solicitante, tem botao `Abrir chamado`, fecha automaticamente em 20s e clique no corpo abre o ticket
+  - Toast nativo ainda e tentado antes; se popup falhar, fallback final segue sendo balloon antigo
+  - pacote regenerado e token validado contra rota local com `unread=2`
+
+## Centro unificado de auditoria - 2026-06-02 15:09
+
+- objetivo:
+  - concentrar auditorias espalhadas em uma unica entrada operacional
+  - preservar categorias e fontes originais para investigacao sem perder contexto tecnico
+- backend:
+  - criado modulo `backend/src/modules/central-audit`
+  - nova tabela `central_audit_events` para eventos normalizados futuros
+  - rotas protegidas adicionadas em `/api/central-audit/categories`, `/sources`, `/summary`, `/events`
+  - agregacao atual cobre `auth_activity_logs`, `action_audit_logs`, `lgpd_audit_logs`, `hotspot_access_log`, `collab_access_log`, `support_ticket_events`, `domain_policy_audit_logs`, `proxy_action_logs`, `dns_contingency_audit`, `control_antimalware_runs` e `navigation_events`
+- frontend:
+  - criada pagina `/auditoria-central` com resumo, filtros por periodo/categoria/fonte/resultado/severidade/ator/IP e linha unica de eventos
+  - menu `Auditoria e Evidencias` agora abre o centro unificado
+  - hub antigo `/governanca-auditoria` passou a destacar o centro como entrada principal
+- validacao:
+  - `npm run build` em `backend/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `centralAuditService.summary({ period: '24h' })` retornou eventos reais agrupados por categoria/fonte
+  - endpoint protegido `GET /api/central-audit/summary?period=24h` validado com JWT temporario local
+  - endpoint protegido `GET /api/central-audit/events?period=24h&limit=2` retornou eventos reais
+  - `pm2 restart bcc-backend --update-env` e `pm2 restart bcc-frontend --update-env` aplicados; ambos ficaram online
+  - `GET https://127.0.0.1:6777/auditoria-central` retornou `HTTP/2 200`
+
+## Bypass institucional .gov.br sem Squid - 2026-06-11 07:55
+
+- objetivo:
+  - garantir que destinos `gov.br` e subdominios saiam direto por DNS/firewall, sem tunelamento pelo Squid
+- ajuste:
+  - `scripts/update_govbr_allowlist.py` deixou de escrever dominios governamentais nas ACLs do Squid
+  - `backend-proxy/src/services/policy-compiler-service.ts` passou a filtrar dominios `gov.br` das ACLs `proxy_whitelist` e `proxy_protected_ssl`
+  - `backend-proxy/src/services/proxy-engine-service.ts` e `/etc/squid/squid.conf` receberam guard `govbr_direct`/`govbr_direct_url` antes de qualquer allow
+  - ACLs ativas `/etc/squid/acl/proxy_whitelist.acl` e `/etc/squid/acl/proxy_protected_ssl.acl` foram limpas de entradas `*.gov.br`
+- validacao:
+  - DNS local e externo resolveram `cav.receita.fazenda.gov.br` para `161.148.116.86`
+  - acesso direto sem proxy: `www.gov.br=301`, `cav.receita.fazenda.gov.br/autenticacao/login=200`, `regularize.pgfn.gov.br=301`
+  - tentativa via Squid `127.0.0.1:3129`: HTTPS para `www.gov.br`, `cav.receita.fazenda.gov.br` e `regularize.pgfn.gov.br` retornou `CONNECT tunnel failed, response 403`
+  - log do Squid passou a registrar `TCP_DENIED/403` para esses destinos, sem novo `TCP_TUNNEL/200`
+  - `squid`, `unbound` e `sgcg-govbr-allowlist.timer` ficaram ativos
+
+## Metricas visuais de encaminhamento DNS gov.br - 2026-06-11 08:10
+
+- objetivo:
+  - dar leitura visual rapida do uso de `gov.br`/subdominios encaminhado por regras `FWD`
+  - evitar chave liga/desliga operacional e priorizar observabilidade antes de decisao
+- backend:
+  - criada rota somente-leitura `GET /api/dns/forward-metrics`
+  - agregacao usa `dns_policy_events` cruzado com `net_dns_rules` do tipo `FWD`
+  - payload inclui total inferido encaminhado, clientes unicos, VLANs, ultimos usos, top subdominios, uso por VLAN, resolvedores externos configurados e serie horaria
+- frontend:
+  - `Controle de Rede > DNS Institucional` recebeu painel visual `Uso do encaminhamento gov.br`
+  - painel mostra semaforo `OK/Atenção/Sem regra`, resolvedores externos, cards de resumo, grafico de barras 24h, ranking por VLAN e top subdominios
+- observacao:
+  - a metrica e inferida pela regra `FWD` ativa e pelos eventos do resolvedor local; prova forense por resolvedor externo exigiria log/exportador dedicado ou captura controlada
+  - integracao com Downdetector deve depender de API/licenca; scraping direto nao foi adotado
+- validacao:
+  - `npm run build` em `backend-proxy/` concluiu com sucesso
+  - `npm run build` em `frontend/` concluiu com sucesso
+  - `pm2 restart backend-proxy bcc-frontend` aplicado; ambos ficaram `online`
+
+## Liberacao operacional da CazeTV para a Copa do Mundo - 2026-06-21 21:50
+
+- objetivo:
+  - permitir a transmissao oficial da `@CazeTV` pelo YouTube nas VLANs gerenciadas durante a Copa do Mundo 2026
+  - preservar os bloqueios institucionais das demais categorias
+- politica aplicada:
+  - cadastradas liberacoes protegidas, com categoria `CazeTV Copa 2026`, nas VLANs `10`, `30`, `40`, `50` e `70`
+  - dominios de pagina, API, imagens e midia liberados: `youtube.com`, `youtubei.googleapis.com`, `youtube-nocookie.com`, `googlevideo.com`, `ytimg.com`, `ytimg.l.google.com`, `youtube.googleapis.com`, `youtubeeducation.com`, `youtu.be` e `yt.be`
+  - o Policy Compiler gerou allowlists RPZ por VLAN e retirou esses mesmos dominios das blocklists das cinco VLANs
+  - a aplicacao ficou auditada por `codex-operacional`; manifesto `2026-06-22T00-48-43-035Z`
+- limite tecnico registrado:
+  - sem Google Workspace gerenciado ou inspecao HTTPS nos endpoints, o gateway nao distingue com garantia um canal especifico dentro da infraestrutura compartilhada do YouTube
+  - por isso, a liberacao operacional cobre a plataforma necessaria para a reproducao da CazeTV nessas VLANs; nao foi prometido filtro falso por canal
+- validacao real:
+  - `youtube.com` e `googlevideo.com` retornaram `NOERROR` usando como origem os gateways `192.168.10.1`, `192.168.30.1`, `192.168.40.1`, `192.168.50.1` e `192.168.70.1`
+  - `https://www.youtube.com/@CazeTV` retornou `HTTP 200` com conteudo completo a partir das cinco interfaces de VLAN
+  - `instagram.com` e `spotify.com` continuaram retornando `NXDOMAIN` nas cinco VLANs
+  - `unbound-checkconf` sem erros; `unbound` e `squid` ativos; `squid -k parse` concluiu com codigo `0`
+
+## Bypass emergencial da VLAN 10 para associacao/conectividade Wi-Fi - 2026-06-26 10:12
+
+- contexto:
+  - usuario relatou que a conexao na VLAN 10 ficava apenas em "conectando" e depois falhava com "nao foi possivel conectar a esta rede"
+  - havia 1 AP ligado a VLAN 10 e foi solicitado retirar qualquer barreira que pudesse ocasionar o problema
+- diagnostico rapido:
+  - interface `enp6s0.10` ativa com gateway `192.168.10.1/24`
+  - `isc-dhcp-server` ativo e ouvindo em `enp6s0.10`
+  - DHCP da VLAN 10 confirmou `DHCPACK on 192.168.10.19 to 8c:90:2d:15:e1:09 via enp6s0.10`
+  - captura curta em `enp6s0.10` mostrou ARP vivo e resposta do gateway `192.168.10.1`
+- liberacoes aplicadas em runtime:
+  - regras diretas no topo de `INPUT` para DHCP e entrada total de `192.168.10.0/24` pela `enp6s0.10`
+  - regras diretas no topo de `FORWARD` liberando entrada e saida envolvendo `enp6s0.10`
+  - `nat PREROUTING` com `RETURN` emergencial para `enp6s0.10`, evitando interceptacoes/redirects anteriores
+  - `nat POSTROUTING` com `MASQUERADE` emergencial para `192.168.10.0/24` saindo por `enp8s0`
+  - executado `python3 scripts/bypass_vlan.py 10`, que injetou `ACCEPT` em `ufw-before-forward`, removeu redirect DNS da VLAN 10 e limpou QoS/tc de `enp6s0.10` e `ifb10`
+- estado validado:
+  - `net.ipv4.ip_forward = 1`
+  - `tc qdisc show dev enp6s0.10` ficou em `noqueue`, sem HTB/ingress da politica anterior
+  - ping pelo gateway da VLAN 10 para `192.168.10.19` e `192.168.10.50` retornou 0% de perda
+  - o bypass do script e runtime-only; reboot restaura o estado persistente do UFW, e `python3 scripts/bypass_vlan.py 10 --undo` desfaz o bypass de enforcement sem reboot
+- observacao operacional:
+  - se o cliente ainda falhar antes de aparecer qualquer `DHCPDISCOVER`/ARP na `enp6s0.10`, a causa mais provavel fica fora do firewall do servidor: chave/seguranca do SSID, configuracao do AP, porta/tag VLAN no switch ou isolamento no proprio AP
+
+## Reversao do bypass emergencial e restauracao de VIPs - 2026-06-27 00:05
+
+- contexto:
+  - apos o incidente de DHCP/conectividade da VLAN 10, foi solicitado voltar bloqueios, VIPs e demais politicas institucionais
+  - havia uma excecao ampla ativa em `policy_exceptions` para `192.168.10.0/24` com descricao `rede 10` e nota de teste; ela foi desativada para impedir interpretacao futura como VIP de rede inteira
+- correcao aplicada:
+  - `policy_exceptions.id=26` (`192.168.10.0/24`) foi marcado como inativo/revogado por `codex-runtime-recovery`
+  - os VIPs manuais `192.168.10.171` (`Secretario Leandro`) e `192.168.10.99` (`PC do Suporte (Rescue)`) foram canonicalizados em `policy_exceptions`, para persistirem no motor oficial e entrarem tambem na ACL do Squid
+  - motor compilado `blockingReleaseService.apply('codex-runtime-recovery-20260626')` reaplicado com sucesso; resultado final `no_op=false`, `squid_config_aligned=true`
+- estado validado:
+  - `global_blocking_enabled=true`, `emergency_bypass=false`, `health_status=healthy`, `enforcement_mode=acl-plus-dns`
+  - banco: `emergency_active=0`, `vlan_blocks_disabled=0`, `policy_exceptions_wide_active=0`, `policy_exceptions_active=15`, `dns_vip_active=15`, `proxy_vips_active=15`
+  - `/etc/squid/acl/proxy_ip_bypass.acl` passou a listar `192.168.10.99` e `192.168.10.171`, alem dos demais VIPs individuais
+  - `iptables-save` confirmou regras `sgcg-vip-bypass` para `192.168.10.99/32` e `192.168.10.171/32`, sem `sgcg-emergency-bypass`
+  - `dig @192.168.10.1 badoo.com` e `dig @192.168.30.1 badoo.com` nao retornaram IP; `dig @192.168.10.1 gov.br` retornou `161.148.164.31`
+  - `unbound-checkconf /etc/unbound/unbound.conf` sem erros; `ufw`, `unbound`, `isc-dhcp-server`, `squid`, `nginx`, `postgresql` e `sgcg-vip-dns.service` ativos
+
+## Validacao da VLAN 10 com bloqueios e VIPs gerais - 2026-06-27
+
+- objetivo:
+  - confirmar que a VLAN 10 voltou ao enforcement institucional completo apos os ajustes emergenciais de conectividade
+  - registrar a lista atual de VIPs com bypass geral para evitar duvida operacional sobre quem esta fora dos bloqueios comuns
+- estado do motor:
+  - `policy_engine_state.enforcement_mode = acl-plus-dns`
+  - `policy_engine_state.emergency_bypass = false`
+  - `policy_engine_state.health_status = healthy`
+  - `policy_engine_state.compiler_status = healthy`
+  - `policy_engine_state.last_apply_by = codex-runtime-recovery-20260626`
+  - `emergency_vlan_bypass` ativo retornou `0`
+  - `vlan_policies` da VLAN 10: `enp6s0.10`, `192.168.10.0/24`, `blocking_enabled=true`, `monitoring_enabled=true`, `exempt=false`, `policy_mode=global`
+- camadas confirmadas:
+  - Unbound compilado com `define-tag: "vip_bypass vlan_10 vlan_30 vlan_40 vlan_50 vlan_70"`
+  - `/etc/unbound/unbound.conf.d/becker_policy_compiler.conf` contem `access-control-tag` da `192.168.10.0/24` como `vlan_10` e os IPs VIP como `vip_bypass`
+  - `/etc/unbound/becker/blocklist-vlan-10.rpz`, `/etc/unbound/becker/allowlist-vlan-10.rpz` e `/etc/unbound/becker/vip-bypass.conf` presentes e atualizados
+  - `/etc/squid/acl/blocklist-vlan-10.acl`, `/etc/squid/acl/allowlist-vlan-10.acl` e `/etc/squid/acl/proxy_ip_bypass.acl` presentes e atualizados
+  - `iptables-save -t filter` confirmou `SGCG_GUARD` e regras especificas `sgcg-vip-bypass`, sem `sgcg-emergency-bypass`
+  - `iptables-save -t nat` confirmou redirecionamento DNS normal da VLAN 10 e regras especificas dos VIPs auditados para `sgcg-vip-dns.service` na porta `5355`
+- validacao DNS real pela VLAN 10:
+  - `dig @192.168.10.1 instagram.com A` retornou `NXDOMAIN`
+  - `dig @192.168.10.1 facebook.com A` retornou `NXDOMAIN`
+  - `dig @192.168.10.1 tiktok.com A` retornou `NXDOMAIN`
+  - `dig @192.168.10.1 gov.br A` resolveu `161.148.164.31`
+  - `dig @192.168.10.1 google.com A` resolveu `172.217.29.110`
+  - `dig @192.168.10.1 youtube.com A` resolveu `172.217.162.14`, comportamento esperado por causa da liberacao operacional anterior do YouTube/CazeTV
+- servicos:
+  - `systemctl is-active unbound sgcg-vip-dns.service squid postgresql nginx ufw` retornou `active` para todos
+  - `unbound-checkconf /etc/unbound/unbound.conf` retornou sem erros
+- VIPs ativos com bypass geral:
+  - `192.168.10.10` - Notebook Erika
+  - `192.168.10.26` - Celular Sala do Empreendedor
+  - `192.168.10.37` - Notebook do Thiago
+  - `192.168.10.38` - Celular do Thiago
+  - `192.168.10.40` - Leandro Notebook
+  - `192.168.10.45` - Notebook Lucas T.I.
+  - `192.168.10.49` - Notebook Jhoelber
+  - `192.168.10.99` - PC do Suporte (Rescue)
+  - `192.168.10.112` - Totem
+  - `192.168.10.127` - TV Corporativa
+  - `192.168.10.143` - TV Leandro
+  - `192.168.10.171` - Secretario Leandro
+  - `192.168.10.187` - Notebook - Rodrigo
+  - `192.168.10.212` - Celular Lucas
+  - `192.168.50.26` - Celular Corporativo - SINE
+- observacao:
+  - o gateway `192.168.10.1` nao esta como VIP
+  - todos os VIPs acima aparecem de forma consistente em `policy_exceptions`, `dns_vip`, `/etc/squid/acl/proxy_ip_bypass.acl`, `/etc/unbound/becker/vip-bypass.conf` e no compilado do Unbound como `vip_bypass`
+
+## Simulacao de cliente DHCP e navegacao na VLAN 10 - 2026-06-27 14:24
+
+- objetivo:
+  - validar se um equipamento novo na VLAN 10 recebe configuracao de rede e se a saida para internet permanece operacional apos a restauracao dos bloqueios
+- limites do teste:
+  - o servidor SGCG e o gateway da VLAN 10, portanto uma simulacao 100% identica a um PC fisico exige um cliente real no L2 da VLAN, via AP/switch
+  - para evitar alterar a interface `enp6s0.10`, foi usado teste sintético de DHCP discovery e validacao de egress/DNS pelo gateway da VLAN
+- DHCP:
+  - `dhcpd -t -cf /etc/dhcp/dhcpd.conf` validou a configuracao sem erros
+  - `nmap --script broadcast-dhcp-discover -e enp6s0.10` recebeu `DHCPOFFER`
+  - oferta retornada: `192.168.10.30`
+  - servidor DHCP: `192.168.10.1`
+  - lease time: `10m00s`
+  - mascara: `255.255.255.0`
+  - gateway: `192.168.10.1`
+  - DNS: `192.168.10.1`
+  - dominio: `vlan10.local`
+- evidencias de clientes reais:
+  - logs recentes do `isc-dhcp-server` mostram `DHCPACK` via `enp6s0.10` para clientes como `192.168.10.13`, `192.168.10.15`, `192.168.10.18`, `192.168.10.19`, `192.168.10.101` e `192.168.10.104`
+  - `ip neigh show dev enp6s0.10` mostrou clientes `REACHABLE`, incluindo `192.168.10.13`, `192.168.10.16`, `192.168.10.18`, `192.168.10.37`, `192.168.10.50`, `192.168.10.101`, `192.168.10.104`, `192.168.10.127`, `192.168.10.143` e `192.168.10.187`
+- navegacao e DNS:
+  - `curl -I --interface 192.168.10.1 --max-time 8 https://www.google.com` retornou `HTTP/2 200`
+  - `ping -4 -c 3 -W 1 -I 192.168.10.1 8.8.8.8` retornou `0% packet loss`, com latencia media aproximada de `12.9 ms`
+  - `dig @192.168.10.1 google.com A` resolveu `172.217.30.46`
+  - `dig @192.168.10.1 instagram.com A` retornou `NXDOMAIN`, confirmando que o enforcement DNS segue ativo
+- NAT/enforcement:
+  - `iptables-save -t nat` confirmou `POSTROUTING -s 192.168.10.0/24 -o enp8s0 -j MASQUERADE`
+  - `iptables-save -t nat` confirmou redirecionamento DNS geral de interfaces `enp6s0+` para porta `53`
+  - VIPs auditados continuam com redirecionamento especifico para `sgcg-vip-dns.service` na porta `5355`
+- conclusao:
+  - o teste sintetico confirma que um cliente novo recebe oferta DHCP correta na VLAN 10
+  - as evidencias de clientes reais confirmam que a VLAN 10 esta entregando `DHCPACK`
+  - a saida de internet, DNS institucional e bloqueios por RPZ continuam funcionais
+
+## VIP Secretario Leandro Notebook e Mercado Livre - 2026-07-13
+
+- demanda:
+  - o IP `192.168.10.42` (Secretario Leandro Notebook) precisava receber bypass VIP total, pois o dominio `mercadolivre.com.br` estava em bloqueio global.
+- correcao aplicada:
+  - criado `policy_exceptions.id=46` para `192.168.10.42/32`, descricao `Secretario Leandro Notebook`, VLAN `10`, tipo `bypass total`, ativo e aprovado.
+  - motor recompilado e aplicado por `codex-vip-secretario-leandro-notebook-20260713`; estado final `health_status=healthy`, `compiler_status=healthy` e modo `acl-plus-dns`.
+- evidencias runtime:
+  - o VIP foi sincronizado em `dns_vip.id=4919` e `proxy_vips.id=4915`.
+  - `iptables-save -t filter` confirmou `sgcg-vip-bypass` com `ACCEPT` de saida para `192.168.10.42/32` e retorno `RELATED,ESTABLISHED`, incluindo HTTPS `443/tcp` e `443/udp`.
+  - `iptables-save -t nat` confirmou que consultas DNS do IP sao encaminhadas ao resolvedor VIP limpo na porta `5355`, antes dos bloqueios comuns.
+  - `dig @127.0.0.1 -p 5355 mercadolivre.com.br A` e `www.mercadolivre.com.br A` retornaram enderecos CloudFront, sem `NXDOMAIN`.
+  - teste HTTPS de saida pelo WAN do gateway alcancou `mercadolivre.com.br` e recebeu resposta `HTTP/2 403` do CloudFront; esse codigo e da borda do site, confirmando conectividade/TLS, nao um bloqueio do SGCG.
+- limite da validacao:
+  - o gateway nao pode originar uma conexao literalmente com o IP do equipamento sem interferir no cliente; a liberacao foi comprovada pelo caminho de politica efetivo (VIP, NAT/DNS e firewall) e pela conectividade externa.
+
+## Hardening de recuperacao eletrica e topologia critica - 2026-08-06
+
+- causa corrigida:
+  - apos os boots de 09:21, 09:31 e 09:42, o `dnsmasq` do `libvirtd` iniciou DNS para a `virbr0` e disputou a porta `53` com o Unbound configurado em `0.0.0.0:53`.
+  - o erro observado no Unbound foi `can't bind socket: Address already in use for 0.0.0.0 port 53`; a politica anterior de cinco tentativas em 10 segundos encerrava o servico antes de a topologia estabilizar.
+  - a configuracao persistente da rede `default` do libvirt agora contem `<dns enable='no'/>`; o `dnsmasq` associado opera somente DHCP (`port=0`) e nao ocupa DNS.
+- protecoes instaladas:
+  - `/etc/systemd/system/unbound.service.d/20-topology-boot-safety.conf` faz o Unbound aguardar o libvirt, aumenta a janela de recuperacao para 60 tentativas em cinco minutos e usa o preflight `/usr/local/sbin/unbound-port53-preflight`.
+  - o preflight exige a configuracao persistente de DNS desativado no libvirt, valida `unbound-checkconf` e recusa iniciar se outro processo ja possuir a porta `53`.
+  - `sgcg-critical-boot-verify.service` esta habilitado no `multi-user.target`; ele nao reinicia servicos, mas falha de forma visivel se alguma camada canonica (rede, DNS, DHCP, proxy, Nginx, PostgreSQL, Redis, Docker, Tailscale, UFW, Fail2Ban, resolvedor VIP ou logger DNS) estiver inativa ou se as VLANs `10/30/40/50/70` nao resolverem DNS.
+  - o `powerfail_boot_guard.sh` foi corrigido: as variaveis estavam escapadas literalmente, portanto WAN e VPN nunca recebiam os valores configurados. Referencias aos mounts aposentados foram removidas; o fallback do WireGuard agora tem timeout de 20 segundos para nao travar o boot.
+  - `sgcg-ipset-restore.service` passou a usar `/usr/local/sbin/sgcg-ipset-restore`; a unidade antiga usava redirecionamento `<` diretamente em `ExecStart`, que o systemd entregava ao `ipset` como argumento invalido.
+- validacao sem reinicio:
+  - `bash -n` validou todos os scripts novos/alterados e `systemd-analyze verify` nao encontrou erro nas unidades alteradas.
+  - `sgcg-critical-boot-verify.service` foi executado com sucesso no runtime; o Unbound e as VLANs `10/30/40/50/70` responderam consultas A.
+  - Unbound, ISC DHCP, Squid, Nginx, PostgreSQL, Redis, Docker, Tailscale, UFW, Fail2Ban, `sgcg-vip-dns` e `becker-dns-logger` permaneceram `active`.
+- limites deliberados:
+  - nao houve reboot de producao para teste fisico; o proximo boot tera verificacao automatica e evidenciavel.
+  - as unidades de DR com falha continuam fora desta alteracao: o heartbeat/replicacao exigem validacao do contrato ativo antes de qualquer ajuste para nao criar promocao, fencing ou replica indevida.
+  - a verificacao de `sgcg-ipset-restore.service` foi estatica; ele sera exercido no proximo boot para nao reaplicar listas de bloqueio no meio da operacao atual.
+  - nao ha integracao NUT/APCUPSd nem dispositivo USB de nobreak detectado. O `upower` sozinho nao consegue solicitar desligamento limpo por bateria baixa.
+  - referencias de mounts aposentados foram removidas do guard de energia, do `fstab`, do cron e da configuracao do projeto apos confirmacao de que nao havia dados ou processos consumidores.
+
+## Backup e restauracao transacional do SGCG - 2026-08-10
+
+- causa do erro de criacao: a rota montava o `tar` em multiplas linhas, enquanto a allowlist aceitava somente a forma de uma linha; adicionalmente, o dump completo de uma base de 69 GB mantinha a requisicao HTTP aberta ate expirar.
+- substituicao: `POST /api/backups/create` e `POST /api/backups/restore` agora iniciam tarefas assíncronas com acompanhamento por `GET /api/backups/jobs/:jobId`; somente administradores podem criar, excluir ou restaurar.
+- cofre: o arquivo inclui banco, codigo, configuracoes e `data/` persistente, mas exclui e rejeita `node_modules`, `dist`, `.git`, `backups`, logs, cache e coverage. Dependencias e builds sao recompostos no restore.
+- restore: valida o arquivo antes de qualquer troca, cria snapshot local do codigo e banco atuais para rollback, restaura o banco, executa `vacuumdb --analyze-in-stages`, recompila `backend`, `frontend` e `backend-proxy`, e reinicia apenas `bcc-backend`, `bcc-frontend`, `backend-proxy` e `backend-proxy-ingester`.
+- evidencia de banco: `access_events` ocupa aproximadamente 55 GB (cerca de 70,9 milhoes de linhas estimadas) e `dns_policy_events` cerca de 13 GB (10,8 milhoes); sao dados de telemetria/auditoria e foram mantidos no backup.
+- validacao: `bash -n` da rotina e builds de backend/frontend/backend-proxy sem erros; `bcc-backend` e `bcc-frontend` foram republicados e as rotas protegidas de listagem e status de backup responderam no runtime.
+
+## Acesso pelo console interno e retorno de autenticação - 2026-08-21
+
+- diagnostico: `https://console.interno.jacarezinho/api/auth/login` encaminha corretamente para o backend central em `127.0.0.1:6778`, o mesmo upstream do console público. Nginx e os serviços de frontend, backend e backend-proxy estavam ativos; uma solicitação deliberadamente inválida recebeu `401 {"error":"Credenciais invalidas"}` nas duas superfícies, sem erro de proxy.
+- auditoria: os dois acessos rejeitados do cliente interno `192.168.10.45` às 13:04 foram registrados como `password-mismatch`; o mesmo usuário teve uma autenticação bem-sucedida às 08:49. Portanto o incidente não era indisponibilidade do console interno.
+- melhoria de interface: `frontend/src/pages/Login.jsx` passa a informar `Usuário ou senha inválidos.` para `401`, em vez de atribuir incorretamente a falha ao backend/proxy. Demais respostas continuam exibindo a mensagem segura devolvida pela API ou uma orientação de conexão.
+
+## Retorno de Configurações ao menu lateral - 2026-08-23
+
+- demanda: restabelecer no sidebar o acesso direto ao módulo em que cada usuário escolhe tema, paleta de cores e linguagem visual.
+- correção: `frontend/src/components/Sidebar.jsx` agora exibe `Configurações` como item próprio, apontando para `/settings`; a rota foi retirada dos caminhos agrupados em `Auditoria e Evidências`.
+- escopo preservado: o módulo existente mantém tema claro/escuro, paletas institucionais e estilos de interface com preferências persistidas por usuário autenticado.
+- validação: `npm run build` em `frontend/` concluiu sem erros; o frontend ativo em `127.0.0.1:6777` passou a servir o bundle recompilado e `/settings` respondeu `HTTP 200` pelo console interno.
+
+## Status de Internet legível no Topbar - 2026-08-23
+
+- correção visual: a pílula de conectividade mantém `Internet` como rótulo principal; `Google DNS` passou a usar fonte auxiliar de `8px`, e o estado principal inequívoco permanece em `OK`/`OFF`.
+- escopo: a consulta periódica e a lógica de alerta de conectividade foram preservadas; somente a apresentação foi reduzida para impedir que o estado seja truncado.
+- validação: `npm run build` em `frontend/` concluiu sem erros; `bcc-frontend` foi reiniciado e ficou `online`; o bundle servido pelo console interno contém a fonte de `8px` para `Google DNS` e o estado `OK`/`OFF`.
+
+## Controle de energia do servidor em Operações Técnicas - 2026-09-12
+
+- implementação:
+  - `Operações Técnicas` ganhou o painel responsivo `Controle do servidor`, com os comandos `Reiniciar o Servidor` e `Desligar Servidor`; em telas mobile os cartões e ações passam para uma coluna sem perder área de toque.
+  - cada comando abre confirmação explícita, descreve a interrupção do console, rede e serviços e exige uma segunda confirmação antes da chamada à API.
+  - a interface só expõe o painel a perfis `admin` e `god`; a regra efetiva está no backend, portanto não pode ser contornada por chamada direta à API.
+  - `POST /api/control/server-power` aceita exclusivamente `reboot` e `poweroff`, exige JWT com papel `admin` ou `god`, usa allowlist de shell para `sudo systemctl reboot|poweroff` e responde `202` apenas após a solicitação ser aceita pelo systemd.
+  - requisições autorizadas, recusadas e falhas são registradas em `auth_activity_logs`; a trilha institucional existente também registra o POST.
+  - a autorização é registrada antes de chamar o `systemctl`, preservando a evidência mesmo se o encerramento do host interromper o processo logo após o comando ser aceito.
+- validação:
+  - `npm run build` em `backend/` concluiu sem erros em 2026-09-12.
+  - `npm run build` em `frontend/` concluiu sem erros em 2026-09-12.
+  - nenhum comando de energia foi disparado durante a validação.

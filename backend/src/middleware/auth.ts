@@ -8,6 +8,7 @@ const PUBLIC_ROUTES = new Set([
     '/api/ping',
     '/api/identity/health',
     '/api/identity/checkin',
+    '/api/support/agent/notifications',
 ]);
 
 export type AuthenticatedRequest = Request & {

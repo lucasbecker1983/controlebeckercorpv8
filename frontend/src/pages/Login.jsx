@@ -33,7 +33,11 @@ export default function Login({ onLogin }) {
     } catch (err) {
       storageRemove('becker_token');
       storageRemove('becker_user');
-      setError('Sessão não iniciada. Verifique backend/proxy.');
+      setError(
+        err?.response?.status === 401
+          ? 'Usuário ou senha inválidos.'
+          : err?.response?.data?.error || 'Sessão não iniciada. Verifique a conexão e tente novamente.',
+      );
     }
     finally { setLoading(false); }
   };

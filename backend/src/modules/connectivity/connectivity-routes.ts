@@ -122,15 +122,13 @@ router.post('/storage/delete', async (req, res) => {
 
 router.get('/list', async (req, res) => {
     try {
-        const [v, s, vpnStatusRaw, storageStatusRaw] = await Promise.all([
+        const [v, s, vpnStatusRaw] = await Promise.all([
             pool.query("SELECT * FROM vpn_wg_peers ORDER BY id DESC"),
             pool.query("SELECT * FROM sys_ftp_users ORDER BY id DESC"),
             execCmd(`systemctl is-active ${env.wireguardService}`),
-            execCmd("systemctl is-active smbd"),
         ]);
         const vs = vpnStatusRaw.trim() === 'active';
-        const ss = storageStatusRaw.trim() === 'active';
-        res.json({ vpn: v.rows, storage: s.rows, status: { vpn: vs, storage: ss } });
+        res.json({ vpn: v.rows, storage: s.rows, status: { vpn: vs, storage: false, storage_retired: true } });
     } catch (error) {
         respondConnectivityError(res, 'inventário de conectividade', error);
     }

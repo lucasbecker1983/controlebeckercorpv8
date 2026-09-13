@@ -304,6 +304,8 @@ export class ProxyEngineService {
             '# Acesso administrativo local e clientes explicitamente autorizados.',
             `acl allowed_clients src ${allowedClientCidrs.join(' ')}`,
             managedClientCidrs.length ? `acl managed_module_clients src ${managedClientCidrs.join(' ')}` : null,
+            'acl govbr_direct dstdom_regex -i (^|\\\\.)gov\\\\.br$',
+            'acl govbr_direct_url url_regex -i (^|[/:.])gov\\\\.br(:|/|$)',
             `acl proxy_whitelist dstdomain "${whitelistFile}"`,
             `acl proxy_blocklist dstdomain "${blocklistFile}"`,
             `acl proxy_whitelist_url url_regex -i "${whitelistUrlFile}"`,
@@ -361,6 +363,9 @@ export class ProxyEngineService {
             '',
             '# Ordem de precedência no proxy complementar.',
             'http_access deny !allowed_clients',
+            '# Dominios governamentais devem sair direto pelo firewall/DNS, nunca pelo Squid.',
+            'http_access deny govbr_direct',
+            'http_access deny govbr_direct_url',
         );
 
         for (const vlan of totalBlockAcls) {

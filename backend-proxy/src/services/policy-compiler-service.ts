@@ -62,6 +62,11 @@ const unique = (items: string[]) => Array.from(new Set(items
     .map((item) => String(item || '').trim())
     .filter(Boolean)));
 const sortedUnique = (items: string[]) => unique(items).sort((left, right) => left.localeCompare(right));
+const isGovBrDomain = (value: string) => {
+    const domain = normalizeDomain(value);
+    return domain === 'gov.br' || domain.endsWith('.gov.br');
+};
+const withoutGovBrDomains = (items: string[]) => items.filter((item) => !isGovBrDomain(item));
 
 const toRpzEntries = (domains: string[], target = '.') => domains.flatMap((domain) => ([
     `${domain} CNAME ${target}`,
@@ -459,11 +464,11 @@ export class PolicyCompilerService {
             this.writeText(path.join(this.enterpriseDir, `blocklist-vlan-${vlanId}-url.acl`), urls);
         }
 
-        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_whitelist.acl'), unique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal]));
+        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_whitelist.acl'), withoutGovBrDomains(unique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal])));
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_blocklist.acl'), compiled.blockGlobal);
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_whitelist_url.acl'), compiled.allowUrlGlobal);
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_blocklist_url.acl'), compiled.blockUrlGlobal);
-        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_protected_ssl.acl'), unique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal]));
+        this.writeText(path.join(this.legacyGeneratedDir, 'proxy_protected_ssl.acl'), withoutGovBrDomains(unique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal])));
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_bump_ssl.acl'), compiled.blockGlobal);
         this.writeText(path.join(this.legacyGeneratedDir, 'proxy_ip_bypass.acl'), compiled.ipBypassEntries);
     }
@@ -477,12 +482,12 @@ export class PolicyCompilerService {
         const version = generatedAt.replace(/[:.]/g, '-');
 
         const files: Record<string, string> = {};
-        files.squidWhitelist = this.writeText(this.squidWhitelistFile, sortedUnique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal]));
+        files.squidWhitelist = this.writeText(this.squidWhitelistFile, withoutGovBrDomains(sortedUnique([...compiled.allowGlobal, ...compiled.allowProtectedGlobal])));
         files.squidBlocklist = this.writeText(this.squidBlocklistFile, compiled.blockGlobal);
         files.squidWhitelistUrl = this.writeText(path.join(this.squidAclDir, 'proxy_whitelist_url.acl'), compiled.allowUrlGlobal);
         files.squidBlocklistUrl = this.writeText(path.join(this.squidAclDir, 'proxy_blocklist_url.acl'), compiled.blockUrlGlobal);
         files.squidIpBypass = this.writeText(this.squidIpBypassFile, compiled.ipBypassEntries);
-        files.squidProtected = this.writeText(this.squidProtectedFile, sortedUnique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal]));
+        files.squidProtected = this.writeText(this.squidProtectedFile, withoutGovBrDomains(sortedUnique([...compiled.allowProtectedGlobal, ...compiled.allowGlobal])));
         files.squidBump = this.writeText(this.squidBumpFile, compiled.blockGlobal);
 
         for (const [vlanId, domains] of compiled.allowByVlan.entries()) {

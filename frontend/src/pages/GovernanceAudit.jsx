@@ -13,6 +13,13 @@ import { ModuleHeader, StatusChip, Surface, cx } from '../components/ui/primitiv
 
 const blocks = [
   {
+    title: 'Centro de Auditoria',
+    description: 'Autenticação, rede, LGPD, chamados, hotspot, colaboradores e ações administrativas separados por categoria em uma linha única.',
+    icon: FileSearch,
+    to: '/auditoria-central',
+    tone: 'primary',
+  },
+  {
     title: 'Relatórios Forenses',
     description: 'Navegação, DNS/RPZ, Proxy/ACL, UFW, auditoria de sistema, exportação e prova técnica em uma trilha consultável.',
     icon: FileText,
@@ -35,7 +42,7 @@ const blocks = [
   },
   {
     title: 'Auditoria do Sistema',
-    description: 'Eventos administrativos, autenticação, LGPD e políticas sob leitura de controle interno.',
+    description: 'Atalho legado para relatórios técnicos enquanto o centro unificado concentra o uso principal.',
     icon: ShieldAlert,
     to: '/relatorios?tab=audit',
     tone: 'warning',
@@ -97,7 +104,7 @@ export default function GovernanceAudit() {
         )}
         actions={(
           <Link
-            to="/relatorios?tab=navigation&view=events"
+            to="/auditoria-central"
             className="inline-flex min-h-[var(--control-height)] items-center justify-center gap-2 rounded-full border border-primary/18 bg-primary px-[var(--control-padding-x)] py-2 text-sm font-semibold tracking-tight text-on-primary shadow-[var(--shadow-soft)] transition hover:brightness-105"
           >
             <FileSearch size={15} />

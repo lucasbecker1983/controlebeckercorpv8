@@ -162,15 +162,23 @@ const SOCIAL_SESSION_DOMAINS = [
 const MANAGED_POLICY_VLANS = [10, 30, 40, 50, 70];
 
 const WHATSAPP_WEB_META_DEPENDENCIES = [
+    'api.facebook.com',
     'b-graph.facebook.com',
+    'chat-e2ee-mini.facebook.com',
+    'connect.facebook.net',
     'dgw-mini.c10r.facebook.com',
     'edge-mqtt.facebook.com',
+    'edge-mqtt-fallback.facebook.com',
+    'ep7.facebook.com',
+    'gateway.facebook.com',
     'graph.facebook.com',
     'graph-fallback.facebook.com',
+    'mqtt.fallback.c10r.facebook.com',
     'mqtt.c10r.facebook.com',
     'star.c10r.facebook.com',
     'star.fallback.c10r.facebook.com',
     'z-m-gateway.facebook.com',
+    'z-p42-chat-e2ee-ig.facebook.com',
 ];
 
 const BASELINE_ALLOW_CATALOG = {

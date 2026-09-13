@@ -84,3 +84,35 @@ Nunca usar `/api/proxy/dns/...` para as rotas de DNS — não existe esse caminh
 2. **Expandir filtros de identidade** no frontend do Radar DNS (input de busca por usuário/computador)
 
 3. **Relatório de governança** com identidade Windows integrada ao PDF do Hotspot
+
+---
+
+## Pausa operacional — retenção/compactação PostgreSQL — 2026-08-10
+
+- Backup pré-limpeza concluído e validado antes de qualquer exclusão:
+  - `backups/becker_v8_full_2026-08-10T18-41-04-806Z.tar.gz`
+  - SHA-256 confirmado; arquivo não contém `node_modules`, `dist`, `.git`, backups internos ou logs.
+- Retenção de 30 dias foi implementada em `scripts/sgcg-telemetry-retention.sh`, com unidades-fonte em `systemd/sgcg-telemetry-retention.{service,timer}`.
+- Exclusões já confirmadas antes da pausa:
+  - `access_events`: `1.100.000` linhas removidas.
+  - `dns_policy_events`: `1.870.201` linhas removidas.
+- A execução foi parada por término do expediente; `sgcg-telemetry-retention.timer` está deliberadamente `disabled` e o serviço foi interrompido. Não existe `VACUUM FULL` em execução e nenhuma compactação física foi iniciada.
+- Para retomar em uma nova janela:
+  1. validar PostgreSQL, API `http://127.0.0.1:6778/api/ping`, espaço livre e o backup acima;
+  2. validar `bash -n scripts/sgcg-telemetry-retention.sh`;
+  3. instalar as unidades-fonte em `/etc/systemd/system/`, executar `systemctl daemon-reload`, `enable --now sgcg-telemetry-retention.timer` e iniciar o serviço de forma monitorada;
+  4. aguardar a conclusão da retenção, executar/confirmar `VACUUM` e só então, com janela explícita, executar `VACUUM FULL` uma tabela por vez para devolver espaço ao filesystem.
+
+## Janela de manutenção aprovada — 2026-08-11
+
+- Janela explicitamente autorizada para a compactação física.
+- Retenção de 30 dias retomada às 08:10 BRT com `sgcg-telemetry-retention.timer` ativo; limpeza em lotes permanece em execução.
+- `sgcg-telemetry-full-reclaim.service` foi instalado como unidade única de manutenção: aguarda a conclusão bem-sucedida da retenção e então executa `VACUUM FULL --analyze` sequencialmente em `access_events` e `dns_policy_events`, validando a API entre as duas etapas.
+- O primeiro disparo transitório foi cancelado antes de conclusão por não tratar o estado systemd `activating`; a unidade persistente corrige essa condição. Nenhuma compactação física foi concluída até este registro.
+
+## Conclusão da janela de manutenção — 2026-08-11
+
+- Retenção concluída com sucesso: `68.048.468` exclusões em `access_events` e `7.633.807` em `dns_policy_events` nesta execução.
+- Os `VACUUM FULL --analyze` sequenciais foram concluídos com sucesso: `access_events` às 15:46 BRT e `dns_policy_events` às 15:50 BRT.
+- Espaço livre no filesystem passou de 369 GB para 430 GB; as tabelas passaram de 55 GB para 1.688 MB (`access_events`) e de 13 GB para 2.725 MB (`dns_policy_events`).
+- Validação pós-manutenção: timer diário ativo/habilitado, API `http://127.0.0.1:6778/api/ping` respondeu `Pong`, e os registros mais antigos das duas tabelas ficaram em 12/07/2026, respeitando a retenção de 30 dias.

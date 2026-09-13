@@ -1,0 +1,6 @@
+{
+  "api_url": "https://console.interno.jacarezinho/api/support/agent/notifications",
+  "open_base_url": "https://console.interno.jacarezinho/chamados",
+  "token": "__SGCG_AGENT_TOKEN__",
+  "poll_seconds": 8
+}

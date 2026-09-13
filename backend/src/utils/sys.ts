@@ -5,6 +5,7 @@ import { env } from '../config/env';
 export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'systemctl-active', pattern: /^(sudo\s+)?systemctl is-active [\w@.-]+(\s+\|\|\s+echo\s+"?inactive"?)?$/ },
     { name: 'systemctl-manage', pattern: /^(sudo\s+)?systemctl (start|stop|restart|reload) [\w@.-]+$/ },
+    { name: 'systemctl-host-power', pattern: /^sudo systemctl (reboot|poweroff)$/ },
     { name: 'unbound-control', pattern: /^(sudo\s+)?unbound-control (reload|flush_zone \.)$/ },
     { name: 'ufw-read', pattern: /^sudo ufw status numbered$/ },
     { name: 'ufw-write', pattern: /^(sudo )?(echo ['"]?y['"]?\s*\|\s*)?sudo ufw (allow|deny|delete|enable|reset).+$/ },

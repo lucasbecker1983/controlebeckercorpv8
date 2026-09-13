@@ -20,10 +20,6 @@ IPSET_FILE = "/etc/ipset.conf"
 IPTABLES_FILE = "/etc/iptables/rules.v4"
 UNBOUND_CUSTOM_ZONES = "/etc/unbound/unbound.conf.d/custom-zones.conf"
 VIP_CLEAN_CONF = "/etc/unbound/sgcg-vip-clean.conf"
-SQUID_ACL_FILES = [
-    "/etc/squid/acl/proxy_whitelist.acl",
-    "/etc/squid/acl/proxy_protected_ssl.acl",
-]
 RPZ_ALLOW_FILES = [
     "/etc/unbound/becker/allowed.rpz",
     "/etc/unbound/becker/allowlist-vlan-10.rpz",
@@ -356,20 +352,6 @@ def ensure_line_file(path: str, lines: list[str]) -> bool:
     return changed
 
 
-def ensure_squid_acls(domains: set[str]) -> bool:
-    changed = False
-    acl_domains = sorted({domain for domain in domains if normalize_domain(domain)})
-    for path in SQUID_ACL_FILES:
-        changed = ensure_line_file(path, acl_domains) or changed
-    if changed:
-        parse = run(["squid", "-k", "parse"], check=False)
-        if parse.returncode == 0:
-            run(["systemctl", "reload", "squid"], check=False)
-        else:
-            print("  [AVISO] squid -k parse falhou apos atualizar ACLs.")
-    return changed
-
-
 def ensure_rpz_passthru(domains: set[str]) -> bool:
     changed = False
     records: list[str] = []
@@ -551,7 +533,6 @@ def main() -> None:
     ensure_institutional_dns_rows()
     config_changed = ensure_unbound_custom_zones()
     config_changed = ensure_rpz_passthru(set(policy_domains)) or config_changed
-    ensure_squid_acls(set(policy_domains))
     count = refresh_members()
     ensure_firewall_rules()
     reload_unbound_if_needed(config_changed)

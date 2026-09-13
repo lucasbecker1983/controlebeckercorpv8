@@ -60,3 +60,5 @@ backend/dist/
 # Runtime identity/check-in data. Keep service code and templates versioned,
 # but never publish collected endpoint identity data.
 data/identity/
+data/support/
+sgcg-endpoint-identity-msi/tools/windows/generated/

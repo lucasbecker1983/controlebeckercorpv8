@@ -1,4 +1,4 @@
-import { Bot, Boxes, Eye, FileSearch, Landmark, LayoutDashboard, Network, Scale, ServerCog, ShieldCheck, Smartphone, Waypoints, Wifi } from 'lucide-react';
+import { Bot, Boxes, Eye, FileSearch, Landmark, LayoutDashboard, Network, Scale, ServerCog, Settings2, ShieldCheck, Smartphone, Waypoints, Wifi } from 'lucide-react';
 import Sidebar from './ui/Sidebar';
 
 const menu = [
@@ -27,9 +27,10 @@ const menu = [
       {
         label: 'Auditoria e Evidências',
         icon: FileSearch,
-        path: '/governanca-auditoria',
-        matchPaths: ['/relatorios', '/chamados', '/users', '/settings'],
+        path: '/auditoria-central',
+        matchPaths: ['/governanca-auditoria', '/relatorios', '/chamados', '/users'],
       },
+      { label: 'Configurações', icon: Settings2, path: '/settings' },
     ],
   },
   {
