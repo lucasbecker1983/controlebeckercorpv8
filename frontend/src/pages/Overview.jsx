@@ -346,7 +346,9 @@ export default function Overview() {
   const services = Object.entries(live?.services || {});
   const servicesDown = services.filter(([, ok]) => !ok).length;
 
-  const topDevices = (traffic?.devices || [])
+  const topDevices = [...(traffic?.devices || [])]
+    .filter((d) => d.down + d.up > 0.01)
+    .sort((a, b) => (b.down + b.up) - (a.down + a.up))
     .map((d) => ({ key: d.ip, label: d.hostname ? d.hostname.split(' · ')[0] : d.ip, sub: d.hostname ? d.ip : `VLAN ${d.vlan}`, value: d.down + d.up, title: `${d.ip} · VLAN ${d.vlan}` }))
     .slice(0, 7);
   const topSites = (traffic?.sites || [])

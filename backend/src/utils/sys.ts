@@ -42,7 +42,7 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'dig', pattern: /^dig @127\.0\.0\.1 .+ \+short$/ },
     { name: 'cron-sync', pattern: new RegExp(`^sudo ${env.projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/backend\\/(999_sync_cron|999_vlan_scheduler)\\.sh .+$`) },
     { name: 'background-script', pattern: /^bash .+ > \/dev\/null 2>&1 &$/ },
-    { name: 'monitor-iftop', pattern: /^sudo iftop -i [a-z0-9]+\.\d{1,4} -t -s 3 -n -N -L 60 -B 2>\/dev\/null$/ },
+    { name: 'monitor-iftop', pattern: /^sudo iftop -i [a-z0-9]+\.\d{1,4} -t -s 3 -n -N -L \d{2,3} -B 2>\/dev\/null$/ },
     { name: 'monitor-vnstat', pattern: /^vnstat --json [hd] \d{1,3} -i [a-z0-9]+(\.\d{1,4})?$/ },
     { name: 'misc-safe', pattern: /^(sync|sudo sysctl -w vm\.drop_caches=3)$/ },
     { name: 'nmap-scan', pattern: /^sudo nmap -sn -n --min-rate 1000 .+$/ },

@@ -9,7 +9,6 @@ import { api } from '../services/api';
 
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 const SANS = 'Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif';
-const MAX_DEVICES = 16;
 const MAX_SITES = 12;
 const fmt = (v) => {
   const n = Number(v || 0);
@@ -56,14 +55,12 @@ function buildModel(data, view, mode) {
   if (!data) return null;
   const pick = (f) => (mode === 'd' ? f.down : f.up);
   const vlanInfo = new Map((data.vlans || []).map((v) => [v.id, v]));
+  // Todos os dispositivos conectados, sempre na mesma ordem (VLAN e IP), com ou sem tráfego.
   const all = (data.devices || []).map((d) => {
     const flows = d.flows.filter((f) => (view === 'internet' ? f.kind === 'internet' : f.kind === 'internal'));
     return { ...d, flows, val: flows.reduce((s, f) => s + pick(f), 0) };
-  }).filter((d) => d.val > 0.02).sort((a, b) => a.vlan - b.vlan || b.val - a.val);
-
-  const top = [...all].sort((a, b) => b.val - a.val).slice(0, MAX_DEVICES);
-  const keep = new Set(top.map((d) => d.ip));
-  const devices = all.filter((d) => keep.has(d.ip));
+  });
+  const devices = all;
 
   const siteMap = new Map();
   for (const d of all) {
@@ -105,7 +102,7 @@ function buildModel(data, view, mode) {
     devices,
     sites,
     vlans,
-    hidden: all.length - devices.length,
+    hidden: 0,
     wan: mode === 'd' ? data.wan.down : data.wan.up,
   };
 }
@@ -151,11 +148,12 @@ export default function TrafficMap() {
 
   const model = useMemo(() => buildModel(data, view, mode), [data, view, mode]);
   const LINK = data?.link_mbps || 300;
-  const rows = Math.max(model?.devices.length || 0, model?.sites.length || 0, 10);
-  const height = Math.max(560, rows * 33 + 60);
+  const deviceCount = model?.devices.length || 0;
+  const rowH = deviceCount > 40 ? 20 : deviceCount > 24 ? 26 : 33;
+  const height = Math.max(560, deviceCount * rowH + 60, (model?.sites.length || 0) * 33 + 60);
   const internet = view === 'internet';
 
-  stateRef.current = { model, theme, sel, mode, paused, width, height, LINK, internet };
+  stateRef.current = { model, theme, sel, mode, paused, width, height, LINK, internet, compact: rowH < 26 };
 
   // Animação contínua: lê o estado atual pelo ref, sem recriar o loop.
   useEffect(() => {
@@ -169,7 +167,7 @@ export default function TrafficMap() {
 
     const draw = (ts) => {
       const st = stateRef.current;
-      const { model: m, theme: C, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet } = st;
+      const { model: m, theme: C, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet, compact } = st;
       if (!st.paused) phase += (ts - last) / 1000 || 0;
       last = ts;
       const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -192,7 +190,7 @@ export default function TrafficMap() {
       m.devices.forEach((d, i) => {
         d.x = X.dev;
         d.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.devices.length);
-        d.r = 3 + Math.sqrt(d.val) * 1.6;
+        d.r = d.val > 0.01 ? 3 + Math.sqrt(d.val) * 1.6 : 2.5;
       });
       m.vlans.forEach((v, i) => {
         v.x = X.vlan;
@@ -249,7 +247,7 @@ export default function TrafficMap() {
 
       m.devices.forEach((d) => {
         const v = m.vlans.find((x) => x.id === d.vlan);
-        if (v) edge(d, v, d.val, C.vlan(d.vlan), devOn(d), 2.2);
+        if (v) edge(d, v, d.val, C.vlan(d.vlan), devOn(d) && d.val > 0.01, 2.2);
       });
       if (inet) {
         m.vlans.forEach((v) => edge(v, wan, v.val, C.vlan(v.id), vlanOn(v), 5));
@@ -294,16 +292,25 @@ export default function TrafficMap() {
       };
 
       m.devices.forEach((d) => {
+        const idle = d.val <= 0.01;
         const on = devOn(d);
-        circle(d, C.vlan(d.vlan), on, `dev:${d.ip}`);
-        ctx.textAlign = 'right';
-        ctx.font = `500 11px ${MONO}`;
-        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
-        ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
-        ctx.font = `10px ${SANS}`;
-        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        circle(d, C.vlan(d.vlan), on && !idle, `dev:${d.ip}`);
         const kind = shortName(d);
-        ctx.fillText(`${kind.length > 22 ? `${kind.slice(0, 21)}…` : kind} · ${fmt(d.val)} Mbps${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
+        const name = kind.length > 22 ? `${kind.slice(0, 21)}…` : kind;
+        const rate = idle ? 'sem tráfego' : `${fmt(d.val)} Mbps`;
+        ctx.textAlign = 'right';
+        if (compact) {
+          ctx.font = `500 10.5px ${MONO}`;
+          ctx.fillStyle = on ? (idle ? alpha(C.ink, 0.5) : C.ink) : alpha(C.ink, 0.3);
+          ctx.fillText(`${d.ip} · ${name} · ${rate}${d.qosVip ? ' · ★' : ''}`, d.x - d.r - 8, d.y + 3.5);
+        } else {
+          ctx.font = `500 11px ${MONO}`;
+          ctx.fillStyle = on ? (idle ? alpha(C.ink, 0.55) : C.ink) : alpha(C.ink, 0.35);
+          ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
+          ctx.font = `10px ${SANS}`;
+          ctx.fillStyle = on ? alpha(C.ink, idle ? 0.45 : 0.6) : alpha(C.ink, 0.28);
+          ctx.fillText(`${name} · ${rate}${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
+        }
       });
 
       m.vlans.forEach((v) => {
@@ -389,7 +396,7 @@ export default function TrafficMap() {
   const select = (next) => setSel((cur) => (cur && next && cur.key === next.key ? null : next));
 
   const devAll = (data?.devices || []);
-  const topIps = model ? [...model.devices].sort((a, b) => b.val - a.val).slice(0, 5) : [];
+  const topIps = model ? [...model.devices].filter((d) => d.val > 0.01).sort((a, b) => b.val - a.val).slice(0, 5) : [];
   const topSites = model ? model.sites.slice(0, 5) : [];
   const vlanLegend = data?.vlans || [];
   const updated = data?.updated_at ? new Date(data.updated_at).toLocaleTimeString('pt-BR') : null;

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import { promises as dnsPromises } from 'dns';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
@@ -49,7 +50,7 @@ type Sample = {
     ram: number;
 };
 type Flow = { remote: string; label: string; domain: string | null; kind: 'internet' | 'internal'; remoteVlan: number | null; down: number; up: number };
-type Device = { ip: string; vlan: number; hostname: string | null; down: number; up: number; internalDown: number; internalUp: number; qosVip: boolean; flows: Flow[] };
+type Device = { ip: string; vlan: number; hostname: string | null; mac?: string | null; down: number; up: number; internalDown: number; internalUp: number; qosVip: boolean; filterVip?: boolean; flows: Flow[] };
 
 const round = (value: number, digits = 2) => Math.round(value * 10 ** digits) / 10 ** digits;
 const readNumber = (path: string) => {
@@ -131,6 +132,9 @@ class MonitorService {
     private resolvedDomains = new Map<string, number>();
     private reverseCache = new Map<string, { name: string | null; at: number }>();
     private hostnames = new Map<string, string>();
+    private neighborList: Array<{ ip: string; mac: string; iface: string }> = [];
+    private filterVips = new Set<string>();
+    private serverIps = new Set<string>();
     private qosVips = new Set<string>();
     private resolver = new dnsPromises.Resolver({ timeout: 1500, tries: 1 });
     private trafficRunning = false;
@@ -295,31 +299,60 @@ class MonitorService {
         }
     }
 
+    private qosLabels = new Map<string, string>();
+    private vipLabels = new Map<string, string>();
+
     private async loadQosVips() {
-        const { rows } = await pool.query('SELECT ip::text AS ip FROM net_qos_vips');
+        const { rows } = await pool.query('SELECT ip::text AS ip, label FROM net_qos_vips');
         this.qosVips = new Set(rows.map((row) => String(row.ip).replace(/\/32$/, '')));
+        this.qosLabels = new Map(rows.filter((r) => r.label).map((r) => [String(r.ip).replace(/\/32$/, ''), String(r.label)]));
+        const vips = await pool.query("SELECT host(ip) AS ip, COALESCE(NULLIF(hostname, ''), NULLIF(description, '')) AS name FROM policy_exceptions WHERE active = TRUE").catch(() => ({ rows: [] as any[] }));
+        this.filterVips = new Set(vips.rows.map((r) => String(r.ip)));
+        this.vipLabels = new Map(vips.rows.filter((r) => r.name && !/^vip-\d/.test(r.name)).map((r) => [String(r.ip), String(r.name)]));
     }
+
+    private nameFor(ip: string) {
+        const dhcp = this.hostnames.get(ip);
+        return this.identityNames.get(ip) || this.qosLabels.get(ip) || this.vipLabels.get(ip) || (dhcp && dhcp !== '1' ? dhcp : null);
+    }
+
+    private identityNames = new Map<string, string>();
+    private activeLeases: Array<{ ip: string; mac: string }> = [];
+    private seen = new Map<string, { mac: string | null; at: number }>();
 
     private async loadHostnames() {
         const names = new Map<string, string>();
+        const identity = new Map<string, string>();
         try {
             const leases = fs.readFileSync('/var/lib/dhcp/dhcpd.leases', 'utf-8');
             const blocks = leases.split(/\nlease /);
+            const active = new Map<string, string>();
+            const now = Date.now();
             for (const block of blocks) {
                 const ip = block.match(/^(\d+\.\d+\.\d+\.\d+)/)?.[1];
                 const host = block.match(/client-hostname "([^"]+)"/)?.[1];
                 if (ip && host) names.set(ip, host);
+                // O arquivo guarda o histórico; o último bloco de cada IP é o que vale.
+                const state = block.match(/binding state (\w+);/)?.[1];
+                const mac = block.match(/hardware ethernet ([0-9a-f:]+);/i)?.[1]?.toLowerCase();
+                const ends = block.match(/ends \d (\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2});/)?.[1];
+                if (ip) {
+                    const valid = state === 'active' && (!ends || new Date(`${ends.replace(/\//g, '-')}Z`).getTime() > now);
+                    if (valid && mac) active.set(ip, mac); else active.delete(ip);
+                }
             }
+            this.activeLeases = Array.from(active.entries()).map(([ip, mac]) => ({ ip, mac }));
         } catch {}
         try {
             const identity = JSON.parse(fs.readFileSync(`${env.projectRoot}/data/identity/latest.json`, 'utf-8'));
             for (const entry of Object.values<any>(identity || {})) {
                 if (entry?.ip && entry?.computer && entry?.agent_id !== 'TESTE') {
-                    names.set(String(entry.ip), entry.display_user ? `${entry.computer} · ${entry.display_user}` : String(entry.computer));
+                    identity.set(String(entry.ip), entry.display_user ? `${entry.computer} · ${entry.display_user}` : String(entry.computer));
                 }
             }
         } catch {}
         this.hostnames = names;
+        this.identityNames = identity;
     }
 
     private parseTcClass(text: string, classId: string) {
@@ -371,13 +404,17 @@ class MonitorService {
     private readNeighbors() {
         try {
             const counts = new Map<string, number>();
+            const list: Array<{ ip: string; mac: string; iface: string }> = [];
             const lines = fs.readFileSync('/proc/net/arp', 'utf-8').split('\n').slice(1);
             for (const line of lines) {
                 const cols = line.trim().split(/\s+/);
                 if (cols.length < 6) continue;
                 if (cols[2] === '0x0' || cols[3] === '00:00:00:00:00:00') continue;
                 counts.set(cols[5], (counts.get(cols[5]) || 0) + 1);
+                list.push({ ip: cols[0], mac: cols[3].toLowerCase(), iface: cols[5] });
             }
+            this.neighborList = list;
+            this.serverIps = new Set(Object.values(os.networkInterfaces()).flat().filter((a: any) => a && a.family === 'IPv4').map((a: any) => a.address));
             for (const vlan of this.vlans.values()) vlan.neighbors = counts.get(vlan.iface) || 0;
         } catch {}
     }
@@ -479,11 +516,11 @@ class MonitorService {
         try {
             const ifaces = this.listVlanIfaces().filter(({ id }) => {
                 const vlan = this.vlans.get(id);
-                return vlan && (vlan.down + vlan.up) > 0.05;
+                return vlan && (vlan.down + vlan.up) > 0.02;
             });
             const outputs = await Promise.all(ifaces.map(async ({ iface, id }) => ({
                 id,
-                text: await execCmd(`sudo iftop -i ${iface} -t -s 3 -n -N -L 60 -B 2>/dev/null`),
+                text: await execCmd(`sudo iftop -i ${iface} -t -s 3 -n -N -L 500 -B 2>/dev/null`),
             })));
             const devices = new Map<string, Device>();
             for (const { id, text } of outputs) {
@@ -499,7 +536,7 @@ class MonitorService {
                     const device = devices.get(local) || {
                         ip: local,
                         vlan: id,
-                        hostname: this.hostnames.get(local) || null,
+                        hostname: this.nameFor(local),
                         down: 0,
                         up: 0,
                         internalDown: 0,
@@ -507,12 +544,14 @@ class MonitorService {
                         qosVip: this.qosVips.has(local),
                         flows: [],
                     };
-                    const internal = isPrivate(remote);
+                    const isServer = this.serverIps.has(remote);
+                    const internal = isPrivate(remote) || isServer;
                     const remoteVlan = vlanOfIp(remote);
                     let label: string;
                     let domain: string | null = null;
                     if (internal) {
-                        if (remote.endsWith('.1')) label = 'Servidor SGCG';
+                        if (isServer && !isPrivate(remote)) label = 'Servidor SGCG (IP público)';
+                        else if (remote.endsWith('.1')) label = 'Servidor SGCG';
                         else if (remoteVlan && this.vlans.get(remoteVlan)) label = `${this.vlans.get(remoteVlan)?.name} · ${remote}`;
                         else label = `Rede interna · ${remote}`;
                     } else {
@@ -530,15 +569,34 @@ class MonitorService {
                     devices.set(local, device);
                 }
             }
+            // Todos os dispositivos conectados: tabela ARP, IPs ativos no DHCP e quem teve tráfego.
+            // Quem some fica 30 minutos na lista, para o mapa não mudar a cada coleta.
+            const now = Date.now();
+            const managed = new Set(this.listVlanIfaces().map((v) => v.id));
+            for (const n of this.neighborList) {
+                if (n.iface.startsWith(`${env.lanInterface}.`)) this.seen.set(n.ip, { mac: n.mac, at: now });
+            }
+            for (const l of this.activeLeases) this.seen.set(l.ip, { mac: l.mac, at: now });
+            for (const ip of devices.keys()) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
+            for (const [ip, info] of this.seen) {
+                if (now - info.at > 30 * 60 * 1000) { this.seen.delete(ip); continue; }
+                const id = vlanOfIp(ip);
+                if (!id || !managed.has(id) || ip.endsWith('.1')) continue;
+                const existing = devices.get(ip);
+                if (existing) { existing.mac = info.mac; continue; }
+                devices.set(ip, { ip, vlan: id, hostname: this.nameFor(ip), mac: info.mac, down: 0, up: 0, internalDown: 0, internalUp: 0, qosVip: this.qosVips.has(ip), flows: [] });
+            }
             const list = Array.from(devices.values()).map((device) => ({
                 ...device,
                 down: round(device.down),
                 up: round(device.up),
                 internalDown: round(device.internalDown),
                 internalUp: round(device.internalUp),
+                filterVip: this.filterVips.has(device.ip),
                 flows: device.flows.sort((x, y) => (y.down + y.up) - (x.down + x.up)),
             }));
-            list.sort((x, y) => (y.down + y.up) - (x.down + x.up));
+            const ipNum = (ip: string) => ip.split('.').reduce((acc, part) => acc * 256 + Number(part), 0);
+            list.sort((x, y) => x.vlan - y.vlan || ipNum(x.ip) - ipNum(y.ip));
             this.traffic = { updatedAt: Date.now(), devices: list };
         } finally {
             this.trafficRunning = false;
