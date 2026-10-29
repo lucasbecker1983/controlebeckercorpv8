@@ -24,6 +24,7 @@ type VipBypassRow = {
     ip: string;
     vlan_id: number | null;
     dns_audit_enabled: boolean;
+    mac_address?: string | null;
 };
 
 const BEGIN_MARKER = '# BEGIN DNS_EMERGENCY_V8';
@@ -120,8 +121,19 @@ class DnsContingencyService {
                 if (code !== 'EEXIST') throw error;
 
                 try {
+                    // Trava deixada por um processo que já morreu (ex.: reinício no meio da aplicação): libera na hora.
+                    let ownerDead = false;
+                    try {
+                        const owner = JSON.parse(fs.readFileSync(`${FIREWALL_LOCK_DIR}/owner.json`, 'utf8'));
+                        const ownerPid = Number(owner?.pid);
+                        if (Number.isInteger(ownerPid) && ownerPid > 0 && ownerPid !== process.pid) {
+                            try { process.kill(ownerPid, 0); } catch (killError) {
+                                ownerDead = (killError as NodeJS.ErrnoException).code === 'ESRCH';
+                            }
+                        }
+                    } catch { /* owner.json ainda não escrito: segue a regra de tempo */ }
                     const stat = fs.statSync(FIREWALL_LOCK_DIR);
-                    if (Date.now() - stat.mtimeMs > FIREWALL_LOCK_STALE_MS) {
+                    if (ownerDead || Date.now() - stat.mtimeMs > FIREWALL_LOCK_STALE_MS) {
                         fs.rmSync(FIREWALL_LOCK_DIR, { recursive: true, force: true });
                         continue;
                     }
@@ -186,9 +198,7 @@ class DnsContingencyService {
     }
 
     async bootstrap() {
-        await this.ensureSchema();
-        await this.reconcileExpired();
-        await this.ensureFirewallStateWithRetry('bootstrap');
+        // O reconciliador é ligado antes de tudo: se o bootstrap falhar, ele refaz as regras no minuto seguinte.
         if (!this.interval) {
             this.interval = setInterval(() => {
                 this.reconcileExpired()
@@ -196,6 +206,9 @@ class DnsContingencyService {
                     .catch((error) => console.error('[DNS CONTINGENCY] Falha no reconciler:', error));
             }, this.retryIntervalMs);
         }
+        await this.ensureSchema();
+        await this.reconcileExpired();
+        await this.ensureFirewallStateWithRetry('bootstrap');
     }
 
     async getStateRow() {
@@ -322,13 +335,13 @@ class DnsContingencyService {
         await ensureBlockingReleaseSchema();
         const { rows } = await pool.query(
             `
-                SELECT host(ip) AS ip, vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, id AS sort_id
+                SELECT host(ip) AS ip, vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, UPPER(NULLIF(mac_address, '')) AS mac_address, id AS sort_id
                 FROM policy_exceptions
                 WHERE active = TRUE
                   AND masklen(ip) = 32
                   AND (valid_until IS NULL OR valid_until >= NOW())
                 UNION ALL
-                SELECT host(cidr::inet) AS ip, NULL::integer AS vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, id AS sort_id
+                SELECT host(cidr::inet) AS ip, NULL::integer AS vlan_id, COALESCE(dns_audit_enabled, TRUE) AS dns_audit_enabled, NULL::text AS mac_address, id AS sort_id
                 FROM dns_vip
                 WHERE ativo = TRUE
                   AND masklen(cidr::inet) = 32
@@ -343,6 +356,7 @@ class DnsContingencyService {
                 ip: String(row.ip || '').trim(),
                 vlan_id: row.vlan_id === null || row.vlan_id === undefined ? null : Number(row.vlan_id),
                 dns_audit_enabled: row.dns_audit_enabled !== false,
+                mac_address: (row as any).mac_address ? String((row as any).mac_address).trim().toUpperCase() : null,
             }))
             .filter((row) => {
                 if (!row.ip) return false;
@@ -538,6 +552,12 @@ class DnsContingencyService {
             env.proxyGatewayIp,
         ]);
         const activeVipSet = new Set(vipIps.map((ip) => `${ip}/32`));
+        // VIP amarrado ao aparelho: as regras de origem passam a exigir o MAC cadastrado.
+        const macByIp = new Map<string, string>();
+        for (const vip of vipBypassRows) {
+            const mac = String(vip.mac_address || '').trim().toUpperCase();
+            if (/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac) && !macByIp.has(vip.ip)) macByIp.set(vip.ip, mac);
+        }
         const dnsAuditByIp = new Map<string, boolean>();
         for (const ip of vipIps) {
             dnsAuditByIp.set(ip, vipBypassRows.some((vip) => vip.ip === ip && vip.dns_audit_enabled !== false));
@@ -623,11 +643,18 @@ class DnsContingencyService {
                 if (!match) continue;
                 const ipMatch = line.match(/\s-[sd]\s+(\d+\.\d+\.\d+\.\d+(?:\/32)?)\b/);
                 const normalizedIp = ipMatch?.[1]?.includes('/') ? ipMatch[1] : `${ipMatch?.[1]}/32`;
+                // Regra de origem que não bate com o vínculo de MAC atual é removida e recriada.
+                const plainIp = normalizedIp ? normalizedIp.replace(/\/32$/, '') : '';
+                const desiredMac = macByIp.get(plainIp) || '';
+                const lineMac = (line.match(/--mac-source\s+([0-9A-Fa-f:]{17})/)?.[1] || '').toUpperCase();
+                const isSourceRule = new RegExp(`\\s-s\\s+${plainIp.replace(/\./g, '\\.')}(/32)?\\b`).test(line);
+                const macConsistent = !isSourceRule || lineMac === desiredMac;
                 if (
                     normalizedIp
                     && activeVipSet.has(normalizedIp)
                     && !staleNatVipIps.has(normalizedIp)
                     && !staleFilterVipIps.has(normalizedIp)
+                    && macConsistent
                 ) continue;
                 const args = match[2].trim().split(/\s+/);
                 const table = line.includes('--to-ports') || match[1] === 'PREROUTING' ? 'nat' : 'filter';
@@ -696,6 +723,13 @@ class DnsContingencyService {
                 ['filter', 'FORWARD', ['-d', ip, '-i', env.wanInterface, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-m', 'comment', '--comment', 'sgcg-vip-bypass', '-j', 'ACCEPT'], filterInsertPosition],
             ] as Array<[string, string, string[], number]>;
 
+            const vipMac = macByIp.get(ip);
+            if (vipMac) {
+                for (const rule of rules) {
+                    const args = rule[2];
+                    if (args[0] === '-s' && args[1] === ip) args.splice(2, 0, '-m', 'mac', '--mac-source', vipMac);
+                }
+            }
             for (const [table, chain, args, insertPosition] of rules) {
                 const key = this.runtimeRuleKey(table, chain, args);
                 if (existingRuntimeRules.has(key)) continue;

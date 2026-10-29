@@ -400,6 +400,8 @@ ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_by VARCHAR(128);
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+-- VIP amarrado ao aparelho: com MAC preenchido, a liberação só vale para esse endereço físico.
+ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17);
 ALTER TABLE dns_vip ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS dns_ignored_domains (

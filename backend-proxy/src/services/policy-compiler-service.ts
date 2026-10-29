@@ -25,6 +25,7 @@ type ExceptionRow = {
     exception_type?: string | null;
     bypass_total?: boolean;
     active: boolean;
+    mac_address?: string | null;
 };
 
 type VlanRow = {
@@ -335,6 +336,11 @@ export class PolicyCompilerService {
         const ipBypassEntries = normalizeIpv4Cidrs(unique(exceptions
             .filter((row) => isManagedBlockingIp(row.ip))
             .map((row) => String(row.ip || '').trim())));
+        // VIP amarrado ao MAC: no DNS principal ele não é reconhecido pelo IP. O DNS dele chega ao
+        // resolvedor VIP só pelo redirecionamento do firewall, que confere o MAC do aparelho.
+        const macBoundVipIps = new Set(normalizeIpv4Cidrs(unique(exceptions
+            .filter((row) => isManagedBlockingIp(row.ip) && /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(String(row.mac_address || '').trim()))
+            .map((row) => String(row.ip || '').trim()))));
         const vlanBypassEntries = normalizeIpv4Cidrs(unique(operationalVlans
             .filter((vlan) => emergencyVlanIds.has(Number(vlan.vlan_id)))
             .map((vlan) => String(vlan.subnet_cidr || '').trim())
@@ -343,7 +349,7 @@ export class PolicyCompilerService {
         // VLANs em bypass emergencial recebem passthru DNS total via client-ip na zona VIP do Unbound/RPZ.
         // Saem do escopo categórico por VLAN e não herdam bloqueios de domínio enquanto o bypass estiver ativo.
         const dnsBypassEntries = sortedUnique([
-            ...ipBypassEntries,
+            ...ipBypassEntries.filter((cidr) => !macBoundVipIps.has(cidr)),
             ...vlanBypassEntries,
             `${env.proxyLocalResolverIp}/32`,
         ]);

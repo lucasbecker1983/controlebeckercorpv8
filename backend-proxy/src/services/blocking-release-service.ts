@@ -2319,6 +2319,12 @@ class BlockingReleaseService {
             vlanId: rows[0].vlan_id,
             ip,
         });
+        if (hasOwn(payload, 'mac_address') || hasOwn(payload, 'macAddress')) {
+            const rawMac = String(payload?.mac_address ?? payload?.macAddress ?? '').trim().toUpperCase().replace(/-/g, ':');
+            if (rawMac && !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(rawMac)) throw new Error('MAC inválido. Use o formato AA:BB:CC:DD:EE:FF.');
+            const updated = await pool.query('UPDATE policy_exceptions SET mac_address = $1, updated_at = NOW() WHERE id = $2 RETURNING *', [rawMac || null, rows[0].id]);
+            rows[0] = updated.rows[0];
+        }
         await this.syncDnsVipFromExceptions();
         return rows[0];
     }
