@@ -131,13 +131,18 @@ create_backup() {
     payload=(backend frontend backend-proxy doc_generator scripts)
     [[ -d "$PROJECT_ROOT/data" ]] && payload+=(data)
 
-    set_status 'running' 'database_dump' 'Gerando dump consistente do PostgreSQL; esta etapa pode demorar em bases grandes.'
-    log "Iniciando dump custom do banco $DB_NAME."
-    sudo -u postgres pg_dump --format=custom --compress=zstd:3 --no-owner --no-privileges --file="$dump" "$DB_NAME" >> "$LOG_FILE" 2>&1
+    # Telemetria de alto volume (consultas DNS e acessos do proxy, ~5,5 GB): só a estrutura entra no backup.
+    # Sem isso cada backup passa de 2 GB; com isso fica em dezenas de MB. As tabelas de auditoria e LGPD continuam completas.
+    local telemetry_tables=(dns_policy_events access_events dns_logs navigation_events) skip_data=() tbl
+    for tbl in "${telemetry_tables[@]}"; do skip_data+=("--exclude-table-data=public.$tbl"); done
+
+    set_status 'running' 'database_dump' 'Gerando dump consistente do PostgreSQL (sem os dados de telemetria DNS/proxy, só a estrutura).'
+    log "Iniciando dump custom do banco $DB_NAME sem os dados de: ${telemetry_tables[*]}."
+    sudo -u postgres pg_dump --format=custom --compress=zstd:3 --no-owner --no-privileges "${skip_data[@]}" --file="$dump" "$DB_NAME" >> "$LOG_FILE" 2>&1
     sudo -u postgres pg_restore --list "$dump" > /dev/null
 
     set_status 'running' 'packing' 'Empacotando código, configurações e dados persistentes sem artefatos reconstruíveis.'
-    printf '{\n  "format": 2,\n  "database": "%s",\n  "database_dump": "recovery/database.dump",\n  "database_sha256": "%s",\n  "created_at": "%s",\n  "excluded": ["node_modules", "dist", ".git", "backups", "logs", "cache", "coverage"]\n}\n' \
+    printf '{\n  "format": 2,\n  "database": "%s",\n  "database_dump": "recovery/database.dump",\n  "database_sha256": "%s",\n  "created_at": "%s",\n  "excluded": ["node_modules", "dist", ".git", "backups", "logs", "cache", "coverage"],\n  "excluded_table_data": ["dns_policy_events", "access_events", "dns_logs", "navigation_events"]\n}\n' \
         "$DB_NAME" "$(sha256sum "$dump" | awk '{print $1}')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$manifest"
     tar -czf "$archive_tmp" \
         --exclude='node_modules' --exclude='dist' --exclude='.git' --exclude='backups' --exclude='*.log' --exclude='.cache' --exclude='coverage' \

@@ -8508,3 +8508,11 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Tamanho: o banco tem 5,9 GB (dns_policy_events 2,6 GB, access_events 1,7 GB, dns_logs 0,8 GB) e cada backup completo fica em torno de 2 GB; 30 dias = cerca de 60 GB, com 353 GB livres.
 - Tela de Backups: mostra quantos dias tem o último backup (vermelho acima de 30 dias, "Backups parados"), e o aviso da regra de retenção de 30 dias.
 - Quando a refatoração terminar: rodar uma vez `sudo bash scripts/sgcg-backup-daily.sh` (gera o backup novo e aplica a retenção; os 15 antigos viram 3: o novo e os 2 mais recentes de agosto, que saem sozinhos nas noites seguintes) e instalar o timer.
+
+
+## Backup sem os dados de telemetria - 2026-10-29
+
+- Decisão do responsável: os backups não carregam o histórico de telemetria. Conferido antes: o backup de 10/08 (2075 MB) não tinha `node_modules`, `dist` nem `.git`; 2073 MB eram só o dump do banco, quase tudo `dns_policy_events` (2,6 GB), `access_events` (1,7 GB), `dns_logs` (0,8 GB) e `navigation_events` (0,46 GB).
+- `scripts/sgcg-backup-restore.sh` (`create_backup`): `pg_dump` com `--exclude-table-data=public.<tabela>` para essas 4 tabelas (a estrutura, índices e sequências continuam no dump); o manifesto ganhou `excluded_table_data`. O backup de segurança feito antes de uma restauração continua COMPLETO, para a restauração poder ser desfeita sem perder telemetria. Auditoria (`action_audit_logs`, `proxy_audit_log`, `domain_policy_audit_logs`, LGPD), regras, VIPs e políticas entram completos.
+- Prova: dump de 5,9 MB (antes 2073 MB) em 2 s; restaurado em banco de teste (apagado em seguida) com 79 tabelas, 212 índices e 69 sequências, iguais à produção; policy_exceptions 31/31, domain_policies 15/15, domain_policy_entries 388/388, vlan_policies 7/7, dns_vip 40/40, action_audit_logs 153404/153404, proxy_audit_log 290/290; as 4 tabelas de telemetria voltam vazias. Com 30 dias de retenção, o conjunto de backups cai de ~60 GB para ~1 GB.
+- Tela de Backups explica a regra (30 dias, 3 mais recentes sempre, telemetria fora). Nenhum backup foi gerado nem apagado nesta etapa.

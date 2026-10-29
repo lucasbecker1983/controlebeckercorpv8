@@ -123,7 +123,7 @@ export default function Backups() {
       </KpiRow>
       {old ? <Notice tone={stale ? 'danger' : 'warning'} title={stale ? 'Backups parados' : undefined}>O último backup tem {ageDays} dias. {stale ? 'Gere um backup novo antes de qualquer mudança grande no sistema.' : 'Gere um novo para não perder alterações recentes.'}</Notice> : null}
       <Notice tone="primary" title="Retenção de 30 dias">
-        A regra é guardar 30 dias. Quando o backup diário roda, ele apaga os backups mais antigos que isso, mas os 3 mais recentes ficam sempre e nada é apagado se não houver um backup recente.
+        A regra é guardar 30 dias. Quando o backup diário roda, ele apaga os backups mais antigos que isso, mas os 3 mais recentes ficam sempre e nada é apagado se não houver um backup recente. O histórico de telemetria (consultas DNS e acessos do proxy) fica fora do backup: só a estrutura é guardada, por isso cada backup é pequeno. Regras, VIPs, políticas, usuários e auditoria entram completos.
       </Notice>
       {job ? (
         <Notice tone={JOB_TONE[job.status] === 'primary' ? 'primary' : JOB_TONE[job.status]} title={`${job.kind === 'restore' ? 'Restauração' : 'Backup'}: ${JOB_LABEL[job.status] || job.status}`}>
