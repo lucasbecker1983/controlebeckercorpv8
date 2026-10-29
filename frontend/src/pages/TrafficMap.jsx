@@ -3,71 +3,116 @@ import { Link } from 'react-router-dom';
 import { api } from '../services/api';
 
 /*
- * Mapa de Tráfego em camadas: dispositivos → VLANs → link WAN → sites.
- * A espessura de cada ligação é a banda em uso. Cores fixas por VLAN.
+ * Mapa de Tráfego no formato do protótipo da auditoria (painel escuro, estilo NOC):
+ * dispositivos → VLANs → link WAN → sites. A espessura é a banda; as partículas correm
+ * pelas ligações como sangue nas veias, mais densas e rápidas onde há mais tráfego.
  */
 
-const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
-const SANS = 'Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif';
 const MAX_SITES = 12;
+const P = {
+  bg: '#0a1317',
+  canvas: '#0c171b',
+  surface: '#101c21',
+  sunken: '#0d171b',
+  ink: '#e2ebee',
+  muted: '#8ea2aa',
+  line: '#213239',
+  accent: '#3cc3cc',
+  crit: '#f06b5d',
+  warn: '#e2a53f',
+  ok: '#4cc488',
+  vlan: { 10: '#6ea7e8', 30: '#b28cf0', 40: '#e2a53f', 50: '#4cc488', 70: '#f06b5d', 80: '#3cc3cc', 99: '#8ea2aa' },
+};
+const vcol = (id) => P.vlan[id] || P.muted;
+const F_DISPLAY = '"Archivo", "Arial Narrow", system-ui, sans-serif';
+const F_BODY = '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif';
+const F_MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace';
+
 const fmt = (v) => {
   const n = Number(v || 0);
   return n >= 100 ? n.toFixed(0) : n.toFixed(1).replace('.', ',');
 };
-
-function readTheme() {
-  const cs = getComputedStyle(document.documentElement);
-  const g = (k) => cs.getPropertyValue(k).trim();
-  return {
-    ink: g('--md-on-surface'),
-    surface: g('--md-container'),
-    line: g('--md-outline'),
-    accent: g('--chart-2') || g('--md-primary'),
-    bg: g('--map-bg') || g('--md-surface'),
-    crit: g('--md-danger'),
-    warn: g('--md-warning'),
-    ok: g('--md-success'),
-    vlan: (id) => g(`--vlan-${id}`) || g('--vlan-99') || g('--md-primary'),
-  };
-}
-
-function alpha(color, a) {
-  const h = String(color || '').replace('#', '');
-  if (!/^[0-9a-f]{6}$/i.test(h)) return color;
-  const n = parseInt(h, 16);
+const alpha = (hex, a) => {
+  const n = parseInt(hex.replace('#', ''), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
-}
-
-function useTheme() {
-  const [theme, setTheme] = useState(() => readTheme());
-  useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(readTheme()));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-accent'] });
-    return () => observer.disconnect();
-  }, []);
-  return theme;
-}
-
+};
 const shortName = (d) => (d.hostname ? d.hostname.split(' · ')[0] : `VLAN ${d.vlan}`);
+
+const CSS = `
+.tm { --bg:${P.bg}; --surface:${P.surface}; --sunken:${P.sunken}; --ink:${P.ink}; --muted:${P.muted}; --line:${P.line}; --accent:${P.accent}; --warn:${P.warn}; --ok:${P.ok}; --crit:${P.crit};
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-family: ${F_BODY}; color-scheme: dark; }
+.tm-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:12px 16px; border-bottom:1px solid var(--line); }
+.tm-title { font-family:${F_DISPLAY}; font-stretch:85%; font-weight:750; font-size:16px; }
+.tm-tag { font-family:${F_MONO}; font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
+.tm-tag.live { border-color: rgba(76,196,136,.5); color: var(--ok); }
+.tm-tag.live i { width:6px; height:6px; border-radius:50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: tmPulse 1.6s ease-in-out infinite; }
+.tm-tag.paused { border-color: var(--warn); color: var(--warn); }
+@keyframes tmPulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
+.tm-seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.tm-seg button, .tm-btn { font:inherit; font-size:13px; font-weight:600; background:transparent; color:var(--muted); border:0; padding:6px 12px; cursor:pointer; }
+.tm-seg button[aria-pressed="true"] { background:var(--accent); color:var(--surface); }
+.tm-btn { border:1px solid var(--line); border-radius:8px; }
+.tm-btn:hover, .tm-seg button:hover { color:var(--ink); }
+.tm-seg button[aria-pressed="true"]:hover { color:var(--surface); }
+.tm button:focus-visible, .tm a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.tm-body { display:grid; grid-template-columns:minmax(0,1fr) 300px; }
+.tm-canvas { overflow-x:auto; background:${P.canvas}; border-right:1px solid var(--line); min-width:0; }
+.tm-side { padding:16px; display:flex; flex-direction:column; gap:18px; min-width:0; }
+.tm-gauge { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.tm-gauge > div { background:var(--sunken); border-radius:8px; padding:10px 12px; }
+.tm-lbl { font-size:11.5px; color:var(--muted); font-family:${F_MONO}; text-transform:uppercase; letter-spacing:.06em; }
+.tm-val { font-family:${F_DISPLAY}; font-stretch:80%; font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1.1; }
+.tm-pct { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.tm-rank h3 { font-size:13px; font-family:${F_MONO}; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:600; margin:0 0 8px; }
+.tm-rank ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.tm-rank li button { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; width:100%; font:inherit; font-size:13px; text-align:left; color:var(--ink); background:transparent; border:0; cursor:pointer; padding:3px 4px; border-radius:6px; }
+.tm-rank li button:hover, .tm-rank li button.sel { background: rgba(60,195,204,.12); }
+.tm-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tm-mb { font-family:${F_MONO}; font-size:12px; font-variant-numeric:tabular-nums; }
+.tm-barline { grid-column:1/-1; height:4px; border-radius:2px; background:var(--sunken); overflow:hidden; }
+.tm-barline i { display:block; height:100%; border-radius:2px; }
+.tm-detail { border-top:1px solid var(--line); padding-top:14px; font-size:13px; display:flex; flex-direction:column; gap:8px; }
+.tm-detail h3 { margin:0; font-family:${F_DISPLAY}; font-stretch:90%; font-size:17px; font-weight:700; }
+.tm-detail .mono { font-family:${F_MONO}; font-size:.86em; }
+.tm-detail .muted { color:var(--muted); }
+.tm-acts { display:flex; flex-wrap:wrap; gap:6px; }
+.tm-acts a { font-size:12px; border:1px dashed var(--line); border-radius:6px; padding:3px 8px; color:var(--muted); }
+.tm-acts a:hover { color:var(--accent); border-color:var(--accent); }
+.tm-legend { display:flex; flex-wrap:wrap; gap:6px 14px; padding:10px 16px; border-top:1px solid var(--line); font-size:12px; color:var(--muted); }
+.tm-legend span { display:inline-flex; align-items:center; gap:6px; }
+.tm-legend i { width:10px; height:10px; border-radius:50%; display:inline-block; }
+.tm-note { padding:10px 16px; font-size:12.5px; color:var(--muted); }
+@media (max-width: 1100px) { .tm-body { grid-template-columns:minmax(0,1fr); } .tm-canvas { border-right:0; border-bottom:1px solid var(--line); } }
+`;
+
+function useFonts() {
+  useEffect(() => {
+    if (document.getElementById('tm-fonts')) return;
+    const link = document.createElement('link');
+    link.id = 'tm-fonts';
+    link.rel = 'stylesheet';
+    link.href = 'https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Public+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap';
+    document.head.appendChild(link);
+  }, []);
+}
 
 // Converte a coleta do backend nas camadas do mapa.
 function buildModel(data, view, mode) {
   if (!data) return null;
   const pick = (f) => (mode === 'd' ? f.down : f.up);
   const vlanInfo = new Map((data.vlans || []).map((v) => [v.id, v]));
-  // Todos os dispositivos conectados, sempre na mesma ordem (VLAN e IP), com ou sem tráfego.
-  const all = (data.devices || []).map((d) => {
+  const keyOf = (f) => (view === 'internet'
+    ? f.label
+    : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label);
+  // Todos os dispositivos ligados, sempre na mesma ordem (VLAN e IP), com ou sem tráfego.
+  const devices = (data.devices || []).map((d) => {
     const flows = d.flows.filter((f) => (view === 'internet' ? f.kind === 'internet' : f.kind === 'internal'));
     return { ...d, flows, val: flows.reduce((s, f) => s + pick(f), 0) };
   });
-  const devices = all;
-
   const siteMap = new Map();
-  for (const d of all) {
+  for (const d of devices) {
     for (const f of d.flows) {
-      const key = view === 'internet'
-        ? f.label
-        : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label;
+      const key = keyOf(f);
       const s = siteMap.get(key) || { name: key, dom: new Set(), val: 0, users: new Map() };
       s.val += pick(f);
       if (f.domain) s.dom.add(f.domain);
@@ -79,36 +124,18 @@ function buildModel(data, view, mode) {
     .map((s, i) => ({ ...s, i, dom: Array.from(s.dom) }));
   const siteIndex = new Map(sites.map((s) => [s.name, s.i]));
   devices.forEach((d) => {
-    d.links = [];
-    for (const f of d.flows) {
-      const key = view === 'internet' ? f.label : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label;
-      if (siteIndex.has(key)) d.links.push({ site: siteIndex.get(key), val: pick(f), down: f.down, up: f.up });
-    }
+    d.links = d.flows.filter((f) => siteIndex.has(keyOf(f))).map((f) => ({ site: siteIndex.get(keyOf(f)), val: pick(f), down: f.down, up: f.up }));
   });
-
-  // Todas as VLANs aparecem, mesmo sem tráfego no momento.
   const vlanIds = Array.from(new Set([...(data.vlans || []).map((v) => v.id), ...devices.map((d) => d.vlan)])).sort((a, b) => a - b);
   const vlans = vlanIds.map((id) => {
     const info = vlanInfo.get(id) || {};
-    return {
-      id,
-      name: info.name || `VLAN ${id}`,
-      limit: mode === 'd' ? info.limit_down : info.limit_up,
-      neighbors: info.neighbors || 0,
-      val: all.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0),
-    };
+    return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, neighbors: info.neighbors || 0, val: devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0) };
   });
-  return {
-    devices,
-    sites,
-    vlans,
-    hidden: 0,
-    wan: mode === 'd' ? data.wan.down : data.wan.up,
-  };
+  return { devices, sites, vlans, wan: mode === 'd' ? data.wan.down : data.wan.up };
 }
 
 export default function TrafficMap() {
-  const theme = useTheme();
+  useFonts();
   const [data, setData] = useState(null);
   const [error, setError] = useState(false);
   const [mode, setMode] = useState('d');
@@ -118,7 +145,7 @@ export default function TrafficMap() {
   const [width, setWidth] = useState(860);
   const canvasRef = useRef(null);
   const scrollRef = useRef(null);
-  const nodesRef = useRef({ devices: [], vlans: [], sites: [], wan: null });
+  const nodesRef = useRef({ devices: [], vlans: [], sites: [] });
   const hoverRef = useRef(null);
   const stateRef = useRef({});
 
@@ -148,12 +175,12 @@ export default function TrafficMap() {
 
   const model = useMemo(() => buildModel(data, view, mode), [data, view, mode]);
   const LINK = data?.link_mbps || 300;
+  const internet = view === 'internet';
   const deviceCount = model?.devices.length || 0;
   const rowH = deviceCount > 40 ? 20 : deviceCount > 24 ? 26 : 33;
-  const height = Math.max(560, deviceCount * rowH + 60, (model?.sites.length || 0) * 33 + 60);
-  const internet = view === 'internet';
+  const height = Math.max(560, deviceCount * rowH + 60, (model?.sites.length || 0) * 36 + 60);
 
-  stateRef.current = { model, theme, sel, mode, paused, width, height, LINK, internet, compact: rowH < 26 };
+  stateRef.current = { model, sel, mode, paused, width, height, LINK, internet, compact: rowH < 26 };
 
   // Animação contínua: lê o estado atual pelo ref, sem recriar o loop.
   useEffect(() => {
@@ -167,16 +194,18 @@ export default function TrafficMap() {
 
     const draw = (ts) => {
       const st = stateRef.current;
-      const { model: m, theme: C, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet, compact } = st;
-      if (!st.paused) phase += (ts - last) / 1000 || 0;
+      const { model: m, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet, compact } = st;
+      const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
       last = ts;
+      if (!st.paused) phase += dt;
       const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
       if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
         canvas.width = W * dpr;
         canvas.height = H * dpr;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = C.bg;
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = P.canvas;
       ctx.fillRect(0, 0, W, H);
       if (!m) { frame = requestAnimationFrame(draw); return; }
 
@@ -186,7 +215,6 @@ export default function TrafficMap() {
         ? { dev: W * 0.198, vlan: W * 0.407, wan: W * 0.581, site: W * 0.767 }
         : { dev: W * 0.22, vlan: W * 0.47, site: W * 0.72 };
 
-      // posições
       m.devices.forEach((d, i) => {
         d.x = X.dev;
         d.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.devices.length);
@@ -203,11 +231,10 @@ export default function TrafficMap() {
         t.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.sites.length);
         t.r = 3 + Math.sqrt(t.val) * 1.5;
       });
-      nodesRef.current = { devices: m.devices, vlans: m.vlans, sites: m.sites, wan };
+      nodesRef.current = { devices: m.devices, vlans: m.vlans, sites: m.sites };
 
-      // cabeçalhos
-      ctx.font = `600 10.5px ${MONO}`;
-      ctx.fillStyle = alpha(C.ink, 0.5);
+      ctx.font = `600 10.5px ${F_MONO}`;
+      ctx.fillStyle = P.muted;
       ctx.textAlign = 'center';
       ctx.fillText('DISPOSITIVOS', X.dev, 18);
       ctx.fillText('VLANs', X.vlan, 18);
@@ -223,40 +250,62 @@ export default function TrafficMap() {
         const u = 1 - t;
         return [u * u * u * c[0] + 3 * u * u * t * c[2] + 3 * u * t * t * c[4] + t * t * t * c[6], u * u * u * c[1] + 3 * u * u * t * c[3] + 3 * u * t * t * c[5] + t * t * t * c[7]];
       };
+      let seed = 0;
+      // Veia: linha com brilho que pulsa, e um fluxo contínuo de partículas proporcional à banda.
       const edge = (a, b, w, col, on, div) => {
+        seed += 1;
         const c = curve(a, b);
+        const lw = Math.max(1, Math.min(18, w / div));
+        const beat = 0.5 + 0.5 * Math.sin(phase * 3.2 - seed * 0.7);
         ctx.beginPath();
         ctx.moveTo(c[0], c[1]);
         ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
-        ctx.strokeStyle = alpha(col, on ? 0.42 : 0.07);
-        ctx.lineWidth = Math.max(1, Math.min(18, w / div));
+        if (on && w > 0.3) {
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 6 + Math.min(16, lw) + beat * 6;
+          ctx.strokeStyle = alpha(col, 0.36 + beat * 0.16);
+        } else {
+          ctx.shadowBlur = 0;
+          ctx.strokeStyle = alpha(col, on ? 0.18 : 0.06);
+        }
+        ctx.lineWidth = lw;
         ctx.stroke();
-        if (!reduce && on && w > 0.3) {
-          const n = Math.min(6, 1 + Math.floor(w / 12));
-          for (let k = 0; k < n; k += 1) {
-            let t = ((phase * (0.15 + Math.min(w, 60) / 160)) + k / n) % 1;
-            if (md === 'd') t = 1 - t;
-            const p = bez(c, t);
-            ctx.beginPath();
-            ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
-            ctx.fillStyle = alpha(col, 0.95);
-            ctx.fill();
-          }
+        ctx.shadowBlur = 0;
+        if (reduce || !on || w <= 0.2) return;
+        const n = Math.min(18, 2 + Math.floor(w / 3.5));
+        const speed = 0.18 + Math.min(w, 80) / 140;
+        const size = 1.4 + Math.min(2.2, lw / 6);
+        for (let k = 0; k < n; k += 1) {
+          let t = ((phase * speed) + k / n + seed * 0.137) % 1;
+          if (md === 'd') t = 1 - t;
+          const p = bez(c, t);
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], size + 3, 0, Math.PI * 2);
+          ctx.fillStyle = alpha(col, 0.18);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], size + 0.8, 0, Math.PI * 2);
+          ctx.fillStyle = alpha(col, 0.95);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(p[0], p[1], size * 0.55, 0, Math.PI * 2);
+          ctx.fillStyle = 'rgba(255,255,255,0.75)';
+          ctx.fill();
         }
       };
 
       m.devices.forEach((d) => {
         const v = m.vlans.find((x) => x.id === d.vlan);
-        if (v) edge(d, v, d.val, C.vlan(d.vlan), devOn(d) && d.val > 0.01, 2.2);
+        if (v) edge(d, v, d.val, vcol(d.vlan), devOn(d) && d.val > 0.01, 2.2);
       });
       if (inet) {
-        m.vlans.forEach((v) => edge(v, wan, v.val, C.vlan(v.id), vlanOn(v), 5));
-        m.sites.forEach((t) => edge(wan, t, t.val, C.accent, siteOn(t), 5));
+        m.vlans.forEach((v) => { if (v.val > 0.01) edge(v, wan, v.val, vcol(v.id), vlanOn(v), 5); });
+        m.sites.forEach((t) => edge(wan, t, t.val, P.accent, siteOn(t), 5));
       } else {
         m.vlans.forEach((v) => {
           m.sites.forEach((t) => {
             const w = m.devices.filter((d) => d.vlan === v.id).reduce((acc, d) => acc + d.links.filter((l) => l.site === t.i).reduce((a2, l) => a2 + l.val, 0), 0);
-            if (w > 0.01) edge(v, t, w, C.vlan(v.id), vlanOn(v) && siteOn(t), 4);
+            if (w > 0.01) edge(v, t, w, vcol(v.id), vlanOn(v) && siteOn(t), 4);
           });
         });
       }
@@ -271,7 +320,7 @@ export default function TrafficMap() {
             ctx.moveTo(d.x, d.y);
             ctx.bezierCurveTo(d.x + 220, d.y - 60, t.x - 200, t.y + 60, t.x, t.y);
             ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = C.vlan(d.vlan);
+            ctx.strokeStyle = vcol(d.vlan);
             ctx.lineWidth = 1.6;
             ctx.stroke();
             ctx.setLineDash([]);
@@ -279,14 +328,16 @@ export default function TrafficMap() {
         }
       }
 
-      const circle = (n, col, on, key) => {
+      const circle = (n, col, on, key, glow) => {
         ctx.beginPath();
         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        if (on && glow) { ctx.shadowColor = col; ctx.shadowBlur = 14; }
         ctx.fillStyle = on ? col : alpha(col, 0.2);
         ctx.fill();
+        ctx.shadowBlur = 0;
         if (hoverRef.current === key) {
           ctx.lineWidth = 2;
-          ctx.strokeStyle = C.ink;
+          ctx.strokeStyle = P.ink;
           ctx.stroke();
         }
       };
@@ -294,96 +345,102 @@ export default function TrafficMap() {
       m.devices.forEach((d) => {
         const idle = d.val <= 0.01;
         const on = devOn(d);
-        circle(d, C.vlan(d.vlan), on && !idle, `dev:${d.ip}`);
-        // Consumo alto pisca em vermelho: 15 Mbps ou 15% do limite da VLAN.
+        circle(d, vcol(d.vlan), on && !idle, `dev:${d.ip}`, !idle);
         const lim = m.vlans.find((x) => x.id === d.vlan)?.limit || 100;
         if (d.val >= Math.max(15, lim * 0.15)) {
           const pulse = 0.5 + 0.5 * Math.sin(phase * 6);
+          ctx.shadowColor = P.crit;
+          ctx.shadowBlur = 12 + pulse * 10;
           ctx.beginPath();
           ctx.arc(d.x, d.y, d.r + 4 + pulse * 5, 0, Math.PI * 2);
-          ctx.strokeStyle = alpha(C.crit, 0.35 + pulse * 0.6);
+          ctx.strokeStyle = alpha(P.crit, 0.35 + pulse * 0.6);
           ctx.lineWidth = 2.5;
           ctx.stroke();
           ctx.beginPath();
           ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-          ctx.fillStyle = alpha(C.crit, 0.4 + pulse * 0.6);
+          ctx.fillStyle = alpha(P.crit, 0.45 + pulse * 0.55);
           ctx.fill();
+          ctx.shadowBlur = 0;
         }
-        const kind = shortName(d);
-        const name = kind.length > 22 ? `${kind.slice(0, 21)}…` : kind;
+        const name = shortName(d);
+        const nm = name.length > 22 ? `${name.slice(0, 21)}…` : name;
         const rate = idle ? 'sem tráfego' : `${fmt(d.val)} Mbps`;
         ctx.textAlign = 'right';
         if (compact) {
-          ctx.font = `500 10.5px ${MONO}`;
-          ctx.fillStyle = on ? (idle ? alpha(C.ink, 0.5) : C.ink) : alpha(C.ink, 0.3);
-          ctx.fillText(`${d.ip} · ${name} · ${rate}${d.qosVip ? ' · ★' : ''}`, d.x - d.r - 8, d.y + 3.5);
+          ctx.font = `500 10.5px ${F_MONO}`;
+          ctx.fillStyle = on ? (idle ? alpha(P.ink, 0.5) : P.ink) : alpha(P.muted, 0.45);
+          ctx.fillText(`${d.ip} · ${nm} · ${rate}${d.qosVip ? ' ★' : ''}`, d.x - d.r - 8, d.y + 3.5);
         } else {
-          ctx.font = `500 11px ${MONO}`;
-          ctx.fillStyle = on ? (idle ? alpha(C.ink, 0.55) : C.ink) : alpha(C.ink, 0.35);
+          ctx.font = `500 11px ${F_MONO}`;
+          ctx.fillStyle = on ? (idle ? alpha(P.ink, 0.55) : P.ink) : alpha(P.muted, 0.5);
           ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
-          ctx.font = `10px ${SANS}`;
-          ctx.fillStyle = on ? alpha(C.ink, idle ? 0.45 : 0.6) : alpha(C.ink, 0.28);
-          ctx.fillText(`${name} · ${rate}${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
+          ctx.font = `10px ${F_BODY}`;
+          ctx.fillStyle = on ? P.muted : alpha(P.muted, 0.4);
+          ctx.fillText(`${nm} · ${rate}${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
         }
       });
 
       m.vlans.forEach((v) => {
         const on = vlanOn(v);
         const use = v.limit ? v.val / v.limit : 0;
-        circle(v, C.vlan(v.id), on, `vlan:${v.id}`);
-        if (v.limit) {
+        circle(v, vcol(v.id), on && v.val > 0.01, `vlan:${v.id}`, true);
+        if (v.limit && v.val > 0.01) {
           ctx.beginPath();
           ctx.arc(v.x, v.y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
-          ctx.strokeStyle = use > 0.9 ? C.crit : use > 0.7 ? C.warn : C.ok;
+          ctx.strokeStyle = use > 0.9 ? P.crit : use > 0.7 ? P.warn : P.ok;
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }
         ctx.textAlign = 'center';
-        ctx.font = `700 11px ${SANS}`;
-        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
+        ctx.font = `700 11px ${F_BODY}`;
+        ctx.fillStyle = on ? P.ink : alpha(P.muted, 0.5);
         ctx.fillText(`${v.id} · ${v.name}`, v.x, v.y + v.r + 17);
-        ctx.font = `10px ${MONO}`;
-        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        ctx.font = `10px ${F_MONO}`;
+        ctx.fillStyle = on ? P.muted : alpha(P.muted, 0.4);
         ctx.fillText(v.val > 0.01 ? `${fmt(v.val)}${v.limit ? `/${v.limit}` : ''}` : `sem tráfego · ${v.neighbors} disp.`, v.x, v.y + v.r + 29);
       });
 
       if (wan) {
         const u = m.wan / L;
+        const ringCol = u > 0.85 ? P.crit : u > 0.65 ? P.warn : P.accent;
         ctx.beginPath();
         ctx.arc(wan.x, wan.y, wan.r, 0, Math.PI * 2);
-        ctx.fillStyle = C.surface;
+        ctx.fillStyle = P.surface;
         ctx.fill();
         ctx.lineWidth = 1;
-        ctx.strokeStyle = C.line;
+        ctx.strokeStyle = P.line;
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(wan.x, wan.y, wan.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, u));
-        ctx.strokeStyle = u > 0.85 ? C.crit : u > 0.65 ? C.warn : C.accent;
+        ctx.shadowColor = ringCol;
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = ringCol;
         ctx.lineWidth = 7;
         ctx.lineCap = 'round';
         ctx.stroke();
         ctx.lineCap = 'butt';
+        ctx.shadowBlur = 0;
         ctx.textAlign = 'center';
-        ctx.fillStyle = C.ink;
-        ctx.font = `800 17px ${SANS}`;
+        ctx.fillStyle = P.ink;
+        ctx.font = `800 17px ${F_DISPLAY}`;
         ctx.fillText(`${Math.round(u * 100)}%`, wan.x, wan.y + 2);
-        ctx.font = `10px ${MONO}`;
-        ctx.fillStyle = alpha(C.ink, 0.6);
+        ctx.font = `10px ${F_MONO}`;
+        ctx.fillStyle = P.muted;
         ctx.fillText(`de ${L} Mbps`, wan.x, wan.y + 16);
-        ctx.font = `700 11px ${SANS}`;
-        ctx.fillStyle = C.ink;
+        ctx.font = `700 11px ${F_BODY}`;
+        ctx.fillStyle = P.ink;
         ctx.fillText('Link WAN', wan.x, wan.y + wan.r + 18);
       }
 
       m.sites.forEach((t) => {
         const on = siteOn(t);
-        circle(t, inet ? C.accent : C.warn, on, `site:${t.i}`);
+        circle(t, inet ? P.accent : P.warn, on, `site:${t.i}`, true);
         ctx.textAlign = 'left';
-        ctx.font = `600 11.5px ${SANS}`;
-        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
+        ctx.font = `600 11.5px ${F_BODY}`;
+        ctx.fillStyle = on ? P.ink : alpha(P.muted, 0.5);
         ctx.fillText(t.name.length > 28 ? `${t.name.slice(0, 27)}…` : t.name, t.x + t.r + 8, t.y - 1);
-        ctx.font = `10px ${MONO}`;
-        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        ctx.font = `10px ${F_MONO}`;
+        ctx.fillStyle = on ? P.muted : alpha(P.muted, 0.4);
         ctx.fillText(`${fmt(t.val)} Mbps${inet ? ` · ${Math.round((t.val / L) * 100)}%` : ''}`, t.x + t.r + 8, t.y + 11);
       });
 
@@ -391,7 +448,7 @@ export default function TrafficMap() {
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [model, theme, sel, mode, width, height, view]);
+  }, [model, sel, mode, width, height, view]);
 
   const hit = (ev) => {
     const r = canvasRef.current.getBoundingClientRect();
@@ -409,47 +466,42 @@ export default function TrafficMap() {
   };
   const select = (next) => setSel((cur) => (cur && next && cur.key === next.key ? null : next));
 
-  const devAll = (data?.devices || []);
   const topIps = model ? [...model.devices].filter((d) => d.val > 0.01).sort((a, b) => b.val - a.val).slice(0, 5) : [];
   const topSites = model ? model.sites.slice(0, 5) : [];
-  const vlanLegend = data?.vlans || [];
-  const updated = data?.updated_at ? new Date(data.updated_at).toLocaleTimeString('pt-BR') : null;
-
   const selDev = sel?.t === 'dev' ? model?.devices.find((d) => d.ip === sel.ip) : null;
   const selSite = sel?.t === 'site' ? model?.sites[sel.i] : null;
   const selVlan = sel?.t === 'vlan' ? (data?.vlans || []).find((v) => v.id === sel.id) : null;
-
-  const segBtn = (on) => `px-3 py-1.5 text-[13px] font-semibold ${on ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`;
-  const chip = 'inline-flex items-center rounded-md border border-dashed border-outline px-2 py-1 text-[12px] text-on-surface/70 hover:border-primary/50 hover:text-primary';
+  const updated = data?.updated_at ? new Date(data.updated_at).toLocaleTimeString('pt-BR') : null;
+  const vName = (id) => (data?.vlans || []).find((v) => v.id === id)?.name || '';
 
   return (
     <div className="space-y-4">
+      <style>{CSS}</style>
       <div>
         <h1 className="text-2xl font-bold tracking-tight text-on-surface">Mapa de Tráfego</h1>
         <p className="max-w-3xl text-sm text-on-surface/60">Dispositivos à esquerda, VLANs, o link de {LINK} Mbps no centro e os sites à direita. A espessura de cada ligação é a banda em uso. Clique num IP para ver os sites dele, ou num site para ver quem está puxando.</p>
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-outline bg-container">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-b border-outline px-4 py-3">
-          <span className="text-base font-bold text-on-surface">Mapa de Tráfego</span>
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${paused ? 'border-warning text-warning' : 'border-success/40 text-success'}`} style={{ fontFamily: MONO }}>
-            <span className={`h-1.5 w-1.5 rounded-full ${paused ? 'bg-warning' : 'bg-success'}`} />{paused ? 'pausado' : 'ao vivo'}
-          </span>
-          {updated ? <span className="rounded-full border border-outline px-2 py-0.5 text-[11px] text-on-surface/55" style={{ fontFamily: MONO }}>{updated}</span> : null}
-          <div className="inline-flex overflow-hidden rounded-lg border border-outline sm:ml-auto" role="group" aria-label="Tipo de tráfego">
-            <button type="button" aria-pressed={internet} onClick={() => { setView('internet'); setSel(null); }} className={segBtn(internet)}>Internet</button>
-            <button type="button" aria-pressed={!internet} onClick={() => { setView('internal'); setSel(null); }} className={segBtn(!internet)}>Rede interna</button>
+      <section className="tm">
+        <div className="tm-bar">
+          <span className="tm-title">Mapa de Tráfego</span>
+          <span className={`tm-tag ${paused ? 'paused' : 'live'}`}>{paused ? 'pausado' : <><i />ao vivo</>}</span>
+          {updated ? <span className="tm-tag">{updated}</span> : null}
+          <span className="tm-tag">{deviceCount} dispositivos ligados</span>
+          <div className="tm-seg" role="group" aria-label="Tipo de tráfego" style={{ marginLeft: 'auto' }}>
+            <button type="button" aria-pressed={internet} onClick={() => { setView('internet'); setSel(null); }}>Internet</button>
+            <button type="button" aria-pressed={!internet} onClick={() => { setView('internal'); setSel(null); }}>Rede interna</button>
           </div>
-          <div className="inline-flex overflow-hidden rounded-lg border border-outline" role="group" aria-label="Sentido do tráfego">
-            <button type="button" aria-pressed={mode === 'd'} onClick={() => setMode('d')} className={segBtn(mode === 'd')}>Download</button>
-            <button type="button" aria-pressed={mode === 'u'} onClick={() => setMode('u')} className={segBtn(mode === 'u')}>Upload</button>
+          <div className="tm-seg" role="group" aria-label="Sentido do tráfego">
+            <button type="button" aria-pressed={mode === 'd'} onClick={() => setMode('d')}>Download</button>
+            <button type="button" aria-pressed={mode === 'u'} onClick={() => setMode('u')}>Upload</button>
           </div>
-          <button type="button" onClick={() => setPaused((p) => !p)} className="rounded-lg border border-outline px-3 py-1.5 text-[13px] font-semibold text-on-surface/65 hover:text-on-surface">{paused ? 'Retomar' : 'Pausar'}</button>
+          <button type="button" className="tm-btn" onClick={() => setPaused((p) => !p)}>{paused ? 'Retomar' : 'Pausar'}</button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <div ref={scrollRef} className="min-w-0 overflow-x-auto border-b border-outline lg:border-b-0 lg:border-r" style={{ background: 'var(--map-bg)' }}>
-            {error && !data ? <div className="p-8 text-sm text-danger">Não foi possível ler o tráfego. Verifique se o backend está no ar.</div> : null}
+        <div className="tm-body">
+          <div ref={scrollRef} className="tm-canvas">
+            {error && !data ? <div className="tm-note" style={{ color: P.crit }}>Não foi possível ler o tráfego. Verifique se o backend está no ar.</div> : null}
             <canvas
               ref={canvasRef}
               style={{ width, height, display: 'block', cursor: 'crosshair' }}
@@ -458,118 +510,114 @@ export default function TrafficMap() {
               onClick={(e) => select(hit(e))}
               aria-label="Grafo de tráfego: dispositivos, VLANs, link e sites"
             />
-            {model && !model.devices.length ? <div className="px-4 pb-4 text-sm text-on-surface/55">{internet ? 'Nenhum tráfego de internet medido agora.' : 'Nenhum tráfego entre VLANs agora.'}</div> : null}
-            {model?.hidden ? <div className="px-4 pb-3 text-[12px] text-on-surface/55">Mais {model.hidden} dispositivos com pouco tráfego não aparecem no mapa.</div> : null}
           </div>
 
-          <aside className="flex min-w-0 flex-col gap-4 p-4">
-            <div className="grid grid-cols-2 gap-2.5">
+          <aside className="tm-side">
+            <div className="tm-gauge">
               {[['Download', data?.wan.down], ['Upload', data?.wan.up]].map(([label, v]) => (
-                <div key={label} className="rounded-lg bg-on-surface/[0.05] px-3 py-2.5">
-                  <div className="text-[11px] uppercase tracking-wide text-on-surface/55" style={{ fontFamily: MONO }}>{label}</div>
-                  <div className="tabular text-[22px] font-extrabold leading-tight text-on-surface">{data ? `${fmt(v)} Mbps` : '—'}</div>
-                  <div className="tabular text-[12px] text-on-surface/55">{data ? `${Math.round(((v || 0) / LINK) * 100)}% de ${LINK} Mbps` : ''}</div>
+                <div key={label}>
+                  <div className="tm-lbl">{label}</div>
+                  <div className="tm-val">{data ? `${fmt(v)} Mbps` : '—'}</div>
+                  <div className="tm-pct">{data ? `${Math.round(((v || 0) / LINK) * 100)}% de ${LINK} Mbps` : ''}</div>
                 </div>
               ))}
             </div>
 
-            <div>
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-on-surface/55" style={{ fontFamily: MONO }}>Quem mais consome</h3>
-              <ol className="flex flex-col gap-1.5">
+            <div className="tm-rank">
+              <h3>Quem mais consome</h3>
+              <ol>
                 {topIps.map((d) => {
                   const p = (d.val / LINK) * 100;
                   return (
                     <li key={d.ip}>
-                      <button type="button" onClick={() => select({ t: 'dev', ip: d.ip, vlan: d.vlan, key: `dev:${d.ip}` })} className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-0.5 rounded-md px-1 py-0.5 text-left text-[13px] hover:bg-primary/8 ${sel?.key === `dev:${d.ip}` ? 'bg-primary/10' : ''}`}>
-                        <span className="truncate" style={{ fontFamily: MONO }} title={shortName(d)}>{d.ip}</span>
-                        <span className="tabular text-[12px]" style={{ fontFamily: MONO }}>{fmt(d.val)} Mbps</span>
-                        <span className="col-span-2 h-1 overflow-hidden rounded bg-on-surface/[0.07]"><i className="block h-full rounded" style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: `var(--vlan-${d.vlan}, var(--vlan-99))` }} /></span>
+                      <button type="button" className={sel?.key === `dev:${d.ip}` ? 'sel' : ''} onClick={() => select({ t: 'dev', ip: d.ip, vlan: d.vlan, key: `dev:${d.ip}` })} title={shortName(d)}>
+                        <span className="tm-name" style={{ fontFamily: F_MONO }}>{d.ip}</span>
+                        <span className="tm-mb">{fmt(d.val)} Mbps</span>
+                        <span className="tm-barline"><i style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: vcol(d.vlan) }} /></span>
                       </button>
                     </li>
                   );
                 })}
-                {!topIps.length ? <li className="text-[12.5px] text-on-surface/55">Coletando...</li> : null}
+                {!topIps.length ? <li className="tm-pct">Sem tráfego agora.</li> : null}
               </ol>
             </div>
 
-            <div>
-              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-on-surface/55" style={{ fontFamily: MONO }}>{internet ? 'Sites mais pesados' : 'Destinos internos'}</h3>
-              <ol className="flex flex-col gap-1.5">
+            <div className="tm-rank">
+              <h3>{internet ? 'Sites mais pesados' : 'Destinos internos'}</h3>
+              <ol>
                 {topSites.map((t) => {
                   const p = (t.val / LINK) * 100;
                   return (
                     <li key={t.name}>
-                      <button type="button" onClick={() => select({ t: 'site', i: t.i, key: `site:${t.i}` })} className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-0.5 rounded-md px-1 py-0.5 text-left text-[13px] hover:bg-primary/8 ${sel?.key === `site:${t.i}` ? 'bg-primary/10' : ''}`}>
-                        <span className="truncate">{t.name}</span>
-                        <span className="tabular text-[12px]" style={{ fontFamily: MONO }}>{internet ? `${Math.round(p)}%` : `${fmt(t.val)} Mbps`}</span>
-                        <span className="col-span-2 h-1 overflow-hidden rounded bg-on-surface/[0.07]"><i className="block h-full rounded" style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: internet ? 'var(--chart-2)' : 'var(--md-warning)' }} /></span>
+                      <button type="button" className={sel?.key === `site:${t.i}` ? 'sel' : ''} onClick={() => select({ t: 'site', i: t.i, key: `site:${t.i}` })}>
+                        <span className="tm-name">{t.name}</span>
+                        <span className="tm-mb">{internet ? `${Math.round(p)}%` : `${fmt(t.val)} Mbps`}</span>
+                        <span className="tm-barline"><i style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: internet ? P.accent : P.warn }} /></span>
                       </button>
                     </li>
                   );
                 })}
-                {!topSites.length ? <li className="text-[12.5px] text-on-surface/55">Coletando...</li> : null}
+                {!topSites.length ? <li className="tm-pct">Sem tráfego agora.</li> : null}
               </ol>
             </div>
 
-            <div className="flex flex-col gap-2 border-t border-outline pt-3.5 text-[13px]">
+            <div className="tm-detail">
               {selDev ? (
                 <>
-                  <h3 className="text-[15px] font-bold text-on-surface" style={{ fontFamily: MONO }}>{selDev.ip}</h3>
-                  <span className="text-on-surface/60">{shortName(selDev)} · VLAN {selDev.vlan} {(data?.vlans || []).find((v) => v.id === selDev.vlan)?.name || ''}{selDev.qosVip ? ' · com prioridade' : ''}</span>
-                  <div className="space-y-0.5">
-                    {selDev.links.map((l) => (
-                      <div key={l.site}>{model.sites[l.site]?.name} <span className="text-on-surface/55" style={{ fontFamily: MONO }}>↓{fmt(l.down)} ↑{fmt(l.up)}</span></div>
-                    ))}
+                  <h3 className="mono">{selDev.ip}</h3>
+                  <span className="muted">{shortName(selDev)} · VLAN {selDev.vlan} {vName(selDev.vlan)}{selDev.qosVip ? ' · com prioridade' : ''}</span>
+                  <div>
+                    {selDev.links.length ? selDev.links.map((l) => (
+                      <div key={l.site}>{model.sites[l.site]?.name} <span className="mono muted">↓{fmt(l.down)} ↑{fmt(l.up)}</span></div>
+                    )) : <span className="muted">Sem tráfego agora.</span>}
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <Link className={chip} to={`/acoes-rapidas?acao=banda&ip=${selDev.ip}`}>Prioridade de banda</Link>
-                    <Link className={chip} to={`/acoes-rapidas?acao=temporaria&ip=${selDev.ip}`}>Liberar sites</Link>
-                    <Link className={chip} to={`/radar-dns?ip=${selDev.ip}`}>Ver no Radar DNS</Link>
+                  <div className="tm-acts">
+                    <Link to={`/acoes-rapidas?acao=banda&ip=${selDev.ip}`}>Prioridade de banda</Link>
+                    <Link to={`/acoes-rapidas?acao=temporaria&ip=${selDev.ip}`}>Liberar sites</Link>
+                    <Link to={`/radar-dns?ip=${selDev.ip}`}>Ver no Radar DNS</Link>
                   </div>
                 </>
               ) : selSite ? (
                 <>
-                  <h3 className="text-[15px] font-bold text-on-surface">{selSite.name}</h3>
-                  {selSite.dom.length ? <span className="text-on-surface/55" style={{ fontFamily: MONO }}>{selSite.dom.slice(0, 3).join(', ')}</span> : null}
-                  <div className="space-y-0.5">
+                  <h3>{selSite.name}</h3>
+                  {selSite.dom.length ? <span className="mono muted">{selSite.dom.slice(0, 3).join(', ')}</span> : null}
+                  <div>
                     {Array.from(selSite.users.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([ip, v]) => {
-                      const d = devAll.find((x) => x.ip === ip);
-                      return <div key={ip}><span style={{ fontFamily: MONO }}>{ip}</span> <span className="text-on-surface/55">{d ? shortName(d) : ''} · {fmt(v)} Mbps</span></div>;
+                      const d = model.devices.find((x) => x.ip === ip);
+                      return <div key={ip}><span className="mono">{ip}</span> <span className="muted">{d ? shortName(d) : ''} · {fmt(v)} Mbps</span></div>;
                     })}
                   </div>
                   {internet && selSite.dom.length ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      <Link className={chip} to={`/acoes-rapidas?acao=bloquear&dominio=${selSite.dom[0]}`}>Bloquear site</Link>
-                      <Link className={chip} to={`/acoes-rapidas?acao=liberar&dominio=${selSite.dom[0]}`}>Liberar site</Link>
+                    <div className="tm-acts">
+                      <Link to={`/acoes-rapidas?acao=bloquear&dominio=${selSite.dom[0]}`}>Bloquear site</Link>
+                      <Link to={`/acoes-rapidas?acao=liberar&dominio=${selSite.dom[0]}`}>Liberar site</Link>
                     </div>
                   ) : null}
                 </>
               ) : selVlan ? (
                 <>
-                  <h3 className="text-[15px] font-bold text-on-surface">VLAN {selVlan.id} · {selVlan.name}</h3>
-                  <span className="text-on-surface/60">Usando {fmt(mode === 'd' ? selVlan.down : selVlan.up)} de {(mode === 'd' ? selVlan.limit_down : selVlan.limit_up) ?? '—'} Mbps do limite de QoS{(mode === 'd' ? selVlan.limit_down : selVlan.limit_up) ? ` (${Math.round(((mode === 'd' ? selVlan.down : selVlan.up) / (mode === 'd' ? selVlan.limit_down : selVlan.limit_up)) * 100)}%)` : ''}. {selVlan.neighbors} dispositivos conectados.</span>
-                  {selVlan.internal_down > 0.5 ? <span className="text-on-surface/60">Tráfego interno: {fmt(selVlan.internal_down)} Mbps{selVlan.internal_exempt ? ', fora do limite.' : ', contando no limite.'}</span> : null}
-                  <div className="flex flex-wrap gap-1.5">
-                    <Link className={chip} to="/rede?tab=qos">Ajustar QoS</Link>
-                    <Link className={chip} to="/rede?tab=scheduler">Horários</Link>
-                    <Link className={chip} to="/operacoes">Bloqueio total</Link>
+                  <h3>VLAN {selVlan.id} · {selVlan.name}</h3>
+                  <span className="muted">Usando {fmt(mode === 'd' ? selVlan.down : selVlan.up)} de {(mode === 'd' ? selVlan.limit_down : selVlan.limit_up) ?? '—'} Mbps do limite de QoS. {selVlan.neighbors} dispositivos ligados.</span>
+                  {selVlan.internal_down > 0.5 ? <span className="muted">Tráfego interno: {fmt(selVlan.internal_down)} Mbps{selVlan.internal_exempt ? ', fora do limite.' : ', contando no limite.'}</span> : null}
+                  <div className="tm-acts">
+                    <Link to="/rede?tab=qos">Ajustar QoS</Link>
+                    <Link to="/rede?tab=scheduler">Horários</Link>
+                    <Link to="/operacoes?tab=emergencia">Bloqueio total</Link>
                   </div>
                 </>
               ) : (
-                <span className="text-on-surface/55">Clique num nó do mapa ou num item da lista para ver detalhes.</span>
+                <span className="muted">Clique num nó do mapa ou num item da lista para ver detalhes.</span>
               )}
             </div>
           </aside>
         </div>
 
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-outline px-4 py-2.5 text-[12px] text-on-surface/60">
-          {vlanLegend.map((v) => (
-            <span key={v.id} className="inline-flex items-center gap-1.5">
-              <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: `var(--vlan-${v.id}, var(--vlan-99))` }} />
-              VLAN {v.id} {v.name}{v.limit_down ? ` · QoS ${v.limit_down} Mbps` : ''}
-            </span>
+        <div className="tm-legend">
+          {(data?.vlans || []).map((v) => (
+            <span key={v.id}><i style={{ background: vcol(v.id) }} />VLAN {v.id} {v.name}{v.limit_down ? ` · QoS ${v.limit_down} Mbps` : ''}</span>
           ))}
           <span>Anel da VLAN: uso do limite (verde, âmbar acima de 70%, vermelho acima de 90%)</span>
+          <span><i style={{ background: P.crit, boxShadow: `0 0 6px ${P.crit}` }} />Pisca em vermelho: consumo alto</span>
         </div>
       </section>
     </div>
