@@ -958,6 +958,9 @@ class MonitorService {
         if (dueSoon.length) alerts.push({ severity: 'info', title: plural(dueSoon.length, 'Revisão de VIP vence em até 15 dias', 'Revisão de # VIPs vence em até 15 dias'), detail: names(dueSoon), link: '/politicas?tab=vips' });
         if (noReview.length) alerts.push({ severity: 'info', title: plural(noReview.length, 'VIP sem prazo de revisão', '# VIPs sem prazo de revisão'), detail: names(noReview), link: '/politicas?tab=vips' });
         if (unbound.length) alerts.push({ severity: 'info', title: plural(unbound.length, 'VIP sem vínculo ao aparelho', '# VIPs sem vínculo ao aparelho'), detail: `Valem para qualquer aparelho que pegar o IP: ${names(unbound)}.`, link: '/politicas?tab=vips' });
+        // MAC privado (bit "administrado localmente"): celulares novos trocam o endereço e perdem o VIP.
+        const privateMac = vipRows.rows.filter((row) => row.mac && (parseInt(String(row.mac).slice(0, 2), 16) & 0x02) === 0x02);
+        if (privateMac.length) alerts.push({ severity: 'info', title: plural(privateMac.length, 'VIP vinculado a MAC privado', '# VIPs vinculados a MAC privado'), detail: `${names(privateMac)}. O endereço do celular pode mudar; fixe o endereço Wi-Fi no aparelho e vincule de novo.`, link: '/politicas?tab=vips' });
 
         const order = { critical: 0, warning: 1, info: 2 };
         return alerts.sort((a, b) => order[a.severity] - order[b.severity]);

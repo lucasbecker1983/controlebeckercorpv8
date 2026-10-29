@@ -79,7 +79,7 @@ export default function Topbar({ theme, onToggleTheme, onOpenMenu }) {
           {statusLabel}
         </div>
 
-        {live ? (
+        {live?.wan ? (
           <div className="tabular hidden items-center gap-3 rounded-lg border border-outline px-2.5 py-1.5 text-[12.5px] text-on-surface/75 md:inline-flex" title={`Uso atual do link de ${live.link_mbps} Mbps`}>
             <span className="inline-flex items-center gap-1"><ArrowDown size={13} style={{ color: 'var(--chart-1)' }} />{fmt(live.wan.down)} Mbps</span>
             <span className="inline-flex items-center gap-1"><ArrowUp size={13} style={{ color: 'var(--chart-2)' }} />{fmt(live.wan.up)} Mbps</span>

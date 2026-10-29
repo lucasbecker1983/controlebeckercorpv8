@@ -56,3 +56,9 @@ export const remaining = (expiresAt, now = Date.now()) => {
 export const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 export const MAC = /^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/;
 export const normMac = (value) => String(value || '').trim().toUpperCase().replace(/-/g, ':');
+
+// MAC privado/aleatório (bit "administrado localmente" ligado): celulares novos usam e ele pode mudar.
+export const isPrivateMac = (value) => {
+  const first = parseInt(normMac(value).slice(0, 2), 16);
+  return Number.isFinite(first) && (first & 0x02) === 0x02;
+};
