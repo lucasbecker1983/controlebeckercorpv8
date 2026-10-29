@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { Component, useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Info, X, XCircle } from 'lucide-react';
 
@@ -292,6 +292,44 @@ export function Switch({ checked, onChange, disabled = false, label }) {
       <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
     </button>
   );
+}
+
+/*
+ * Proteção por tela: se uma tela quebrar ao desenhar, só ela mostra o erro; menu e barra superior seguem de pé.
+ * Volta ao normal sozinha quando a rota muda (resetKey).
+ */
+export class RouteErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null, key: props.resetKey };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  static getDerivedStateFromProps(props, state) {
+    return props.resetKey !== state.key ? { error: null, key: props.resetKey } : null;
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[tela com erro]', error?.message, String(info?.componentStack || '').slice(0, 300));
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="mx-auto max-w-2xl py-10">
+        <Notice
+          tone="danger"
+          title="Esta tela encontrou um erro"
+          action={<Button onClick={() => window.location.reload()}>Recarregar</Button>}
+        >
+          O resto do sistema continua funcionando; use o menu para ir a outra tela. Se o erro voltar, avise o suporte com esta mensagem: {String(this.state.error?.message || this.state.error).slice(0, 180)}
+        </Notice>
+      </div>
+    );
+  }
 }
 
 // Avisos curtos no canto da tela, disparados de qualquer módulo com toast('...').

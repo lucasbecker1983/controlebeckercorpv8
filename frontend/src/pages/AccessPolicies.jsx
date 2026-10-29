@@ -40,20 +40,23 @@ export default function AccessPolicies() {
 
   const load = useCallback(async () => {
     try {
-      const [rules, vlans, exceptions, sporadic, overview] = await Promise.all([
+      const [rules, vlans, exceptions, sporadic] = await Promise.all([
         brGet('domain-policies'),
         brGet('vlans'),
         brGet('exceptions'),
         brGet('sporadic-exceptions'),
-        brGet('overview').catch(() => null),
       ]);
-      setData({
+      // Os números do topo (overview) são lentos: chegam depois, sem segurar a tela.
+      brGet('overview')
+        .then((overview) => setData((current) => ({ ...current, cards: overview?.cards || null })))
+        .catch(() => undefined);
+      setData((current) => ({
+        ...current,
         rules: Array.isArray(rules) ? rules : [],
         vlans: Array.isArray(vlans) ? vlans : [],
         exceptions: Array.isArray(exceptions) ? exceptions : [],
         sporadic: Array.isArray(sporadic) ? sporadic : [],
-        cards: overview?.cards || null,
-      });
+      }));
       setLoadError('');
     } catch (e) {
       setLoadError(errorMessage(e, 'Não foi possível carregar as políticas.'));
@@ -133,10 +136,15 @@ export default function AccessPolicies() {
 
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
 
-      {tab === 'visao' ? <PolicyOverview rules={data.rules} vlans={data.vlans} runChange={runChange} busy={busy} onEdit={editRule} /> : null}
-      {tab === 'regras' ? <SiteRules rules={data.rules} vlans={data.vlans} runChange={runChange} busy={busy} editing={editingRule} setEditing={setEditingRule} /> : null}
-      {tab === 'vips' ? <VipList exceptions={data.exceptions} devices={devices} runChange={runChange} busy={busy} /> : null}
-      {tab === 'temporarias' ? <TempReleases sporadic={data.sporadic} devices={devices} runChange={runChange} busy={busy} /> : null}
+      {loading && ['visao', 'regras', 'vips', 'temporarias'].includes(tab) ? (
+        <div className="sgcg-card flex items-center justify-center gap-2 px-4 py-12 text-sm text-on-surface/55" role="status">
+          <Loader2 size={16} className="animate-spin" /> Carregando regras, VIPs e liberações...
+        </div>
+      ) : null}
+      {!loading && tab === 'visao' ? <PolicyOverview rules={data.rules} vlans={data.vlans} runChange={runChange} busy={busy} onEdit={editRule} /> : null}
+      {!loading && tab === 'regras' ? <SiteRules rules={data.rules} vlans={data.vlans} runChange={runChange} busy={busy} editing={editingRule} setEditing={setEditingRule} /> : null}
+      {!loading && tab === 'vips' ? <VipList exceptions={data.exceptions} devices={devices} runChange={runChange} busy={busy} /> : null}
+      {!loading && tab === 'temporarias' ? <TempReleases sporadic={data.sporadic} devices={devices} runChange={runChange} busy={busy} /> : null}
       {tab === 'horarios' ? (
         <div className="space-y-3">
           <Notice tone="primary">Horários liberam categorias em dias e horas definidos (ex.: redes sociais na hora do almoço na VLAN 30). Fora do horário, valem as regras normais.</Notice>

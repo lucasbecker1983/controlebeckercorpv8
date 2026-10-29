@@ -33,6 +33,7 @@ import SupportPortal from './pages/SupportPortal';
 import SupportTickets from './pages/SupportTickets';
 import Maintenance from './pages/Maintenance';
 import PrivacyNotice from './pages/PrivacyNotice';
+import { RouteErrorBoundary } from './components/ui/kit';
 import { api, resetAuthInvalidation } from './services/api';
 import { resetAuthFetchInvalidation } from './services/authFetch';
 import { storageGet, storageRemove, storageSet } from './services/browserStorage';
@@ -103,6 +104,12 @@ const DNS_PROXY_TABS = ['observability', 'engine', 'contingency', 'metrics', 'ig
 function LegacyRedirect({ to }) {
   const location = useLocation();
   return <Navigate to={`${to}${location.search}`} replace />;
+}
+
+// Cada tela tem a própria proteção contra erro; ao trocar de rota ela é reiniciada.
+function RoutesGuard({ children }) {
+  const location = useLocation();
+  return <RouteErrorBoundary resetKey={location.pathname}>{children}</RouteErrorBoundary>;
 }
 
 function LegacyBlockingRedirect() {
@@ -236,6 +243,7 @@ export default function App() {
           </a>
         )}
       >
+        <RoutesGuard>
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/mapa-trafego" element={<TrafficMap />} />
@@ -294,6 +302,7 @@ export default function App() {
           <Route path="/settings" element={<LegacyRedirect to="/configuracoes" />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </RoutesGuard>
       </AppShell>
     </BrowserRouter>
   );

@@ -66,7 +66,15 @@ function InsightsPanel() {
       actions={<Button icon={RefreshCw} onClick={load} disabled={loading}>{loading ? 'Analisando...' : 'Analisar de novo'}</Button>}
     >
       {error ? <p className="text-sm text-danger">{error}</p> : null}
-      {data?.summary ? <p className="mb-3 text-[13px] leading-6 text-on-surface/70">{data.summary}</p> : null}
+      {typeof data?.summary === 'string' && data.summary ? <p className="mb-3 text-[13px] leading-6 text-on-surface/70">{data.summary}</p> : null}
+      {data?.summary && typeof data.summary === 'object' ? (
+        <div className="mb-3 flex flex-wrap gap-2">
+          <Badge tone={data.summary.critical ? 'danger' : 'success'}>{data.summary.critical ?? 0} crítico{data.summary.critical === 1 ? '' : 's'}</Badge>
+          <Badge tone={data.summary.warning ? 'warning' : 'success'}>{data.summary.warning ?? 0} {data.summary.warning === 1 ? 'atenção' : 'atenções'}</Badge>
+          {data.summary.services_checked != null ? <Badge>{data.summary.services_checked} serviços verificados</Badge> : null}
+          {data.summary.blocked_24h != null ? <Badge>{Number(data.summary.blocked_24h).toLocaleString('pt-BR')} bloqueios em 24 h</Badge> : null}
+        </div>
+      ) : null}
       <div className="grid gap-3 lg:grid-cols-2">
         {(data?.insights || []).map((item) => (
           <div key={item.id} className="rounded-lg border border-outline p-3">
