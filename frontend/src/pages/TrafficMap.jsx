@@ -9,7 +9,10 @@ import { api } from '../services/api';
  */
 
 const W = 860;
-const H = 560;
+const H = 560; // altura mínima, como no protótipo
+const ROW = 31.5;
+const slotsOf = (m) => (m ? m.vlans.reduce((acc, v) => acc + Math.max(2, m.devices.filter((d) => d.vlan === v.id).length), 0) : 0);
+const heightOf = (m) => Math.max(H, Math.round(slotsOf(m) * ROW + 56));
 const MAX_DEVICES = 16;
 const MAX_SITES = 12;
 const XS = { dev: 170, vlan: 350, wan: 500, site: 660 };
@@ -184,7 +187,8 @@ export default function TrafficMap() {
 
   const model = useMemo(() => buildModel(data, mode), [data, mode]);
   const LINK = data?.link_mbps || 300;
-  stateRef.current = { model, sel, mode, paused, LINK };
+  const HH = heightOf(model);
+  stateRef.current = { model, sel, mode, paused, LINK, HH };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -192,7 +196,7 @@ export default function TrafficMap() {
     const ctx = canvas.getContext('2d');
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     canvas.width = W * dpr;
-    canvas.height = H * dpr;
+    canvas.height = stateRef.current.HH * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     let raf = 0;
@@ -222,15 +226,15 @@ export default function TrafficMap() {
       if (!reduce) raf = requestAnimationFrame(frame);
     };
 
-    const draw = ({ model: m, sel: s, mode: md, LINK: L }) => {
-      if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
+    const draw = ({ model: m, sel: s, mode: md, LINK: L, HH: Hh }) => {
+      if (canvas.width !== W * dpr || canvas.height !== Hh * dpr) {
         canvas.width = W * dpr;
-        canvas.height = H * dpr;
+        canvas.height = Hh * dpr;
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, W, H);
+      ctx.clearRect(0, 0, W, Hh);
       ctx.fillStyle = C.canvas;
-      ctx.fillRect(0, 0, W, H);
+      ctx.fillRect(0, 0, W, Hh);
       ctx.font = `600 10.5px ${F_MONO}`;
       ctx.fillStyle = C.muted;
       ctx.textAlign = 'center';
@@ -238,33 +242,29 @@ export default function TrafficMap() {
       if (!m) return;
 
       const top = 34;
-      const bottom = H - 22;
+      const bottom = Hh - 22;
       const devices = m.devices;
       const vlans = m.vlans;
       const sites = m.sites;
-      devices.forEach((d, i) => {
-        d.x = XS.dev;
-        d.y = top + (i + 0.5) * (bottom - top) / devices.length;
-        d.r = 3 + Math.sqrt(d.val) * 1.6;
-      });
-      // VLANs com tráfego no meio dos seus aparelhos; as demais ocupam os espaços livres, sem sobrepor.
-      const vGap = Math.min(66, (bottom - top - 40) / Math.max(1, vlans.length - 1));
-      const vFirst = top + 14;
-      const vEnd = bottom - 34;
-      const vSlot = (vEnd - vFirst) / Math.max(1, vlans.length - 1);
-      vlans.forEach((v, i) => {
+      // Uma faixa por VLAN (10 → 99): os aparelhos da VLAN dentro dela e a VLAN no centro da faixa.
+      // VLAN sem tráfego ocupa uma linha, apagada. Nenhuma ligação cruza o desenho.
+      const rows = vlans.reduce((acc, v) => acc + Math.max(2, devices.filter((d) => d.vlan === v.id).length), 0);
+      const step = (bottom - top) / Math.max(1, rows);
+      let cursor = 0;
+      vlans.forEach((v) => {
         const mine = devices.filter((d) => d.vlan === v.id);
+        const band = Math.max(2, mine.length);
+        const offset = (band - mine.length) / 2;
+        mine.forEach((d, k) => {
+          d.x = XS.dev;
+          d.y = top + (cursor + offset + k + 0.5) * step;
+          d.r = 3 + Math.sqrt(d.val) * 1.6;
+        });
         v.x = XS.vlan;
-        v.y = mine.length ? mine.reduce((acc, d) => acc + d.y, 0) / mine.length : vFirst + i * vSlot;
+        v.y = top + (cursor + band / 2) * step;
         v.r = 8 + Math.sqrt(v.val) * 1.3;
+        cursor += band;
       });
-      for (let i = 1; i < vlans.length; i += 1) vlans[i].y = Math.max(vlans[i].y, vlans[i - 1].y + vGap);
-      if (vlans.length) vlans[vlans.length - 1].y = Math.min(vlans[vlans.length - 1].y, vEnd);
-      for (let i = vlans.length - 2; i >= 0; i -= 1) vlans[i].y = Math.min(vlans[i].y, vlans[i + 1].y - vGap);
-      if (vlans.length && vlans[0].y < vFirst) {
-        const shift = vFirst - vlans[0].y;
-        vlans.forEach((v) => { v.y += shift; });
-      }
       const wan = { x: XS.wan, y: (top + bottom) / 2, r: 40 };
       sites.forEach((t, i) => {
         const ty = top + (i + 0.5) * (bottom - top) / sites.length;
@@ -294,41 +294,6 @@ export default function TrafficMap() {
         if (s.t === 'vlan') return e.vlan === s.id || (e.site != null && devices.some((d) => d.vlan === s.id && d.flows.some((f) => f.site === e.site)));
         return true;
       };
-
-      // Rede neural: todas as camadas ligadas por sinapses finas (fundo); as ligações reais vêm por cima.
-      const layers = [devices, vlans, [wan], sites];
-      ctx.lineWidth = 0.9;
-      for (let li = 0; li < layers.length - 1; li += 1) {
-        for (const a of layers[li]) {
-          for (const b of layers[li + 1]) {
-            const c = curve(a, b);
-            ctx.beginPath();
-            ctx.moveTo(c[0], c[1]);
-            ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
-            ctx.strokeStyle = alpha(C.muted, s ? 0.05 : 0.16);
-            ctx.stroke();
-          }
-        }
-      }
-      // Sinais elétricos discretos correndo pelas sinapses de fundo.
-      if (!reduce && !s) {
-        let sig = 0;
-        for (let li = 0; li < layers.length - 1; li += 1) {
-          layers[li].forEach((a, ai) => {
-            layers[li + 1].forEach((b, bi) => {
-              sig += 1;
-              const seedv = ((ai * 73 + bi * 151 + li * 37) % 97) / 97;
-              const t = (phase * 0.22 + seedv) % 1;
-              if (((ai + bi + li) % 2) !== 0) return;
-              const p = bez(curve(a, b), t);
-              ctx.beginPath();
-              ctx.arc(p[0], p[1], 1.5, 0, Math.PI * 2);
-              ctx.fillStyle = alpha(C.accent, 0.55 * Math.sin(Math.PI * t));
-              ctx.fill();
-            });
-          });
-        }
-      }
 
       const edges = [];
       devices.forEach((dv) => {
@@ -491,7 +456,7 @@ export default function TrafficMap() {
         ctx.textAlign = 'center';
         ctx.font = `13px ${F_BODY}`;
         ctx.fillStyle = C.muted;
-        ctx.fillText('Nenhum dispositivo com tráfego de internet agora.', W / 2, H - 60);
+        ctx.fillText('Nenhum dispositivo com tráfego agora.', W / 2, Hh - 30);
       }
     };
 
@@ -502,7 +467,7 @@ export default function TrafficMap() {
   const hit = (ev) => {
     const r = canvasRef.current.getBoundingClientRect();
     const mx = ((ev.clientX - r.left) * W) / r.width;
-    const my = ((ev.clientY - r.top) * H) / r.height;
+    const my = ((ev.clientY - r.top) * HH) / r.height;
     const near = (n) => (mx - n.x) ** 2 + (my - n.y) ** 2 <= (n.r + 7) ** 2;
     const { devices, vlans, sites } = nodesRef.current;
     const d = devices.find(near);
@@ -547,8 +512,8 @@ export default function TrafficMap() {
             <canvas
               ref={canvasRef}
               width={W}
-              height={H}
-              style={{ display: 'block', width: W, height: H, cursor: 'crosshair' }}
+              height={HH}
+              style={{ display: 'block', width: W, height: HH, cursor: 'crosshair' }}
               onMouseMove={(e) => { const n = hit(e); hoverRef.current = n?.key || null; e.currentTarget.style.cursor = n ? 'pointer' : 'crosshair'; }}
               onMouseLeave={() => { hoverRef.current = null; }}
               onClick={(e) => select(hit(e))}
