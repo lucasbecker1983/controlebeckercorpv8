@@ -4,6 +4,15 @@ import { authSecurityService } from '../auth/auth-security-service';
 
 const router = Router();
 
+// Criar, editar e excluir usuários exige papel de administrador (antes bastava estar logado).
+const ADMIN_ROLES = ['admin', 'god'];
+const requireAdmin = (req: any, res: any, next: any) => {
+    const role = String(req.auth?.role || '').trim().toLowerCase();
+    if (!ADMIN_ROLES.includes(role)) return res.status(403).json({ error: 'Apenas administradores podem gerenciar usuários.' });
+    return next();
+};
+const VALID_ROLES = ['admin', 'user', 'viewer'];
+
 // LISTAR (GET /api/users)
 router.get('/', async (req, res) => {
     try {
@@ -17,10 +26,12 @@ router.get('/', async (req, res) => {
 });
 
 // CRIAR (POST /api/users)
-router.post('/', async (req, res) => {
+router.post('/', requireAdmin, async (req, res) => {
     const { name, username, password, role } = req.body;
     
     if (!username || !password) return res.status(400).json({ error: "Dados incompletos" });
+    if (String(password).length < 8) return res.status(400).json({ error: "A senha precisa ter pelo menos 8 caracteres." });
+    if (role && !VALID_ROLES.includes(String(role).toLowerCase())) return res.status(400).json({ error: "Perfil inválido." });
 
     try {
         // Gera Hash compatível com o módulo de Auth
@@ -40,9 +51,12 @@ router.post('/', async (req, res) => {
 });
 
 // ATUALIZAR (POST /api/users/update)
-router.post('/update', async (req, res) => {
+router.post('/update', requireAdmin, async (req, res) => {
     const { id, name, username, password, role } = req.body;
-    
+    if (!id || !username) return res.status(400).json({ error: "Dados incompletos" });
+    if (password && String(password).length < 8) return res.status(400).json({ error: "A senha precisa ter pelo menos 8 caracteres." });
+    if (role && !VALID_ROLES.includes(String(role).toLowerCase()) && String(role).toLowerCase() !== 'god') return res.status(400).json({ error: "Perfil inválido." });
+
     try {
         if (password) {
             const hash = await authSecurityService.hashPassword(password);
@@ -63,11 +77,14 @@ router.post('/update', async (req, res) => {
 });
 
 // EXCLUIR (POST /api/users/delete)
-router.post('/delete', async (req, res) => {
+router.post('/delete', requireAdmin, async (req, res) => {
     const { id } = req.body;
     try {
         // Proteção contra auto-exclusão do admin principal (opcional, mas recomendado)
         const check = await pool.query("SELECT username FROM app_users WHERE id=$1", [id]);
+        if (Number(id) === Number((req as any).auth?.id)) {
+             return res.status(400).json({ error: "Você não pode excluir o próprio usuário." });
+        }
         if (check.rows[0]?.username === 'lucas' || check.rows[0]?.username === 'admin') {
              return res.status(403).json({ error: "Não é permitido excluir o superusuário." });
         }

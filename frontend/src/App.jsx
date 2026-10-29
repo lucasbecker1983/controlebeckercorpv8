@@ -258,7 +258,7 @@ export default function App() {
           <Route path="/operacoes" element={<Operations user={user} />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/assistente-ia" element={<AiAssistant />} />
-          <Route path="/usuarios" element={<Users />} />
+          <Route path="/usuarios" element={<Users user={user} />} />
           <Route
             path="/configuracoes"
             element={(

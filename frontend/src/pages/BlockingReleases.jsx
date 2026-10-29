@@ -190,7 +190,7 @@ function DnsIgnoredTab() {
       >
         <form onSubmit={add} className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto]">
           <div>
-            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Padrão</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-on-surface/50">Padrão</label>
             <input
               type="text"
               value={form.pattern}
@@ -201,7 +201,7 @@ function DnsIgnoredTab() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Tipo</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-on-surface/50">Tipo</label>
             <select
               value={form.match_type}
               onChange={(e) => setForm((f) => ({ ...f, match_type: e.target.value }))}
@@ -213,7 +213,7 @@ function DnsIgnoredTab() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-[10px] font-black uppercase text-on-surface/50">Motivo (opcional)</label>
+            <label className="mb-1 block text-[10px] font-bold uppercase text-on-surface/50">Motivo (opcional)</label>
             <input
               type="text"
               value={form.reason}
@@ -244,7 +244,7 @@ function DnsIgnoredTab() {
           <div className="divide-y divide-outline/10">
             {active.map((p) => (
               <div key={p.id} className="flex items-center gap-3 py-3">
-                <span className="rounded-lg bg-primary/10 px-2 py-0.5 text-[10px] font-black uppercase text-primary">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
+                <span className="rounded-lg bg-primary/10 px-2 py-0.5 text-[10px] font-bold uppercase text-primary">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
                 <span className="flex-1 font-mono text-sm text-on-surface">{p.pattern}</span>
                 {p.reason && <span className="hidden text-xs text-on-surface/45 sm:block">{p.reason}</span>}
                 <button
@@ -269,7 +269,7 @@ function DnsIgnoredTab() {
           <div className="divide-y divide-outline/10">
             {inactive.map((p) => (
               <div key={p.id} className="flex items-center gap-3 py-3 opacity-50">
-                <span className="rounded-lg border border-outline/20 px-2 py-0.5 text-[10px] font-black uppercase text-on-surface/40">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
+                <span className="rounded-lg border border-outline/20 px-2 py-0.5 text-[10px] font-bold uppercase text-on-surface/40">{MATCH_TYPE_LABELS[p.match_type] || p.match_type}</span>
                 <span className="flex-1 font-mono text-sm text-on-surface/50 line-through">{p.pattern}</span>
                 {p.reason && <span className="hidden text-xs text-on-surface/35 sm:block">{p.reason}</span>}
                 <button
@@ -719,9 +719,9 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
               <TextInput data-autofocus="true" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar regra, política ou domínio" className="pl-11" />
             </div>
             <div className="inline-flex w-full overflow-x-auto rounded-full border border-outline/12 bg-surface-high/70 p-1 lg:w-auto">
-              <button type="button" onClick={() => setViewFilter('all')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'all' ? 'bg-primary text-on-primary' : 'text-on-surface/64'}`}>Todos</button>
-              <button type="button" onClick={() => setViewFilter('allow')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'allow' ? 'bg-info/16 text-info' : 'text-on-surface/64'}`}>Liberados</button>
-              <button type="button" onClick={() => setViewFilter('block')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-black uppercase tracking-[0.14em] ${viewFilter === 'block' ? 'bg-danger/14 text-danger' : 'text-on-surface/64'}`}>Bloqueados</button>
+              <button type="button" onClick={() => setViewFilter('all')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-bold uppercase tracking-[0.14em] ${viewFilter === 'all' ? 'bg-primary text-on-primary' : 'text-on-surface/64'}`}>Todos</button>
+              <button type="button" onClick={() => setViewFilter('allow')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-bold uppercase tracking-[0.14em] ${viewFilter === 'allow' ? 'bg-info/16 text-info' : 'text-on-surface/64'}`}>Liberados</button>
+              <button type="button" onClick={() => setViewFilter('block')} className={`min-h-[calc(var(--control-height)-0.5rem)] shrink-0 rounded-full px-3.5 text-[11px] font-bold uppercase tracking-[0.14em] ${viewFilter === 'block' ? 'bg-danger/14 text-danger' : 'text-on-surface/64'}`}>Bloqueados</button>
             </div>
           <div className="text-right text-xs uppercase tracking-[0.14em] text-on-surface/42">
             {changedPolicies.length ? `${changedPolicies.length} alteradas` : `${filteredPolicies.length} regras`}
@@ -734,7 +734,7 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
             {scopeType === 'vlan' && inheritedPolicies.length ? (
               <div className="border-b border-outline/10 pb-3">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Herdadas do global</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Herdadas do global</div>
                   <div className="text-xs uppercase tracking-[0.14em] text-on-surface/42">{inheritedPolicies.length} regra(s)</div>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
@@ -750,7 +750,7 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
             {ready && filteredPolicies.length ? groupedPolicies.map((group) => (
               <div key={group.key}>
                 <div className="sticky top-0 z-[1] flex items-center justify-between gap-3 border-b border-outline/10 bg-surface-high/96 px-1 py-2 backdrop-blur-[var(--blur-soft)]">
-                  <div className="text-sm font-black text-on-surface">{group.label}</div>
+                  <div className="text-sm font-bold text-on-surface">{group.label}</div>
                   <div className="text-xs uppercase tracking-[0.14em] text-on-surface/42">{group.items.length} item(ns)</div>
                 </div>
                 <div className="divide-y divide-outline/8">
@@ -785,10 +785,10 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-sm font-semibold text-on-surface">{policy.name}</span>
-                            <span className={`text-[11px] font-black uppercase tracking-[0.14em] ${policy.policy_type === 'allow' ? 'text-info' : 'text-danger'}`}>
+                            <span className={`text-[11px] font-bold uppercase tracking-[0.14em] ${policy.policy_type === 'allow' ? 'text-info' : 'text-danger'}`}>
                               {policy.policy_type === 'allow' ? 'Liberado' : 'Bloqueado'}
                             </span>
-                            {changed ? <span className="text-[11px] font-black uppercase tracking-[0.14em] text-primary">Alterado</span> : null}
+                            {changed ? <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-primary">Alterado</span> : null}
                           </div>
                           {policy.description ? <div className="mt-0.5 line-clamp-1 text-sm text-on-surface/60">{policy.description}</div> : null}
                           <div className="mt-1 text-xs uppercase tracking-[0.14em] text-on-surface/42">
@@ -796,14 +796,14 @@ function PolicyScopeEditorDialog({ open, scopeLabel, scopeType, scopeMeta = null
                           </div>
                         </div>
                         <div className="flex items-start justify-between gap-2 sm:flex-col sm:items-end">
-                          <span className={`text-[11px] font-black uppercase tracking-[0.14em] ${value === 'on' ? 'text-primary' : 'text-on-surface/46'}`}>
+                          <span className={`text-[11px] font-bold uppercase tracking-[0.14em] ${value === 'on' ? 'text-primary' : 'text-on-surface/46'}`}>
                             {value === 'on' ? 'Aplicada' : 'Fora'}
                           </span>
                           {changed ? (
                             <button
                               type="button"
                               onClick={() => changeValue(policy.id, previous)}
-                              className="text-xs font-black uppercase tracking-[0.14em] text-primary transition hover:opacity-80"
+                              className="text-xs font-bold uppercase tracking-[0.14em] text-primary transition hover:opacity-80"
                             >
                               Desfazer
                             </button>
@@ -931,7 +931,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
         <ThemeAwareSurface tone="primary" className="p-5 sm:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Política Institucional</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Política Institucional</div>
               <div className="mt-2 text-sm leading-6 text-on-surface/68">
                 A autoria não é digitada aqui: o sistema registra automaticamente usuário autenticado, data/hora e IP de origem na trilha LGPD.
               </div>
@@ -946,21 +946,21 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(320px,0.9fr)]">
           <div className="space-y-5">
             <label className="flex flex-col gap-2.5">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome da Política</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Nome da Política</span>
               <TextInput value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Bloquear redes sociais visitantes" />
               <p className="text-xs leading-5 text-on-surface/58">Use um nome objetivo. Exemplo: `Bloquear TikTok Visitantes` ou `Liberar Portal do Fornecedor`.</p>
             </label>
 
             <label className="flex flex-col gap-2.5">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Domínios e URLs</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Domínios e URLs</span>
               <TextArea value={form.domainsText} onChange={(event) => setForm((current) => ({ ...current, domainsText: event.target.value }))} rows={10} placeholder={'api.pontorh.com.br\napp.pontorh.com.br\nhttps://portal.exemplo.gov.br/relatorios'} />
               <p className="text-xs leading-5 text-on-surface/58">Informe um domínio ou URL por linha. Domínios seguem para DNS e proxy; URLs entram no proxy complementar como ACL de URL.</p>
             </label>
 
-            <div className="rounded-[28px] border border-outline/14 bg-surface/50 p-4 sm:p-5">
+            <div className="rounded-xl border border-outline/14 bg-surface/50 p-4 sm:p-5">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Prévia das entradas</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Prévia das entradas</div>
                   <p className="mt-1 text-xs leading-5 text-on-surface/58">A lista abaixo ajuda a validar rapidamente os domínios e URLs que serão salvos na política.</p>
                 </div>
                 <StateBadge label={`${domains.length} domínio(s)`} tone={domains.length ? 'primary' : 'neutral'} />
@@ -974,7 +974,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
             </div>
 
             <label className="flex flex-col gap-2.5">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Descrição/Motivo</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Descrição/Motivo</span>
               <TextArea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} rows={4} placeholder="Justificativa operacional, chamado ou decisão administrativa relacionada." />
               <p className="text-xs leading-5 text-on-surface/58">Explique por que a regra existe. O usuário, horário e IP entram automaticamente na LGPD.</p>
             </label>
@@ -983,7 +983,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
           <div className="space-y-5">
             <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-1">
               <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Tipo</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Tipo</span>
                 <SelectInput value={form.policy_type} onChange={(event) => setForm((current) => ({ ...current, policy_type: event.target.value }))}>
                   <option value="allow">Liberar</option>
                   <option value="block">Bloquear</option>
@@ -992,7 +992,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
               </label>
 
               <label className="flex flex-col gap-2.5">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
                 <SelectInput value={form.scope_type} onChange={(event) => setForm((current) => ({ ...current, scope_type: event.target.value, vlan_ids: event.target.value === 'global' ? [] : current.vlan_ids }))}>
                   <option value="vlan">VLAN(s)</option>
                   <option value="global" disabled={!globalAllowed}>Global - apenas Pornografia</option>
@@ -1001,10 +1001,10 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
               </label>
             </div>
 
-            <div className={`rounded-[28px] border p-4 sm:p-5 ${form.scope_type === 'vlan' ? 'border-outline/14 bg-surface/52' : 'border-outline/10 bg-surface/34 opacity-70'}`}>
+            <div className={`rounded-xl border p-4 sm:p-5 ${form.scope_type === 'vlan' ? 'border-outline/14 bg-surface/52' : 'border-outline/10 bg-surface/34 opacity-70'}`}>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
+                  <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
                   <p className="mt-1 text-xs leading-5 text-on-surface/58">Selecione exatamente onde a regra vale. Nada novo nasce global por padrão.</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -1013,7 +1013,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
                   <ActionButton tone="ghost" onClick={clearVlans} disabled={form.scope_type !== 'vlan' || !form.vlan_ids.length} className="min-h-9 rounded-2xl px-3 py-2 text-[10px] shadow-none">Limpar</ActionButton>
                 </div>
               </div>
-              <div className="mt-4 rounded-[24px] border border-outline/12 bg-container/60 p-3">
+              <div className="mt-4 rounded-xl border border-outline/12 bg-container/60 p-3">
                 <div className="flex max-h-[220px] flex-wrap gap-3 overflow-y-auto pr-1">
                   {selectableVlans.map((vlan) => (
                     <button
@@ -1022,7 +1022,7 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
                       onClick={() => form.scope_type === 'vlan' && toggleVlan(vlan.vlan_id)}
                       disabled={form.scope_type !== 'vlan'}
                       aria-pressed={form.vlan_ids.includes(vlan.vlan_id)}
-                      className={`min-h-11 rounded-2xl border px-4 py-2 text-[11px] font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-container ${
+                      className={`min-h-11 rounded-2xl border px-4 py-2 text-[11px] font-bold uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-container ${
                         form.vlan_ids.includes(vlan.vlan_id)
                           ? 'border-primary/18 bg-primary text-on-primary shadow-lg shadow-primary/20'
                           : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
@@ -1035,14 +1035,14 @@ function DomainPolicyEditorDialog({ open, item, vlans, onClose, onSubmit, saving
               </div>
             </div>
 
-            <div className="rounded-[28px] border border-outline/14 bg-surface/52 p-4 sm:p-5">
-              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Estado da política</div>
+            <div className="rounded-xl border border-outline/14 bg-surface/52 p-4 sm:p-5">
+              <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Estado da política</div>
               <p className="mt-2 text-xs leading-5 text-on-surface/58">Mantenha a política salva, mas controle se ela entra ou não no enforcement atual.</p>
               <button
                 type="button"
                 onClick={() => setForm((current) => ({ ...current, enabled: !current.enabled }))}
                 aria-pressed={form.enabled}
-                className={`mt-4 inline-flex min-h-11 items-center rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-container ${
+                className={`mt-4 inline-flex min-h-11 items-center rounded-2xl border px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 focus-visible:ring-offset-container ${
                   form.enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'
                 }`}
               >
@@ -1134,8 +1134,8 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
     >
       <div className="space-y-5">
         <ThemeAwareSurface tone="primary" className="p-5">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Domínio identificado no relatório de dados</div>
-          <div className="mt-2 break-all text-xl font-black text-on-surface">{domain || 'domínio não identificado'}</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Domínio identificado no relatório de dados</div>
+          <div className="mt-2 break-all text-xl font-bold text-on-surface">{domain || 'domínio não identificado'}</div>
           <p className="mt-2 text-sm leading-6 text-on-surface/68">
             Origem: {event.client_ip || 'IP não identificado'}{event.vlan_id ? ` • VLAN ${event.vlan_id}` : ''}. A ação abaixo atualiza a política e sincroniza as regras legadas usadas pelo runtime.
           </p>
@@ -1145,24 +1145,24 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
           <button
             type="button"
             onClick={() => setForm((current) => ({ ...current, mode: 'existing' }))}
-            className={`rounded-[22px] border p-4 text-left transition ${form.mode === 'existing' ? 'border-primary/30 bg-primary/10' : 'border-outline/14 bg-container/64'}`}
+            className={`rounded-xl border p-4 text-left transition ${form.mode === 'existing' ? 'border-primary/30 bg-primary/10' : 'border-outline/14 bg-container/64'}`}
           >
-            <div className="text-sm font-black text-on-surface">Incluir em política existente</div>
+            <div className="text-sm font-bold text-on-surface">Incluir em política existente</div>
             <div className="mt-2 text-sm leading-6 text-on-surface/62">Use quando o domínio pertence a uma whitelist/blacklist já criada.</div>
           </button>
           <button
             type="button"
             onClick={() => setForm((current) => ({ ...current, mode: 'new' }))}
-            className={`rounded-[22px] border p-4 text-left transition ${form.mode === 'new' ? 'border-primary/30 bg-primary/10' : 'border-outline/14 bg-container/64'}`}
+            className={`rounded-xl border p-4 text-left transition ${form.mode === 'new' ? 'border-primary/30 bg-primary/10' : 'border-outline/14 bg-container/64'}`}
           >
-            <div className="text-sm font-black text-on-surface">Criar política nomeada</div>
+            <div className="text-sm font-bold text-on-surface">Criar política nomeada</div>
             <div className="mt-2 text-sm leading-6 text-on-surface/62">Use somente quando ainda não existe uma política adequada.</div>
           </button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Tipo</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Tipo</span>
             <SelectInput value={form.policy_type} onChange={(eventValue) => setForm((current) => ({ ...current, policy_type: eventValue.target.value, policy_id: '' }))}>
               <option value="allow">Whitelist / Liberação</option>
               <option value="block">Blacklist / Bloqueio</option>
@@ -1170,7 +1170,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
           </label>
           {form.mode === 'existing' ? (
             <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Política existente</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Política existente</span>
               <SelectInput value={form.policy_id} onChange={(eventValue) => setForm((current) => ({ ...current, policy_id: eventValue.target.value }))}>
                 <option value="">Selecione</option>
                 {compatiblePolicies.map((policy) => (
@@ -1180,7 +1180,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
             </label>
           ) : (
             <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome da nova política</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Nome da nova política</span>
               <TextInput value={form.name} onChange={(eventValue) => setForm((current) => ({ ...current, name: eventValue.target.value }))} placeholder="Liberar sistema RH" />
             </label>
           )}
@@ -1189,7 +1189,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
         {form.mode === 'new' ? (
           <div className="grid gap-4 md:grid-cols-[0.8fr_1.2fr]">
             <label className="space-y-2">
-              <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
               <SelectInput value={form.scope_type} onChange={(eventValue) => setForm((current) => ({ ...current, scope_type: eventValue.target.value, vlan_ids: eventValue.target.value === 'global' ? [] : current.vlan_ids }))}>
                 <option value="vlan">VLAN(s)</option>
                 <option value="global" disabled={!globalAllowed}>Global - apenas Pornografia</option>
@@ -1197,7 +1197,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
             </label>
             <div className={form.scope_type === 'vlan' ? 'space-y-2' : 'space-y-2 opacity-55'}>
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">VLAN(s)</span>
                 <div className="flex flex-wrap gap-2">
                   <ActionButton tone="ghost" onClick={selectAllVlans} disabled={form.scope_type !== 'vlan'} className="min-h-8 rounded-2xl px-3 py-1.5 text-[10px] shadow-none">Todas</ActionButton>
                   <ActionButton tone="ghost" onClick={clearVlans} disabled={form.scope_type !== 'vlan' || !form.vlan_ids.length} className="min-h-8 rounded-2xl px-3 py-1.5 text-[10px] shadow-none">Limpar</ActionButton>
@@ -1210,7 +1210,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
                     type="button"
                     onClick={() => form.scope_type === 'vlan' && toggleVlan(vlan.vlan_id)}
                     disabled={form.scope_type !== 'vlan'}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] transition ${
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] transition ${
                       form.vlan_ids.includes(vlan.vlan_id)
                         ? 'border-primary/18 bg-primary text-on-primary'
                         : 'border-outline/16 bg-container/72 text-on-surface/65'
@@ -1225,7 +1225,7 @@ function AuditPolicyAttachDialog({ open, event, policies, vlans, onClose, onSubm
         ) : null}
 
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.description} onChange={(eventValue) => setForm((current) => ({ ...current, description: eventValue.target.value }))} rows={3} />
         </label>
       </div>
@@ -1325,7 +1325,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
         />
         <ThemeAwareSurface tone="warning" className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-sm font-black text-on-surface">Exceção forte de navegação</div>
+            <div className="text-sm font-bold text-on-surface">Exceção forte de navegação</div>
             <p className="mt-1 text-sm leading-5 text-on-surface/62">
               O IP fica fora dos bloqueios comuns; consultas DNS clássicas podem ser registradas como bypass para evidência.
             </p>
@@ -1336,16 +1336,16 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
         </ThemeAwareSurface>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">IP</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">IP</span>
             <TextInput value={form.ip} onChange={(event) => setForm((current) => ({ ...current, ip: event.target.value }))} placeholder="192.168.30.25" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Descrição</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Descrição</span>
             <TextInput value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} placeholder="Notebook da diretoria" />
           </label>
         </div>
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} placeholder="Justificativa operacional do VIP." />
         </label>
         <label className="flex items-start gap-3 rounded-2xl border border-outline/12 bg-surface-high/46 p-4">
@@ -1356,7 +1356,7 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
             className="mt-1 h-4 w-4 accent-warning"
           />
           <span>
-            <span className="block text-sm font-black text-on-surface">Auditoria DNS do VIP</span>
+            <span className="block text-sm font-bold text-on-surface">Auditoria DNS do VIP</span>
             <span className="mt-1 block text-sm leading-5 text-on-surface/62">
               Redireciona DNS clássico para o resolvedor limpo auditável, sem aplicar bloqueio.
             </span>
@@ -1364,19 +1364,19 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
         </label>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
             <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Fundamento institucional da exceção" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
             <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Autoridade ou unidade responsável" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
             <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Nível de aprovação exigido" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
             <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
               <option value="">Não definido</option>
               <option value="Em análise">Em análise</option>
@@ -1388,31 +1388,31 @@ function VipEditorDialog({ open, item, onClose, onSubmit, saving, progressStep =
             </SelectInput>
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
             <TextInput type="date" value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado por</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Aprovado por</span>
             <TextInput value={form.approved_by} onChange={(event) => setForm((current) => ({ ...current, approved_by: event.target.value }))} placeholder="Autoridade aprovadora" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Aprovado em</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Aprovado em</span>
             <TextInput type="datetime-local" value={form.approved_at} onChange={(event) => setForm((current) => ({ ...current, approved_at: event.target.value }))} />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência inicial</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Vigência inicial</span>
             <TextInput type="datetime-local" value={form.effective_from} onChange={(event) => setForm((current) => ({ ...current, effective_from: event.target.value }))} />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Vigência final</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Vigência final</span>
             <TextInput type="datetime-local" value={form.expires_at} onChange={(event) => setForm((current) => ({ ...current, expires_at: event.target.value }))} />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado por</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Revogado por</span>
             <TextInput value={form.revoked_by} onChange={(event) => setForm((current) => ({ ...current, revoked_by: event.target.value }))} placeholder="Autoridade que revogou" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revogado em</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Revogado em</span>
             <TextInput type="datetime-local" value={form.revoked_at} onChange={(event) => setForm((current) => ({ ...current, revoked_at: event.target.value }))} />
           </label>
         </div>
@@ -1490,8 +1490,8 @@ function VlanEditorDialog({ open, item, onClose, onSubmit, saving }) {
       <ThemeAwareSurface tone={inStandard ? 'success' : 'warning'} className="mb-5 p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <div className="text-[11px] font-black uppercase tracking-[0.18em] opacity-70">Participação no padrão</div>
-            <div className="mt-2 text-lg font-black">
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] opacity-70">Participação no padrão</div>
+            <div className="mt-2 text-lg font-bold">
               {inStandard ? 'Esta VLAN entra no monitoramento, liberações e bloqueios.' : 'Esta VLAN fica desligada do padrão do módulo.'}
             </div>
             <p className="mt-2 text-sm leading-6 opacity-75">
@@ -1506,29 +1506,29 @@ function VlanEditorDialog({ open, item, onClose, onSubmit, saving }) {
 
       <div className="grid gap-4 md:grid-cols-2">
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">ID da VLAN</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">ID da VLAN</span>
           <TextInput value={form.vlan_id} onChange={(event) => setForm((current) => ({ ...current, vlan_id: event.target.value }))} placeholder="90" />
         </label>
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Nome</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Nome</span>
           <TextInput value={form.label} onChange={(event) => setForm((current) => ({ ...current, label: event.target.value }))} placeholder="Financeiro" />
         </label>
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Interface</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Interface</span>
           <TextInput value={form.interface_name} onChange={(event) => setForm((current) => ({ ...current, interface_name: event.target.value }))} placeholder="enp6s0.90" />
         </label>
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Subnet CIDR</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Subnet CIDR</span>
           <TextInput value={form.subnet_cidr} onChange={(event) => setForm((current) => ({ ...current, subnet_cidr: event.target.value }))} placeholder="192.168.90.0/24" />
         </label>
       </div>
       <div className="mt-4 grid gap-3 md:grid-cols-3">
-        <button type="button" onClick={() => setForm((current) => ({ ...current, blocking_enabled: !current.blocking_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.blocking_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Bloqueio {form.blocking_enabled ? 'ativo' : 'inativo'}</button>
-        <button type="button" onClick={() => setForm((current) => ({ ...current, monitoring_enabled: !current.monitoring_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.monitoring_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Monitoramento {form.monitoring_enabled ? 'ativo' : 'inativo'}</button>
-        <button type="button" onClick={() => setForm((current) => ({ ...current, exempt: !current.exempt }))} className={`rounded-2xl border px-4 py-3 text-xs font-black uppercase tracking-[0.14em] ${form.exempt ? 'border-amber-500/20 bg-amber-500/12 text-amber-700 dark:text-amber-300' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Exceção {form.exempt ? 'ativa' : 'inativa'}</button>
+        <button type="button" onClick={() => setForm((current) => ({ ...current, blocking_enabled: !current.blocking_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] ${form.blocking_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Bloqueio {form.blocking_enabled ? 'ativo' : 'inativo'}</button>
+        <button type="button" onClick={() => setForm((current) => ({ ...current, monitoring_enabled: !current.monitoring_enabled }))} className={`rounded-2xl border px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] ${form.monitoring_enabled ? 'border-info/20 bg-info/12 text-info' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Monitoramento {form.monitoring_enabled ? 'ativo' : 'inativo'}</button>
+        <button type="button" onClick={() => setForm((current) => ({ ...current, exempt: !current.exempt }))} className={`rounded-2xl border px-4 py-3 text-xs font-bold uppercase tracking-[0.14em] ${form.exempt ? 'border-warning/20 bg-warning/12 text-warning' : 'border-outline/16 bg-container/72 text-on-surface/62'}`}>Exceção {form.exempt ? 'ativa' : 'inativa'}</button>
       </div>
       <label className="mt-4 block space-y-2">
-        <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Notas</span>
+        <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Notas</span>
         <TextArea value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} rows={4} placeholder="Contexto operacional da VLAN." />
       </label>
     </DialogShell>
@@ -1623,14 +1623,14 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
           <>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="space-y-2">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Escopo</span>
                 <SelectInput value={form.scope_type} onChange={(event) => setForm((current) => ({ ...current, scope_type: event.target.value, vlan_ids: [] }))}>
                   <option value="global">Global</option>
                   <option value="vlan">Somente VLANs específicas</option>
                 </SelectInput>
               </label>
               <label className="space-y-2">
-                <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Duração</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Duração</span>
                 <SelectInput value={form.duration_minutes} onChange={(event) => setForm((current) => ({ ...current, duration_minutes: event.target.value }))}>
                   <option value="15">15 minutos</option>
                   <option value="30">30 minutos</option>
@@ -1641,14 +1641,14 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
             </div>
             {form.scope_type === 'vlan' ? (
               <div>
-                <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Selecione as VLANs</div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Selecione as VLANs</div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {vlans.map((vlan) => (
                     <button
                       key={vlan.id}
                       type="button"
                       onClick={() => toggleVlan(vlan.vlan_id)}
-                      className={`rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] ${
+                      className={`rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] ${
                         form.vlan_ids.includes(vlan.vlan_id)
                           ? 'border-primary/18 bg-primary text-on-primary'
                           : 'border-outline/16 bg-container/72 text-on-surface/65'
@@ -1661,14 +1661,14 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
               </div>
             ) : null}
             <div>
-              <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Resolvedores públicos autorizados</div>
+              <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Resolvedores públicos autorizados</div>
               <div className="mt-3 flex flex-wrap gap-2">
                 {CONTINGENCY_PROVIDERS.map((provider) => (
                   <button
                     key={provider.key}
                     type="button"
                     onClick={() => toggleProvider(provider.key)}
-                    className={`rounded-full border px-3 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] ${
+                    className={`rounded-full border px-3 py-1.5 text-[11px] font-bold uppercase tracking-[0.14em] ${
                       form.providers.includes(provider.key)
                         ? 'border-danger/18 bg-danger text-white'
                         : 'border-outline/16 bg-container/72 text-on-surface/65'
@@ -1682,7 +1682,7 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
           </>
         ) : (
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Novo prazo</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Novo prazo</span>
             <SelectInput value={form.duration_minutes} onChange={(event) => setForm((current) => ({ ...current, duration_minutes: event.target.value }))}>
               <option value="15">15 minutos</option>
               <option value="30">30 minutos</option>
@@ -1692,24 +1692,24 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
           </label>
         )}
         <label className="space-y-2">
-          <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
+          <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Motivo</span>
           <TextArea value={form.reason} onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))} rows={4} placeholder="Explique por que a contingência precisa ficar ativa." />
         </label>
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Base legal / diretriz</span>
             <TextInput value={form.legal_basis} onChange={(event) => setForm((current) => ({ ...current, legal_basis: event.target.value }))} placeholder="Fundamento institucional da contingência" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Solicitante</span>
             <TextInput value={form.requested_by} onChange={(event) => setForm((current) => ({ ...current, requested_by: event.target.value }))} placeholder="Gestão ou unidade responsável" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Alçada de aprovação</span>
             <TextInput value={form.approval_scope} onChange={(event) => setForm((current) => ({ ...current, approval_scope: event.target.value }))} placeholder="Diretoria, comitê ou instância formal" />
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Status institucional</span>
             <SelectInput value={form.lifecycle_status} onChange={(event) => setForm((current) => ({ ...current, lifecycle_status: event.target.value }))}>
               <option value="">Não definido</option>
               <option value="Em análise">Em análise</option>
@@ -1721,7 +1721,7 @@ function ContingencyDialog({ open, mode, vlans, onClose, onSubmit, saving }) {
             </SelectInput>
           </label>
           <label className="space-y-2">
-            <span className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
+            <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Revisão prevista</span>
             <TextInput value={form.review_date} onChange={(event) => setForm((current) => ({ ...current, review_date: event.target.value }))} placeholder="2026-12-31" />
           </label>
         </div>
@@ -1822,13 +1822,13 @@ function OperationProgress({ title, steps = [], active = false, currentStep = 0 
   return (
     <ThemeAwareSurface tone="warning" className="p-4">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-orange-500/20 bg-orange-500/10 text-warning">
+        <div className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-warning/20 bg-warning/10 text-warning">
           <Loader2 size={18} className="animate-spin" />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-black text-on-surface">{title}</div>
+          <div className="text-sm font-bold text-on-surface">{title}</div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
-            <div className="h-full rounded-full bg-orange-500 transition-all duration-500" style={{ width: `${progress}%` }} />
+            <div className="h-full rounded-full bg-warning transition-all duration-500" style={{ width: `${progress}%` }} />
           </div>
           <div className="mt-3 grid gap-2">
             {steps.map((step, index) => (
@@ -1925,7 +1925,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
-            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
               IP da máquina do colaborador
               <HintTooltip text="Digite o endereço IPv4 exato da máquina que receberá o acesso liberado. Ex: 192.168.10.50" />
             </label>
@@ -1937,7 +1937,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
             />
           </div>
           <div>
-            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+            <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
               Quem solicitou
               <HintTooltip text="Nome completo do colaborador ou responsável que fez a solicitação de exceção." />
             </label>
@@ -1950,7 +1950,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
         </div>
 
         <div>
-          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
             Duração da exceção
             <HintTooltip text="Após o tempo selecionado, o acesso é bloqueado automaticamente. Requer novo pedido para renovar." />
           </label>
@@ -1962,7 +1962,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
         </div>
 
         <div>
-          <label className="mb-2 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+          <label className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
             Políticas a liberar
             <HintTooltip text="Selecione as categorias de conteúdo que serão liberadas. Pelo menos uma categoria ou domínio personalizado é obrigatório." />
           </label>
@@ -1993,7 +1993,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
         </div>
 
         <div>
-          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
             Domínios personalizados (opcional)
             <HintTooltip text="Adicione domínios específicos não cobertos pelas categorias acima. Um por linha ou separados por vírgula." />
           </label>
@@ -2006,7 +2006,7 @@ function SporadicExceptionEditorDialog({ open, onClose, onSubmit, saving, progre
         </div>
 
         <div>
-          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/60">
+          <label className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/60">
             Justificativa
             <HintTooltip text="Descreva o motivo da solicitação. Esta informação é registrada na trilha institucional de auditoria." />
           </label>
@@ -2062,8 +2062,8 @@ function SporadicTab({ sporadicExceptions, onNew, onRevoke, working }) {
           <ThemeAwareSurface tone="warning" className="p-[var(--spacing-card)]">
             <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
               <div>
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-warning">Bypass VIP temporário</div>
-                <div className="mt-2 text-xl font-black text-on-surface">Acesso liberado imediatamente ao salvar</div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-warning">Bypass VIP temporário</div>
+                <div className="mt-2 text-xl font-bold text-on-surface">Acesso liberado imediatamente ao salvar</div>
                 <div className="mt-2 text-sm leading-6 text-on-surface/68">
                   O IP do colaborador entra na lista VIP de bypass do motor ACL+DNS pelo período definido. Ao expirar ou ser revogada, o bloqueio institucional é restaurado automaticamente.
                 </div>
@@ -2087,7 +2087,7 @@ function SporadicTab({ sporadicExceptions, onNew, onRevoke, working }) {
                   <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-base font-black text-on-surface">{item.ip}</span>
+                        <span className="font-mono text-base font-bold text-on-surface">{item.ip}</span>
                         <SporadicStatusBadge item={item} />
                         {active ? (
                           <span className="flex items-center gap-1 text-xs font-semibold text-warning">
@@ -2662,11 +2662,11 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     <ThemeAwareSurface tone="primary" className="rounded-lg p-3 sm:p-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-black uppercase tracking-[0.12em] text-primary">Aplicar regra em VLAN</div>
-          <div className="mt-1 text-base font-black text-on-surface">Ação, categoria e VLANs</div>
+          <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary">Aplicar regra em VLAN</div>
+          <div className="mt-1 text-base font-bold text-on-surface">Ação, categoria e VLANs</div>
           <div className="mt-3 grid gap-2.5 md:grid-cols-3">
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Ação</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Ação</span>
               <SelectInput value={quickVlanRule.policy_type} onChange={(event) => setQuickVlanRule((current) => ({
                 ...current,
                 policy_type: event.target.value,
@@ -2677,7 +2677,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </SelectInput>
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Categoria</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Categoria</span>
               <SelectInput value={quickVlanRule.category} onChange={(event) => setQuickVlanRule((current) => ({ ...current, category: event.target.value }))}>
                 {quickRuleCategories.map((category) => (
                   <option key={category.key} value={category.key}>{category.label}</option>
@@ -2685,7 +2685,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </SelectInput>
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
               <TextInput value={quickVlanRule.notes} onChange={(event) => setQuickVlanRule((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
             </label>
           </div>
@@ -2706,7 +2706,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               type="button"
               onClick={() => toggleQuickRuleVlan(vlan.vlan_id)}
               aria-pressed={quickVlanRule.vlan_ids.includes(vlan.vlan_id)}
-              className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+              className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                 quickVlanRule.vlan_ids.includes(vlan.vlan_id)
                   ? 'border-primary/20 bg-primary text-on-primary shadow-sm shadow-primary/15'
                   : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
@@ -2735,8 +2735,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         <ThemeAwareSurface tone="primary" className="rounded-lg p-3 sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div className="text-[10px] font-black uppercase tracking-[0.12em] text-primary">Criar janela visual</div>
-              <div className="mt-1 text-base font-black text-on-surface">{scheduleDraft.id ? 'Editando agendamento' : 'Nova regra por horário'}</div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.12em] text-primary">Criar janela visual</div>
+              <div className="mt-1 text-base font-bold text-on-surface">{scheduleDraft.id ? 'Editando agendamento' : 'Nova regra por horário'}</div>
             </div>
             {scheduleDraft.id ? (
               <ActionButton
@@ -2764,19 +2764,19 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
           <div className="mt-3 grid gap-2.5 md:grid-cols-2">
             <label className="space-y-1.5 md:col-span-2">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Nome</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Nome</span>
               <TextInput value={scheduleDraft.name} onChange={(event) => setScheduleDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ex: Sexta livre na VLAN 30" />
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Início</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Início</span>
               <TextInput type="time" value={scheduleDraft.start_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_time: event.target.value }))} />
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Final</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Final</span>
               <TextInput type="time" value={scheduleDraft.end_time} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_time: event.target.value }))} />
             </label>
             <label className="space-y-1.5">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Validade</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Validade</span>
               <SelectInput value={scheduleDraft.date_mode} onChange={(event) => setScheduleDraft((current) => ({
                 ...current,
                 date_mode: event.target.value,
@@ -2789,25 +2789,25 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             </label>
             {scheduleDraft.date_mode !== 'weekly' ? (
               <label className="space-y-1.5">
-                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">{scheduleDraft.date_mode === 'single' ? 'Dia' : 'Data inicial'}</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">{scheduleDraft.date_mode === 'single' ? 'Dia' : 'Data inicial'}</span>
                 <TextInput type="date" value={scheduleDraft.start_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, start_date: event.target.value }))} />
               </label>
             ) : null}
             {scheduleDraft.date_mode === 'range' ? (
               <label className="space-y-1.5">
-                <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Data final</span>
+                <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Data final</span>
                 <TextInput type="date" value={scheduleDraft.end_date} onChange={(event) => setScheduleDraft((current) => ({ ...current, end_date: event.target.value }))} />
               </label>
             ) : null}
             <label className="space-y-1.5 md:col-span-2">
-              <span className="text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Observação</span>
               <TextInput value={scheduleDraft.notes} onChange={(event) => setScheduleDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Opcional" />
             </label>
           </div>
 
           <div className="mt-3 space-y-2.5">
             <div>
-              <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">VLANs</div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">VLANs</div>
               <div className="flex flex-wrap gap-1.5">
                 {quickSelectableVlans.map((vlan) => (
                   <button
@@ -2815,7 +2815,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     type="button"
                     onClick={() => toggleScheduleVlan(vlan.vlan_id)}
                     aria-pressed={scheduleDraft.vlan_ids.includes(vlan.vlan_id)}
-                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                       scheduleDraft.vlan_ids.includes(vlan.vlan_id)
                           ? 'border-primary/20 bg-primary text-on-primary shadow-sm shadow-primary/15'
                         : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-primary/20 hover:text-primary'
@@ -2827,7 +2827,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </div>
             </div>
             <div>
-              <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Categorias</div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Categorias</div>
               <div className="flex flex-wrap gap-1.5">
                 {SCHEDULE_CATEGORIES.map((label) => (
                   <button
@@ -2835,7 +2835,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     type="button"
                     onClick={() => toggleScheduleCategory(label)}
                     aria-pressed={scheduleDraft.categories.includes(label)}
-                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-black uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                    className={`min-h-8 rounded-lg border px-2.5 py-1.5 text-[10px] font-bold uppercase tracking-[0.1em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                       scheduleDraft.categories.includes(label)
                         ? 'border-success/20 bg-success text-on-primary shadow-sm shadow-success/15'
                         : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-success/20 hover:text-success'
@@ -2848,7 +2848,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             </div>
             {scheduleDraft.date_mode !== 'single' ? (
               <div>
-                <div className="mb-1.5 text-[10px] font-black uppercase tracking-[0.12em] text-on-surface/50">Dias</div>
+                <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-on-surface/50">Dias</div>
                 <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">
                   {WEEKDAY_OPTIONS.map((weekday) => (
                     <button
@@ -2856,7 +2856,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                       type="button"
                       onClick={() => toggleScheduleWeekday(weekday.value)}
                       aria-pressed={scheduleDraft.weekdays.includes(weekday.value)}
-                      className={`min-h-8 rounded-lg border px-2 py-1.5 text-[10px] font-black uppercase tracking-[0.08em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+                      className={`min-h-8 rounded-lg border px-2 py-1.5 text-[10px] font-bold uppercase tracking-[0.08em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
                         scheduleDraft.weekdays.includes(weekday.value)
                           ? 'border-info/20 bg-info text-on-primary shadow-sm shadow-info/15'
                           : 'border-outline/16 bg-container/72 text-on-surface/68 hover:border-info/20 hover:text-info'
@@ -2888,7 +2888,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <div className="flex items-start justify-between gap-2.5">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-sm font-black leading-5 text-on-surface">{schedule.name}</span>
+                    <span className="text-sm font-bold leading-5 text-on-surface">{schedule.name}</span>
                     <StateBadge label={schedule.active === false ? 'Pausado' : 'Ativo'} tone={schedule.active === false ? 'neutral' : 'success'} />
                   </div>
                   <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -2997,8 +2997,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
     <ThemeAwareSurface className="p-4">
       <div className="flex flex-wrap items-center gap-3">
         <div>
-          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/46">Comando</div>
-          <div className="mt-1 text-sm font-black text-on-surface">Ações rápidas</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/46">Comando</div>
+          <div className="mt-1 text-sm font-bold text-on-surface">Ações rápidas</div>
         </div>
         <StateBadge
           label={emergencyBypassActive ? 'Emergência' : contingencyActive ? 'Contingência' : 'Normal'}
@@ -3007,15 +3007,15 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         <div className="flex flex-wrap gap-2">
           <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
             <span className="text-[11px] font-semibold text-on-surface/52">Motor</span>
-            <span className="ml-2 text-sm font-black text-on-surface">{MODE_LABELS[engineMode] || engineMode}</span>
+            <span className="ml-2 text-sm font-bold text-on-surface">{MODE_LABELS[engineMode] || engineMode}</span>
           </div>
           <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
             <span className="text-[11px] font-semibold text-on-surface/52">VIPs</span>
-            <span className="ml-2 text-sm font-black text-on-surface">{activeVips.length}</span>
+            <span className="ml-2 text-sm font-bold text-on-surface">{activeVips.length}</span>
           </div>
           <div className="rounded-2xl border border-outline/12 bg-surface-high/50 px-3 py-2">
             <span className="text-[11px] font-semibold text-on-surface/52">Escopo</span>
-            <span className="ml-2 text-sm font-black text-on-surface">{managedVlanIds.length} VLANs</span>
+            <span className="ml-2 text-sm font-bold text-on-surface">{managedVlanIds.length} VLANs</span>
           </div>
         </div>
       </div>
@@ -3023,7 +3023,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
       <div className="mt-4 flex gap-3 overflow-x-auto pb-1">
         {quickActionGroups.map((group) => (
           <div key={group.label} className="min-w-[260px] flex-1 rounded-2xl border border-outline/12 bg-surface-high/42 p-3">
-            <div className="text-[11px] font-black uppercase tracking-[0.14em] text-on-surface/42">{group.label}</div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface/42">{group.label}</div>
             <div className="mt-2 flex flex-wrap gap-2">
               {group.items.map((item) => (
                 <ActionButton
@@ -4127,7 +4127,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
       {emergencyBypassActive ? (
         <ListRow className="border-danger/18 bg-danger/10 text-danger">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em]">Bypass de emergência ativo</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em]">Bypass de emergência ativo</div>
           <div className="mt-2 text-sm font-semibold">
             Todas as VLANs do módulo estão livres de ACL, RPZ/DNS e interceptação até a desativação manual.
           </div>
@@ -4136,7 +4136,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
       {contingencyActive ? (
         <ListRow className="border-danger/18 bg-danger/10 text-danger">
-          <div className="text-[11px] font-black uppercase tracking-[0.18em]">Contingência DNS ativa</div>
+          <div className="text-[11px] font-bold uppercase tracking-[0.18em]">Contingência DNS ativa</div>
           <div className="mt-2 text-sm font-semibold">
             Escopo {contingency?.scope_type === 'vlan' ? `VLAN ${(contingency?.vlan_ids || []).join(', ')}` : 'global'} com resolvedores {(contingency?.resolvers || []).join(', ') || '—'}.
           </div>
@@ -4179,7 +4179,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             <SectionCard title="Síntese executiva do módulo" subtitle="Resposta direta para o gestor entender estado, exceções e risco sem navegar por detalhes técnicos.">
               <div className="grid gap-3 md:grid-cols-2">
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Global agora</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Global agora</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {namedPolicies.filter((item) => item.enabled && item.scope_type === 'global' && item.policy_type === 'block').map((item) => (
                       <StateBadge key={`block-${item.id}`} label={`Bloqueia ${item.name}`} tone="danger" />
@@ -4191,7 +4191,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">VIPs e exceções</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">VIPs e exceções</div>
                   <div className="mt-3 text-sm leading-6 text-on-surface/68">
                     {activeVips.length
                       ? `${activeVips.length} VIP(s) ativo(s) com firewall livre, DNS auditável e fora de proxy/interceptação.`
@@ -4199,7 +4199,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">DNS interno por VLAN</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">DNS interno por VLAN</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {internalDnsEntries.map((item) => (
                       <StateBadge key={item.vlanId} label={`VLAN ${item.vlanId} → ${item.dns}`} tone="success" />
@@ -4207,7 +4207,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Motor disponível</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Motor disponível</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {availableModes.map((mode) => (
                       <StateBadge
@@ -4220,7 +4220,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">VLANs com regra própria</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">VLANs com regra própria</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {vlanPolicies.filter((item) => item.allowedCategories.length || item.blockedCategories.length).length ? vlanPolicies
                       .filter((item) => item.allowedCategories.length || item.blockedCategories.length)
@@ -4228,7 +4228,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Contingência</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Contingência</div>
                   <div className="mt-3 text-sm leading-6 text-on-surface/68">
                     {contingencyActive
                       ? `Fallback público ativo por ${formatRemaining(contingency?.remaining_seconds)}.`
@@ -4236,7 +4236,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   </div>
                 </ListRow>
                 <ListRow>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Serviços críticos</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Serviços críticos</div>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {criticalServiceItems.length ? criticalServiceItems.map((item) => (
                       <StateBadge
@@ -4266,7 +4266,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                         ? 'border-danger/18 bg-danger/10 text-danger'
                         : alert.tone === 'success'
                           ? 'border-info/18 bg-info/10 text-info'
-                          : 'border-amber-500/18 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+                          : 'border-warning/18 bg-warning/10 text-warning'
                     }
                   >
                     <div className="flex items-start gap-3">
@@ -4284,7 +4284,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               {vlanMatrixCards.map((vlan) => (
                 <ThemeAwareSurface key={`matrix-${vlan.vlan_id}`} className="p-[var(--spacing-card)]">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-base font-black text-on-surface xl:text-lg">VLAN {vlan.vlan_id}</span>
+                    <span className="text-base font-bold text-on-surface xl:text-lg">VLAN {vlan.vlan_id}</span>
                     <StateBadge label={vlan.label} tone="neutral" />
                   </div>
                   <div className="mt-2.5 text-sm text-on-surface/60">{vlan.currentMode} • {vlan.statusSummary}</div>
@@ -4313,7 +4313,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <ThemeAwareSurface className="p-4">
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                   <div className="min-w-0">
-                    <div className="text-sm font-black text-on-surface">Catálogo de decisões</div>
+                    <div className="text-sm font-bold text-on-surface">Catálogo de decisões</div>
                     <div className="mt-1 max-w-3xl text-sm leading-5 text-on-surface/62">
                       Cada política reúne domínios, escopo, situação e justificativa em um único registro.
                     </div>
@@ -4330,8 +4330,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <TriangleAlert size={18} className="text-amber-700" />
-                      <span className="text-sm font-black text-on-surface">Regra inegociável do PontoRH</span>
+                      <TriangleAlert size={18} className="text-warning" />
+                      <span className="text-sm font-bold text-on-surface">Regra inegociável do PontoRH</span>
                       <StateBadge label="Compatibilidade institucional" tone="warning" />
                       <StateBadge label="VIP incluído" tone="danger" />
                     </div>
@@ -4381,7 +4381,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-base font-black text-on-surface">{policy.name}</span>
+                            <span className="text-base font-bold text-on-surface">{policy.name}</span>
                             <StateBadge label={policyTypeLabel(policy.policy_type)} tone={policyTypeTone(policy.policy_type)} />
                             <StateBadge label={policy.enabled ? 'Ativa' : 'Inativa'} tone={policy.enabled ? 'success' : 'neutral'} />
                             <StateBadge label={policy.scope_type === 'vlan' ? `VLAN ${(policy.vlan_ids || []).join(', ')}` : 'Global'} tone="primary" />
@@ -4440,7 +4440,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             <div className="grid gap-5 2xl:grid-cols-2">
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-lg font-black text-on-surface">Global: somente pornografia</div>
+                  <div className="text-lg font-bold text-on-surface">Global: somente pornografia</div>
                   <StateBadge label={`${globalBlockedCount} bloqueio(s) global(is)`} tone="danger" />
                 </div>
                 {globalScopePolicies.length ? globalScopePolicies.map((policy) => (
@@ -4448,7 +4448,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-base font-black text-on-surface">{policy.name}</span>
+                          <span className="text-base font-bold text-on-surface">{policy.name}</span>
                           <StateBadge label={policyTypeLabel(policy.policy_type)} tone={policyTypeTone(policy.policy_type)} />
                           <StateBadge label={policy.enabled ? 'Ativa' : 'Inativa'} tone={policy.enabled ? 'success' : 'neutral'} />
                           <StateBadge label={policyScopeBadge(policy)} tone="neutral" />
@@ -4469,7 +4469,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               </div>
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-lg font-black text-on-surface">VLANs</div>
+                  <div className="text-lg font-bold text-on-surface">VLANs</div>
                   <StateBadge label={`${vlansWithOwnPolicy} com regra própria`} tone="success" />
                 </div>
                 {vlanPolicies.map((vlan) => (
@@ -4477,7 +4477,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-lg font-black text-on-surface">VLAN {vlan.vlan_id}</span>
+                          <span className="text-lg font-bold text-on-surface">VLAN {vlan.vlan_id}</span>
                           <StateBadge label={vlan.label} tone="neutral" />
                           <StateBadge label={vlan.inStandard ? 'No padrão' : 'Desligada do padrão'} tone={vlan.inStandard ? 'success' : 'warning'} />
                         </div>
@@ -4557,7 +4557,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
 
             <DataToolbar>
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/42">Contexto do módulo</div>
+                <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/42">Contexto do módulo</div>
                 <div className="mt-1 text-sm text-on-surface/62">Cada VLAN pode aderir ao padrão institucional ou operar em exceção, mantendo leitura compacta de DNS interno, políticas e status.</div>
               </div>
               <div className="grid gap-2.5 sm:grid-cols-4">
@@ -4577,7 +4577,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-base font-black text-on-surface xl:text-lg">VLAN {vlan.vlan_id}</span>
+                          <span className="text-base font-bold text-on-surface xl:text-lg">VLAN {vlan.vlan_id}</span>
                           <StateBadge label={vlan.inStandard ? 'Operacional' : 'Fora do padrão'} tone={vlan.inStandard ? 'success' : 'warning'} />
                           {vlan.policy_mode === 'selective-intercept' && vlan.inStandard ? <StateBadge label="Interceptação seletiva" tone="danger" /> : null}
                         </div>
@@ -4690,7 +4690,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                       return (
                         <div key={item.id} className={cx('grid gap-3 px-4 py-3 transition hover:bg-surface/72 lg:grid-cols-[minmax(150px,0.75fr)_minmax(220px,1.2fr)_minmax(160px,0.8fr)_auto] lg:items-center', !item.active && 'opacity-58')}>
                           <div className="min-w-0">
-                            <div className="font-mono text-sm font-black text-on-surface">{item.ip}</div>
+                            <div className="font-mono text-sm font-bold text-on-surface">{item.ip}</div>
                             <div className="mt-1 flex flex-wrap gap-1.5">
                               <StateBadge label={item.active ? 'Ativo' : 'Inativo'} tone={item.active ? 'warning' : 'neutral'} />
                               <StateBadge label={item.dns_audit_enabled === false ? 'DNS sem auditoria' : 'DNS auditado'} tone={item.dns_audit_enabled === false ? 'neutral' : 'info'} />
@@ -4699,7 +4699,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                           </div>
 
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-black text-on-surface">{title}</div>
+                            <div className="truncate text-sm font-bold text-on-surface">{title}</div>
                             <div className="mt-1 line-clamp-2 text-sm leading-5 text-on-surface/58">{governance.summary || item.notes || 'Sem motivo informado.'}</div>
                           </div>
 
@@ -4757,7 +4757,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <HintTooltip
-                        label={<span className="text-lg font-black text-on-surface">{mode.label}</span>}
+                        label={<span className="text-lg font-bold text-on-surface">{mode.label}</span>}
                         hint={mode.hint}
                       />
                       <div className="mt-2 text-sm leading-6 text-on-surface/62">{mode.hint}</div>
@@ -4814,7 +4814,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     </div>
                     <StateBadge label={String(card.status)} tone={toneFromStatus(card.status)} />
                   </div>
-                  <div className="mt-4 text-lg font-black text-on-surface">{card.label}</div>
+                  <div className="mt-4 text-lg font-bold text-on-surface">{card.label}</div>
                   <div className="mt-2 text-sm font-semibold text-on-surface/70">{card.subtitle}</div>
                   <div className="mt-3 text-sm leading-6 text-on-surface/58">{card.detail}</div>
                 </ThemeAwareSurface>
@@ -4826,8 +4826,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {Object.entries(data.health?.integrity || {}).map(([key, ok]) => (
                 <ListRow key={key}>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">{key.replace(/_/g, ' ')}</div>
-                  <div className={`mt-3 text-lg font-black ${ok ? 'text-info' : 'text-danger'}`}>{ok ? 'Disponível' : 'Indisponível'}</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">{key.replace(/_/g, ' ')}</div>
+                  <div className={`mt-3 text-lg font-bold ${ok ? 'text-info' : 'text-danger'}`}>{ok ? 'Disponível' : 'Indisponível'}</div>
                 </ListRow>
               ))}
             </div>
@@ -4837,8 +4837,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {internalDnsEntries.map((item) => (
                 <ListRow key={item.vlanId}>
-                  <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">VLAN {item.vlanId}</div>
-                  <div className="mt-3 text-lg font-black text-on-surface">{item.dns}</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">VLAN {item.vlanId}</div>
+                  <div className="mt-3 text-lg font-bold text-on-surface">{item.dns}</div>
                   <div className="mt-2 text-sm text-on-surface/62">DNS interno tratado como válido via Unbound neste escopo.</div>
                 </ListRow>
               ))}
@@ -4902,7 +4902,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <SectionCard title="Resumo operacional" subtitle="Quem ativou, por quê e quais resolvedores públicos foram liberados.">
                 <div className="grid gap-3 md:grid-cols-2">
                   <ListRow>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Resolvedores autorizados</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Resolvedores autorizados</div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       {(contingency?.resolvers || []).length
                         ? (contingency.resolvers || []).map((resolver) => <StateBadge key={resolver} label={resolver} tone={contingencyActive ? 'danger' : 'neutral'} />)
@@ -4910,16 +4910,16 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     </div>
                   </ListRow>
                   <ListRow>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Impacto</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Impacto</div>
                     <div className="mt-3 text-sm leading-6 text-on-surface/62">{contingency?.impact_summary || 'Sem contingência ativa no momento.'}</div>
                   </ListRow>
                   <ListRow>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Operador</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Operador</div>
                     <div className="mt-3 text-sm font-semibold text-on-surface">{contingency?.requested_by || '—'}</div>
                     <div className="mt-2 text-sm text-on-surface/58">Ativado em {formatDate(contingency?.activated_at)}</div>
                   </ListRow>
                   <ListRow>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/46">Motivo</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/46">Motivo</div>
                     <div className="mt-3 text-sm leading-6 text-on-surface/62">{contingency?.reason || 'Sem motivo registrado.'}</div>
                   </ListRow>
                 </div>
@@ -4935,7 +4935,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-black text-on-surface">{item.action}</span>
+                            <span className="text-sm font-bold text-on-surface">{item.action}</span>
                             <StateBadge label={item.success ? 'OK' : 'Erro'} tone={item.success ? 'success' : 'danger'} />
                             <StateBadge label={item.scope_type === 'vlan' ? `VLAN ${(item.vlan_ids || []).join(', ')}` : 'Global'} tone="neutral" />
                           </div>
@@ -5011,8 +5011,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
                 <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Observabilidade unificada</div>
-                    <div className="mt-2 text-xl font-black text-on-surface">Eventos de DNS e Proxy em uma visão única</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Observabilidade unificada</div>
+                    <div className="mt-2 text-xl font-bold text-on-surface">Eventos de DNS e Proxy em uma visão única</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/68">
                       O radar preserva o fluxo em tempo real sem separar o operador entre múltiplas telas. Proxy & Logs continua alimentando eventos técnicos, enquanto o SGCG centraliza a leitura operacional.
                     </div>
@@ -5068,7 +5068,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                     <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-base font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
+                          <span className="font-mono text-base font-bold text-on-surface">{item.client_ip || 'IP não identificado'}</span>
                           <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
                           <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                           {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
@@ -5077,7 +5077,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                         </div>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           <Globe2 size={16} className="text-on-surface/42" />
-                          <span className="break-all text-lg font-black text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</span>
+                          <span className="break-all text-lg font-bold text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</span>
                         </div>
                         <div className="mt-2 text-sm leading-6 text-on-surface/62">
                           Política: <span className="font-semibold text-on-surface">{item.policy_label || item.matched_policy_name || 'Padrão permitido'}</span>
@@ -5129,8 +5129,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
               <ThemeAwareSurface tone="primary" className="p-[var(--spacing-card)]">
                 <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr] xl:items-center">
                   <div>
-                    <div className="text-[11px] font-black uppercase tracking-[0.18em] text-primary">Leitura central de acesso</div>
-                    <div className="mt-2 text-xl font-black text-on-surface">Investigue dispositivos, domínios e decisões aplicadas em uma trilha única de governança</div>
+                    <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">Leitura central de acesso</div>
+                    <div className="mt-2 text-xl font-bold text-on-surface">Investigue dispositivos, domínios e decisões aplicadas em uma trilha única de governança</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/68">
                       Use IP, hostname, VLAN ou domínio. A lista mostra origem, destino, decisão aplicada, política correspondente e a evidência operacional disponível para auditoria e responsabilização.
                     </div>
@@ -5176,19 +5176,19 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   <ListRow key={`${item.source}-${item.id}`}>
                     <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                       <div className="min-w-0 flex-1">
-                        <div className="text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/42">Quem acessou</div>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/42">Quem acessou</div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-base font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
+                          <span className="font-mono text-base font-bold text-on-surface">{item.client_ip || 'IP não identificado'}</span>
                           <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
                           <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                           {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                           <StateBadge label={actionLabel(item.action)} tone={actionTone(item.action)} />
                           <StateBadge label={item.source === 'dns' ? 'DNS' : 'Squid'} tone="neutral" />
                         </div>
-                        <div className="mt-4 text-[11px] font-black uppercase tracking-[0.18em] text-on-surface/42">O que acessou</div>
+                        <div className="mt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-on-surface/42">O que acessou</div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <Globe2 size={16} className="text-on-surface/42" />
-                          <span className="break-all text-lg font-black text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</span>
+                          <span className="break-all text-lg font-bold text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</span>
                         </div>
                         <div className="mt-2 text-sm leading-6 text-on-surface/62">
                           Política: <span className="font-semibold text-on-surface">{item.policy_label || item.matched_policy_name || 'Padrão permitido'}</span>
@@ -5235,7 +5235,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
                   <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-black text-on-surface">{item.action || 'Evento'}</span>
+                        <span className="text-sm font-bold text-on-surface">{item.action || 'Evento'}</span>
                         <StateBadge label={item.success ? 'Sucesso' : 'Falha'} tone={item.success ? 'success' : 'danger'} />
                         {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="neutral" /> : null}
                       </div>

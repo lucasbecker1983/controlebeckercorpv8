@@ -137,28 +137,28 @@ export default function CentralAudit() {
             <DatabaseZap size={18} />
           </div>
           <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Eventos no recorte</div>
-          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{summary?.total || 0}</div>
+          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.total || 0}</div>
         </Surface>
         <Surface className="p-5">
           <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-info/18 bg-info/10 text-info">
             <CheckCircle2 size={18} />
           </div>
           <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Sucessos</div>
-          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{summary?.success || 0}</div>
+          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.success || 0}</div>
         </Surface>
         <Surface className="p-5">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-orange-500/20 bg-orange-500/10 text-orange-600 dark:text-orange-300">
+          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-warning/20 bg-warning/10 text-warning">
             <AlertTriangle size={18} />
           </div>
           <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Pontos de atenção</div>
-          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{summary?.attention || 0}</div>
+          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.attention || 0}</div>
         </Surface>
         <Surface className="p-5">
           <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-danger/18 bg-danger/10 text-danger">
             <ShieldCheck size={18} />
           </div>
           <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Falhas</div>
-          <div className="mt-1 text-3xl font-black tracking-tight text-on-surface">{summary?.failures || 0}</div>
+          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.failures || 0}</div>
         </Surface>
       </div>
 
@@ -250,7 +250,7 @@ export default function CentralAudit() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-[11px] font-semibold tracking-tight text-primary">Eventos</div>
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-on-surface">Linha única de auditoria</h2>
+              <h2 className="mt-1 text-2xl font-bold tracking-tight text-on-surface">Linha única de auditoria</h2>
             </div>
             <StatusChip label={`${events.length} carregados`} tone="neutral" />
           </div>
@@ -268,7 +268,7 @@ export default function CentralAudit() {
                   <StatusChip label={SEVERITY_LABELS[item.severity] || item.severity || 'Info'} tone={statusTone(item)} />
                   <span className="text-xs font-semibold text-on-surface/50">{formatDate(item.event_at)}</span>
                 </div>
-                <div className="mt-3 text-sm font-black text-on-surface">{item.title || item.action || 'Evento de auditoria'}</div>
+                <div className="mt-3 text-sm font-bold text-on-surface">{item.title || item.action || 'Evento de auditoria'}</div>
                 <div className="mt-1 text-sm leading-6 text-on-surface/65">{item.message || item.target || 'Sem mensagem complementar.'}</div>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-on-surface/52">
                   <span>Ator: {item.actor || 'sistema'}</span>

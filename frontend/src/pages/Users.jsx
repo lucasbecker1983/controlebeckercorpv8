@@ -1,52 +1,134 @@
-import React, { useState, useEffect } from 'react';
-import { Users as UsersIcon, UserPlus, Edit3, Trash2, Shield, User } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Pencil, Trash2, UserPlus, X } from 'lucide-react';
 import { api } from '../services/api';
-import { ActionButton, ModuleHeader, Surface } from '../components/ui/primitives';
+import { Badge, Button, ConfirmDialog, DataTable, Field, Kpi, KpiRow, Notice, PageHeader, Panel, errorMessage, fmtDateTime, inputCls, toast } from '../components/ui/kit';
 
-export default function Users() {
-    const [users, setUsers] = useState([]);
-    
-    const loadUsers = async () => { try { const res = await api.get('/api/users'); setUsers(res.data); } catch {} };
-    useEffect(() => { loadUsers(); }, []);
+const ROLES = [
+  { value: 'admin', label: 'Administrador', desc: 'Acesso total, inclusive gerenciar usuários e reiniciar o servidor.' },
+  { value: 'user', label: 'Operador', desc: 'Opera o sistema no dia a dia.' },
+  { value: 'viewer', label: 'Consulta', desc: 'Só visualiza.' },
+];
+const roleLabel = (r) => {
+  const v = String(r || '').toLowerCase();
+  return v === 'god' ? 'Super administrador' : ROLES.find((x) => x.value === v)?.label || r || '—';
+};
+const EMPTY = { id: null, name: '', username: '', password: '', role: 'user' };
 
-    return (
-        <div className="space-y-8 pb-10 animate-in fade-in duration-500">
-            <ModuleHeader
-                eyebrow="Governança"
-                title="Identidades & Perfis"
-                description="Administre contas do sistema, níveis de acesso e papéis institucionais. Esta camada organiza quem pode governar, operar e auditar o ambiente."
-                badges={[
-                    <span key="usuarios" className="inline-flex min-h-[var(--chip-height)] items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[10px] font-black uppercase tracking-[0.16em] text-primary">
-                        {users.length} identidades cadastradas
-                    </span>,
-                ]}
-                actions={[
-                    <ActionButton key="novo" tone="primary" icon={UserPlus}>
-                        Novo Membro
-                    </ActionButton>,
-                ]}
-            />
+export default function Users({ user: me }) {
+  const [users, setUsers] = useState([]);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const isAdmin = ['admin', 'god'].includes(String(me?.role || '').toLowerCase());
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                {users.map(u => (
-                    <Surface key={u.id} className="group flex flex-col items-center p-6 text-center hover:border-primary/50">
-                        <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center text-3xl font-black mb-4">
-                            {u.name.charAt(0).toUpperCase()}
-                        </div>
-                        <h3 className="font-bold text-lg text-on-surface">{u.name}</h3>
-                        <p className="text-sm font-mono text-on-surface opacity-60 mb-4">@{u.username}</p>
-                        
-                        <span className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase flex items-center gap-1 mb-6 ${u.role === 'admin' ? 'bg-orange-500/10 text-orange-600 dark:text-orange-400' : 'bg-blue-500/10 text-blue-600 dark:text-blue-400'}`}>
-                            {u.role === 'admin' ? <Shield size={14}/> : <User size={14}/>} {u.role === 'admin' ? 'Admin' : 'Operador'}
-                        </span>
+  const load = () => api.get('/api/users').then((r) => { setUsers(Array.isArray(r.data) ? r.data : []); setError(''); }).catch((e) => setError(errorMessage(e)));
+  useEffect(() => { load(); }, []);
 
-                        <div className="w-full flex gap-2 border-t border-outline/10 pt-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button className="flex-1 py-2 rounded-xl text-on-surface bg-outline/5 hover:bg-outline/20 font-bold text-xs flex justify-center items-center gap-2 transition-colors"><Edit3 size={14}/> Editar</button>
-                            <button className="flex-1 py-2 rounded-xl text-danger bg-danger/5 hover:bg-danger/20 font-bold text-xs flex justify-center items-center gap-2 transition-colors"><Trash2 size={14}/> Excluir</button>
-                        </div>
-                    </Surface>
-                ))}
+  const save = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      const payload = { ...form, role: form.role.toLowerCase() };
+      if (form.id) await api.post('/api/users/update', payload);
+      else await api.post('/api/users', payload);
+      toast(form.id ? 'Usuário atualizado.' : 'Usuário criado.');
+      setForm(null);
+      load();
+    } catch (err) {
+      toast(errorMessage(err), 'danger');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      await api.post('/api/users/delete', { id: removing.id });
+      toast('Usuário excluído.');
+      setRemoving(null);
+      load();
+    } catch (err) {
+      toast(errorMessage(err), 'danger');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const admins = users.filter((u) => ['admin', 'god'].includes(String(u.role).toLowerCase())).length;
+  const passwordOk = form && (form.id ? !form.password || form.password.length >= 8 : form.password.length >= 8);
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Usuários"
+        description="Contas de acesso ao SGCG e o que cada perfil pode fazer."
+        actions={isAdmin ? <Button variant="primary" icon={UserPlus} onClick={() => setForm({ ...EMPTY })}>Novo usuário</Button> : null}
+      />
+      <KpiRow>
+        <Kpi label="Usuários" value={users.length} />
+        <Kpi label="Administradores" value={admins} tone={admins > 3 ? 'warning' : 'neutral'} sub={admins > 3 ? 'Muitos com acesso total' : null} />
+        <Kpi label="Operadores" value={users.filter((u) => String(u.role).toLowerCase() === 'user').length} />
+        <Kpi label="Somente consulta" value={users.filter((u) => String(u.role).toLowerCase() === 'viewer').length} />
+      </KpiRow>
+      {!isAdmin ? <Notice tone="primary">Só administradores podem criar, editar ou excluir usuários.</Notice> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+
+      {form ? (
+        <Panel title={form.id ? `Editar ${form.username}` : 'Novo usuário'} actions={<Button variant="ghost" icon={X} onClick={() => setForm(null)}>Fechar</Button>}>
+          <form onSubmit={save} className="space-y-4">
+            <div className="grid gap-3 md:grid-cols-3">
+              <Field id="u-name" label="Nome"><input id="u-name" className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></Field>
+              <Field id="u-login" label="Usuário (login)"><input id="u-login" className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value.trim() })} autoComplete="off" required /></Field>
+              <Field id="u-pass" label={form.id ? 'Nova senha (opcional)' : 'Senha'} hint="Mínimo de 8 caracteres." error={form.password && form.password.length < 8 ? 'Senha muito curta.' : null}>
+                <input id="u-pass" type="password" className={inputCls} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} autoComplete="new-password" required={!form.id} />
+              </Field>
             </div>
-        </div>
-    );
+            <fieldset>
+              <legend className="mb-1.5 text-[12.5px] font-semibold text-on-surface/75">Perfil</legend>
+              <div className="grid gap-2 md:grid-cols-3">
+                {ROLES.map((r) => (
+                  <label key={r.value} className={`flex cursor-pointer gap-2 rounded-lg border p-3 ${String(form.role).toLowerCase() === r.value ? 'border-primary bg-primary/5' : 'border-outline'}`}>
+                    <input type="radio" name="role" value={r.value} checked={String(form.role).toLowerCase() === r.value} onChange={() => setForm({ ...form, role: r.value })} />
+                    <span><span className="block text-[13.5px] font-semibold text-on-surface">{r.label}</span><span className="block text-[12px] text-on-surface/55">{r.desc}</span></span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setForm(null)}>Cancelar</Button>
+              <Button type="submit" variant="primary" disabled={saving || !form.username || !passwordOk}>{saving ? 'Salvando...' : 'Salvar'}</Button>
+            </div>
+          </form>
+        </Panel>
+      ) : null}
+
+      <Panel title="Contas" padded={false}>
+        <DataTable
+          rows={users}
+          empty="Nenhum usuário."
+          columns={[
+            { key: 'name', label: 'Nome', render: (u) => <div><div className="font-medium text-on-surface">{u.name}</div><div className="tabular text-[11.5px] text-on-surface/50">{u.username}</div></div> },
+            { key: 'role', label: 'Perfil', render: (u) => <Badge tone={['admin', 'god'].includes(String(u.role).toLowerCase()) ? 'warning' : 'primary'}>{roleLabel(u.role)}</Badge> },
+            { key: 'created', label: 'Criado em', mono: true, render: (u) => fmtDateTime(u.created_at) },
+            {
+              key: 'a',
+              label: '',
+              align: 'right',
+              render: (u) => (isAdmin ? (
+                <div className="flex justify-end gap-1">
+                  <Button variant="ghost" icon={Pencil} onClick={() => setForm({ id: u.id, name: u.name || '', username: u.username, password: '', role: String(u.role || 'user').toLowerCase() })}>Editar</Button>
+                  <Button variant="ghost" icon={Trash2} onClick={() => setRemoving(u)} disabled={Number(u.id) === Number(me?.id)}>Excluir</Button>
+                </div>
+              ) : null),
+            },
+          ]}
+        />
+      </Panel>
+
+      <ConfirmDialog open={Boolean(removing)} title={removing ? `Excluir ${removing.username}` : ''} description="A pessoa perde o acesso ao SGCG na hora." tone="danger" confirmLabel="Excluir" busy={busy} onClose={() => !busy && setRemoving(null)} onConfirm={remove} />
+    </div>
+  );
 }

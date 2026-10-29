@@ -119,13 +119,13 @@ function SmtpModal({ open, onClose }) {
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-            <div className="max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-[32px] border border-outline/20 bg-container p-6 shadow-2xl">
+            <div className="max-h-[95vh] w-full max-w-4xl overflow-y-auto rounded-xl border border-outline/20 bg-container p-6 shadow-2xl">
                 <div className="mb-6 flex items-start justify-between gap-4">
                     <div>
                         <div className="mb-3 inline-flex rounded-2xl bg-primary/10 p-3 text-primary">
                             <Mail size={24} />
                         </div>
-                        <h3 className="text-2xl font-black text-on-surface">Notificações institucionais</h3>
+                        <h3 className="text-2xl font-bold text-on-surface">Notificações institucionais</h3>
                         <p className="mt-2 text-sm text-on-surface/68">
                             Administração do envio de alertas por correio eletrônico.
                         </p>
@@ -149,25 +149,25 @@ function SmtpModal({ open, onClose }) {
                 ) : (
                     <>
                         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                            <div className="space-y-4 rounded-[28px] border border-outline/20 bg-surface p-5">
+                            <div className="space-y-4 rounded-xl border border-outline/20 bg-surface p-5">
                                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                                     <label className="space-y-2">
-                                        <span className="text-[10px] font-black uppercase text-on-surface opacity-60">SMTP Host</span>
+                                        <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">SMTP Host</span>
                                         <input value={form.host} onChange={(e) => updateForm('host', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                     </label>
                                     <label className="space-y-2">
-                                        <span className="text-[10px] font-black uppercase text-on-surface opacity-60">Porta</span>
+                                        <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">Porta</span>
                                         <input type="number" value={form.port} onChange={(e) => updateForm('port', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                     </label>
                                 </div>
 
                                 <label className="space-y-2">
-                                    <span className="text-[10px] font-black uppercase text-on-surface opacity-60">Usuario SMTP</span>
+                                    <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">Usuario SMTP</span>
                                     <input value={form.username} onChange={(e) => updateForm('username', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                 </label>
 
                                 <label className="space-y-2">
-                                    <span className="text-[10px] font-black uppercase text-on-surface opacity-60">Senha</span>
+                                    <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">Senha</span>
                                     <div className="relative">
                                         <input
                                             type={showPassword ? 'text' : 'password'}
@@ -184,29 +184,29 @@ function SmtpModal({ open, onClose }) {
 
                                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                                     <label className="space-y-2">
-                                        <span className="text-[10px] font-black uppercase text-on-surface opacity-60">From E-mail</span>
+                                        <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">From E-mail</span>
                                         <input value={form.from_email} onChange={(e) => updateForm('from_email', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                     </label>
                                     <label className="space-y-2">
-                                        <span className="text-[10px] font-black uppercase text-on-surface opacity-60">From Name</span>
+                                        <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">From Name</span>
                                         <input value={form.from_name} onChange={(e) => updateForm('from_name', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                     </label>
                                 </div>
 
                                 <label className="space-y-2">
-                                    <span className="text-[10px] font-black uppercase text-on-surface opacity-60">E-mail de teste / destino padrrao</span>
+                                    <span className="text-[10px] font-bold uppercase text-on-surface opacity-60">E-mail de teste / destino padrrao</span>
                                     <input value={form.to_email} onChange={(e) => updateForm('to_email', e.target.value)} className="w-full rounded-xl border border-outline/20 bg-container p-3 text-sm text-on-surface outline-none focus:ring-2 focus:ring-primary" />
                                 </label>
                             </div>
 
-                            <div className="space-y-4 rounded-[28px] border border-outline/20 bg-surface p-5">
+                            <div className="space-y-4 rounded-xl border border-outline/20 bg-surface p-5">
                                 <ToggleField label="TLS" checked={form.use_tls} onChange={(value) => updateForm('use_tls', value)} hint="STARTTLS e negociacao segura." />
                                 <ToggleField label="SSL Direto" checked={form.use_ssl} onChange={(value) => updateForm('use_ssl', value)} hint="Use para portas como 465." />
                                 <ToggleField label="Exigir Autenticacao" checked={form.requires_auth} onChange={(value) => updateForm('requires_auth', value)} hint="Anexa usuario e senha no transporte." />
                                 <ToggleField label="Servico Ativo" checked={form.is_active} onChange={(value) => updateForm('is_active', value)} hint="Sentinela so envia alertas quando ativo." />
 
-                                <div className="rounded-[24px] border border-outline/20 bg-container p-4">
-                                    <p className="text-[10px] font-black uppercase tracking-widest text-on-surface opacity-50">Resumo operacional</p>
+                                <div className="rounded-xl border border-outline/20 bg-container p-4">
+                                    <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface opacity-50">Resumo operacional</p>
                                     <div className="mt-3 space-y-2 text-xs text-on-surface opacity-80">
                                         <p>Host: <span className="font-mono">{form.host || 'nao definido'}</span></p>
                                         <p>Destino: <span className="font-mono">{form.to_email || form.username || 'nao definido'}</span></p>
@@ -217,15 +217,15 @@ function SmtpModal({ open, onClose }) {
                         </div>
 
                         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
-                            <button onClick={loadConfig} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-outline/20 bg-surface px-5 py-3 text-xs font-black uppercase text-on-surface transition-all hover:border-primary/40">
+                            <button onClick={loadConfig} className="inline-flex items-center justify-center gap-2 rounded-2xl border border-outline/20 bg-surface px-5 py-3 text-xs font-bold uppercase text-on-surface transition-all hover:border-primary/40">
                                 <RefreshCw size={16} />
                                 Recarregar
                             </button>
-                            <button onClick={handleTest} disabled={testing || saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-500 px-5 py-3 text-xs font-black uppercase text-white transition-all hover:bg-blue-400 disabled:opacity-60">
+                            <button onClick={handleTest} disabled={testing || saving} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3 text-xs font-bold uppercase text-white transition-all hover:bg-primary disabled:opacity-60">
                                 {testing ? <Activity className="animate-spin" size={16} /> : <Mail size={16} />}
                                 Testar envio
                             </button>
-                            <button onClick={handleSave} disabled={saving || testing} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3 text-xs font-black uppercase text-on-primary transition-all hover:opacity-90 disabled:opacity-60">
+                            <button onClick={handleSave} disabled={saving || testing} className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary px-5 py-3 text-xs font-bold uppercase text-on-primary transition-all hover:opacity-90 disabled:opacity-60">
                                 {saving ? <Activity className="animate-spin" size={16} /> : <ShieldCheck size={16} />}
                                 Salvar configuracao
                             </button>

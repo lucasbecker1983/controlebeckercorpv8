@@ -163,7 +163,7 @@ export default function ApprovalsExceptions() {
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-black text-on-surface">{item.name || 'Política sem nome'}</span>
+                        <span className="text-sm font-bold text-on-surface">{item.name || 'Política sem nome'}</span>
                         <StateBadge label={item.policy_type === 'allow' ? 'Liberação' : 'Bloqueio'} tone={item.policy_type === 'allow' ? 'success' : 'danger'} />
                         <StateBadge label={item.scope_type === 'global' ? 'Global' : `VLAN ${(item.vlan_ids || []).join(', ') || 'sem seleção'}`} tone="primary" />
                         {item.lifecycle_status ? <StateBadge label={item.lifecycle_status} tone="warning" /> : null}
@@ -197,7 +197,7 @@ export default function ApprovalsExceptions() {
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-black text-on-surface">{item.ip || 'IP não identificado'}</span>
+                      <span className="font-mono text-sm font-bold text-on-surface">{item.ip || 'IP não identificado'}</span>
                       <StateBadge label={item.exception_type || 'exception'} tone="warning" />
                       {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : <StateBadge label="Global" tone="primary" />}
                       {item.lifecycle_status ? <StateBadge label={item.lifecycle_status} tone="neutral" /> : null}
@@ -233,7 +233,7 @@ export default function ApprovalsExceptions() {
                   <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-black text-on-surface">{item.action || 'Evento de contingência'}</span>
+                        <span className="text-sm font-bold text-on-surface">{item.action || 'Evento de contingência'}</span>
                         <StateBadge label={item.status || 'registrado'} tone={item.status === 'active' ? 'danger' : 'neutral'} />
                       </div>
                       <div className="mt-2 text-sm leading-6 text-on-surface/62">{item.reason || item.message || 'Sem detalhe complementar.'}</div>

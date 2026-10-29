@@ -290,13 +290,13 @@ export default function DataGovernance() {
               </div>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <div className="rounded-[var(--surface-radius)] border border-outline/12 bg-surface-high/60 p-4">
-                  <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Domínio mais bloqueado</div>
-                  <div className="mt-2 break-all text-lg font-black text-on-surface">{overview?.highlights?.top_blocked_domain?.domain || 'Sem recorrência relevante'}</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Domínio mais bloqueado</div>
+                  <div className="mt-2 break-all text-lg font-bold text-on-surface">{overview?.highlights?.top_blocked_domain?.domain || 'Sem recorrência relevante'}</div>
                   <div className="mt-1 text-sm text-on-surface/60">{formatMetric(overview?.highlights?.top_blocked_domain?.total)} ocorrências</div>
                 </div>
                 <div className="rounded-[var(--surface-radius)] border border-outline/12 bg-surface-high/60 p-4">
-                  <div className="text-[11px] font-black uppercase tracking-[0.16em] text-on-surface/50">Domínio mais acessado</div>
-                  <div className="mt-2 break-all text-lg font-black text-on-surface">{overview?.highlights?.top_allowed_domain?.domain || 'Sem recorrência relevante'}</div>
+                  <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-on-surface/50">Domínio mais acessado</div>
+                  <div className="mt-2 break-all text-lg font-bold text-on-surface">{overview?.highlights?.top_allowed_domain?.domain || 'Sem recorrência relevante'}</div>
                   <div className="mt-1 text-sm text-on-surface/60">{formatMetric(overview?.highlights?.top_allowed_domain?.total)} ocorrências</div>
                 </div>
               </div>
@@ -308,13 +308,13 @@ export default function DataGovernance() {
                   <ListRow key={`${item.source}-${item.id}`}>
                     <div className="flex flex-col gap-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
+                        <span className="font-mono text-sm font-bold text-on-surface">{item.client_ip || 'IP não identificado'}</span>
                         <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
                         <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                         {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                         <StateBadge label={item.source === 'dns' ? 'DNS' : 'Proxy'} tone={item.source === 'dns' ? 'success' : 'warning'} />
                       </div>
-                      <div className="break-all text-base font-black text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</div>
+                      <div className="break-all text-base font-bold text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</div>
                       <div className="text-sm text-on-surface/60">{formatDate(item.timestamp)}</div>
                     </div>
                   </ListRow>
@@ -352,14 +352,14 @@ export default function DataGovernance() {
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-black text-on-surface">{item.client_ip || 'IP não identificado'}</span>
+                      <span className="font-mono text-sm font-bold text-on-surface">{item.client_ip || 'IP não identificado'}</span>
                       <StateBadge label={item.identity_display_user || item.identity_user || 'usuário não identificado'} tone={item.identity_user ? 'success' : 'neutral'} />
                       <StateBadge label={item.identity_computer || item.hostname || 'estação não identificada'} tone="neutral" />
                       {item.vlan_id ? <StateBadge label={`VLAN ${item.vlan_id}`} tone="primary" /> : null}
                       <StateBadge label={item.action || '—'} tone={item.action === 'blocked' ? 'danger' : item.action === 'allowed' ? 'success' : 'warning'} />
                       <StateBadge label={item.source === 'dns' ? 'DNS' : 'Proxy'} tone={item.source === 'dns' ? 'success' : 'warning'} />
                     </div>
-                    <div className="mt-3 break-all text-lg font-black text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</div>
+                    <div className="mt-3 break-all text-lg font-bold text-on-surface">{item.domain || item.url_or_host || 'domínio não identificado'}</div>
                     <div className="mt-2 text-sm leading-6 text-on-surface/62">
                       Política: <span className="font-semibold text-on-surface">{item.policy_label || item.matched_policy_name || 'Sem política nomeada'}</span>
                       {item.category ? ` • categoria ${item.category}` : ''}

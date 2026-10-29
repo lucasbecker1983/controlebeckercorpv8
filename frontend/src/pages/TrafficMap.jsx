@@ -177,10 +177,11 @@ export default function TrafficMap() {
   const LINK = data?.link_mbps || 300;
   const internet = view === 'internet';
   const deviceCount = model?.devices.length || 0;
-  const rowH = deviceCount > 40 ? 20 : deviceCount > 24 ? 26 : 33;
-  const height = Math.max(560, deviceCount * rowH + 60, (model?.sites.length || 0) * 36 + 60);
+  // Mesmo espaçamento do protótipo (rótulo em duas linhas por dispositivo).
+  const rowH = 31.5;
+  const height = Math.max(560, Math.round(deviceCount * rowH + 56), (model?.sites.length || 0) * 42 + 56);
 
-  stateRef.current = { model, sel, mode, paused, width, height, LINK, internet, compact: rowH < 26 };
+  stateRef.current = { model, sel, mode, paused, width, height, LINK, internet };
 
   // Animação contínua: lê o estado atual pelo ref, sem recriar o loop.
   useEffect(() => {
@@ -194,7 +195,7 @@ export default function TrafficMap() {
 
     const draw = (ts) => {
       const st = stateRef.current;
-      const { model: m, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet, compact } = st;
+      const { model: m, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet } = st;
       const dt = last ? Math.min(0.1, (ts - last) / 1000) : 0;
       last = ts;
       if (!st.paused) phase += dt;
@@ -220,10 +221,15 @@ export default function TrafficMap() {
         d.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.devices.length);
         d.r = d.val > 0.01 ? 3 + Math.sqrt(d.val) * 1.6 : 2.5;
       });
-      m.vlans.forEach((v, i) => {
+      // Cada VLAN na altura média dos seus dispositivos (leque de rede neural), sem sobreposição.
+      let prevY = top - 40;
+      m.vlans.forEach((v) => {
+        const mine = m.devices.filter((d) => d.vlan === v.id);
+        const desired = mine.length ? mine.reduce((acc, d) => acc + d.y, 0) / mine.length : prevY + 70;
         v.x = X.vlan;
-        v.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.vlans.length);
+        v.y = Math.min(bottom - 30, Math.max(desired, prevY + 64));
         v.r = 8 + Math.sqrt(v.val) * 1.3;
+        prevY = v.y;
       });
       const wan = inet ? { x: X.wan, y: (top + bottom) / 2, r: 40 } : null;
       m.sites.forEach((t, i) => {
@@ -363,21 +369,15 @@ export default function TrafficMap() {
           ctx.shadowBlur = 0;
         }
         const name = shortName(d);
-        const nm = name.length > 22 ? `${name.slice(0, 21)}…` : name;
+        const nm = name.length > 20 ? `${name.slice(0, 19)}…` : name;
         const rate = idle ? 'sem tráfego' : `${fmt(d.val)} Mbps`;
         ctx.textAlign = 'right';
-        if (compact) {
-          ctx.font = `500 10.5px ${F_MONO}`;
-          ctx.fillStyle = on ? (idle ? alpha(P.ink, 0.5) : P.ink) : alpha(P.muted, 0.45);
-          ctx.fillText(`${d.ip} · ${nm} · ${rate}${d.qosVip ? ' ★' : ''}`, d.x - d.r - 8, d.y + 3.5);
-        } else {
-          ctx.font = `500 11px ${F_MONO}`;
-          ctx.fillStyle = on ? (idle ? alpha(P.ink, 0.55) : P.ink) : alpha(P.muted, 0.5);
-          ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
-          ctx.font = `10px ${F_BODY}`;
-          ctx.fillStyle = on ? P.muted : alpha(P.muted, 0.4);
-          ctx.fillText(`${nm} · ${rate}${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
-        }
+        ctx.font = `500 11px ${F_MONO}`;
+        ctx.fillStyle = on ? (idle ? alpha(P.ink, 0.6) : P.ink) : alpha(P.muted, 0.5);
+        ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
+        ctx.font = `10px ${F_BODY}`;
+        ctx.fillStyle = on ? P.muted : alpha(P.muted, 0.4);
+        ctx.fillText(`${nm} · ${rate}${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
       });
 
       m.vlans.forEach((v) => {

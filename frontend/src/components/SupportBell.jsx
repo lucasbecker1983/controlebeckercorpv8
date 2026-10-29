@@ -140,7 +140,7 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
       >
         <Bell size={18} />
         {count > 0 ? (
-          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black leading-none text-white ring-2 ring-white">
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white">
             {count > 99 ? '99+' : count}
           </span>
         ) : null}
@@ -149,15 +149,15 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
       {open ? (
         <div className={`absolute right-0 top-[calc(100%+0.65rem)] z-50 w-[min(92vw,360px)] overflow-hidden rounded-lg border shadow-2xl ${
           compact
-            ? 'border-slate-200 bg-white text-slate-950'
+            ? 'border-outline bg-white text-on-surface/60'
             : 'border-outline/14 bg-surface-high text-on-surface'
         }`}>
-          <div className={`flex items-center justify-between gap-3 border-b px-4 py-3 ${compact ? 'border-slate-200' : 'border-outline/10'}`}>
+          <div className={`flex items-center justify-between gap-3 border-b px-4 py-3 ${compact ? 'border-outline' : 'border-outline/10'}`}>
             <div className="flex min-w-0 items-center gap-2">
-              <MessageSquareText size={17} className={compact ? 'text-sky-900' : 'text-primary'} />
-              <span className="truncate text-sm font-black">Chamados</span>
+              <MessageSquareText size={17} className={compact ? 'text-primary' : 'text-primary'} />
+              <span className="truncate text-sm font-bold">Chamados</span>
             </div>
-            <span className={`rounded-full px-2 py-1 text-[10px] font-black ${count ? 'bg-red-600 text-white' : compact ? 'bg-slate-100 text-slate-600' : 'bg-surface-low text-on-surface/55'}`}>
+            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${count ? 'bg-danger text-white' : compact ? 'bg-on-surface/5 text-on-surface/60' : 'bg-surface-low text-on-surface/55'}`}>
               {count ? `${count} novo${count > 1 ? 's' : ''}` : 'sem novos'}
             </span>
           </div>
@@ -167,11 +167,11 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
               type="button"
               onClick={requestDesktopPermission}
               disabled={desktopPermission === 'granted' || desktopPermission === 'denied'}
-              className={`flex w-full items-center gap-2 border-b px-4 py-2.5 text-left text-xs font-black ${
+              className={`flex w-full items-center gap-2 border-b px-4 py-2.5 text-left text-xs font-bold ${
                 desktopPermission === 'granted'
-                  ? 'border-outline/10 bg-emerald-50 text-emerald-800'
+                  ? 'border-outline/10 bg-success text-success'
                   : desktopPermission === 'denied'
-                    ? 'border-outline/10 bg-amber-50 text-amber-900'
+                    ? 'border-outline/10 bg-warning text-warning'
                     : 'border-outline/10 text-primary hover:bg-primary/6'
               } disabled:cursor-default`}
             >
@@ -191,20 +191,20 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
                   key={item.id}
                   type="button"
                   onClick={() => openTicket(item)}
-                  className={`block w-full px-4 py-3 text-left transition ${compact ? 'hover:bg-sky-50' : 'hover:bg-primary/6'}`}
+                  className={`block w-full px-4 py-3 text-left transition ${compact ? 'hover:bg-primary' : 'hover:bg-primary/6'}`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className={`truncate text-[11px] font-black ${compact ? 'text-slate-500' : 'text-on-surface/50'}`}>{item.protocol}</span>
-                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${item.priority === 'critical' || item.priority === 'high' ? 'bg-red-600 text-white' : compact ? 'bg-sky-50 text-sky-900' : 'bg-primary/10 text-primary'}`}>{item.priority_label}</span>
+                    <span className={`truncate text-[11px] font-bold ${compact ? 'text-on-surface/60' : 'text-on-surface/50'}`}>{item.protocol}</span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${item.priority === 'critical' || item.priority === 'high' ? 'bg-danger text-white' : compact ? 'bg-primary text-primary' : 'bg-primary/10 text-primary'}`}>{item.priority_label}</span>
                   </div>
-                  <div className="mt-1 line-clamp-1 text-sm font-black">{item.title}</div>
-                  <div className={`mt-1 line-clamp-2 text-xs font-semibold leading-5 ${compact ? 'text-slate-600' : 'text-on-surface/62'}`}>{item.snippet}</div>
-                  {item.requester_name ? <div className={`mt-1 text-[11px] font-bold ${compact ? 'text-slate-500' : 'text-on-surface/45'}`}>{item.requester_name}</div> : null}
+                  <div className="mt-1 line-clamp-1 text-sm font-bold">{item.title}</div>
+                  <div className={`mt-1 line-clamp-2 text-xs font-semibold leading-5 ${compact ? 'text-on-surface/60' : 'text-on-surface/62'}`}>{item.snippet}</div>
+                  {item.requester_name ? <div className={`mt-1 text-[11px] font-bold ${compact ? 'text-on-surface/60' : 'text-on-surface/45'}`}>{item.requester_name}</div> : null}
                 </button>
               ))}
             </div>
           ) : (
-            <div className={`flex items-center gap-3 px-4 py-5 text-sm font-bold ${compact ? 'text-slate-500' : 'text-on-surface/55'}`}>
+            <div className={`flex items-center gap-3 px-4 py-5 text-sm font-bold ${compact ? 'text-on-surface/60' : 'text-on-surface/55'}`}>
               <Inbox size={18} />
               Nenhuma mensagem nova.
             </div>
@@ -216,7 +216,7 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
               setOpen(false);
               if (onClick) onClick();
             }}
-            className={`block w-full border-t px-4 py-3 text-left text-xs font-black uppercase ${compact ? 'border-slate-200 text-sky-900 hover:bg-sky-50' : 'border-outline/10 text-primary hover:bg-primary/6'}`}
+            className={`block w-full border-t px-4 py-3 text-left text-xs font-bold uppercase ${compact ? 'border-outline text-primary hover:bg-primary' : 'border-outline/10 text-primary hover:bg-primary/6'}`}
           >
             Ver central de chamados
           </button>
@@ -224,23 +224,23 @@ export default function SupportBell({ publicToken = '', onClick, onTicketClick, 
       ) : null}
 
       {!publicToken && showAlert && latestAlert ? (
-        <div className="fixed right-5 top-20 z-[70] w-[min(92vw,390px)] overflow-hidden rounded-lg border border-red-200 bg-white text-slate-950 shadow-2xl">
-          <div className="flex items-start gap-3 bg-red-600 px-4 py-3 text-white">
+        <div className="fixed right-5 top-20 z-[70] w-[min(92vw,390px)] overflow-hidden rounded-lg border border-danger bg-white text-on-surface/60 shadow-2xl">
+          <div className="flex items-start gap-3 bg-danger px-4 py-3 text-white">
             <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/18">
               <Bell size={17} />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-black uppercase text-white/80">Novo chamado recebido</div>
-              <div className="mt-0.5 truncate text-sm font-black">{latestAlert.protocol}</div>
+              <div className="text-xs font-bold uppercase text-white/80">Novo chamado recebido</div>
+              <div className="mt-0.5 truncate text-sm font-bold">{latestAlert.protocol}</div>
             </div>
             <button type="button" onClick={() => setShowAlert(false)} className="rounded-full p-1 text-white/80 hover:bg-white/14 hover:text-white" aria-label="Fechar alerta de chamado">
               <X size={17} />
             </button>
           </div>
-          <button type="button" onClick={() => openTicket(latestAlert)} className="block w-full px-4 py-3 text-left transition hover:bg-red-50">
-            <div className="line-clamp-1 text-sm font-black">{latestAlert.title}</div>
-            <div className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-slate-600">{latestAlert.snippet}</div>
-            {latestAlert.requester_name ? <div className="mt-2 text-[11px] font-black uppercase text-slate-500">{latestAlert.requester_name}</div> : null}
+          <button type="button" onClick={() => openTicket(latestAlert)} className="block w-full px-4 py-3 text-left transition hover:bg-danger">
+            <div className="line-clamp-1 text-sm font-bold">{latestAlert.title}</div>
+            <div className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-on-surface/60">{latestAlert.snippet}</div>
+            {latestAlert.requester_name ? <div className="mt-2 text-[11px] font-bold uppercase text-on-surface/60">{latestAlert.requester_name}</div> : null}
           </button>
         </div>
       ) : null}

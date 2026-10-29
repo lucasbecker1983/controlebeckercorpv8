@@ -6,6 +6,7 @@ import {
   ShieldAlert, UserRoundSearch, XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { toast } from '../components/ui/kit';
 import {
   ActionButton, DialogShell, EmptyState, ModuleHeader,
   SegmentedTabs, StatusChip, Surface,
@@ -137,7 +138,7 @@ const inputCls = 'w-full rounded-2xl border border-outline/16 bg-surface px-4 py
 function TF({ label, value, onChange, multiline, type = 'text', placeholder = '' }) {
   return (
     <label className="space-y-2">
-      <span className="text-[11px] font-black uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
+      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
       {multiline
         ? <textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />
         : <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />}
@@ -147,7 +148,7 @@ function TF({ label, value, onChange, multiline, type = 'text', placeholder = ''
 function SF({ label, value, onChange, options }) {
   return (
     <label className="space-y-2">
-      <span className="text-[11px] font-black uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
+      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
       <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
@@ -321,7 +322,7 @@ function KpiCard({ icon: Icon, label, value, sub, tone = 'primary', alert = fals
   const iconCls = {
     primary: 'border-primary/16 bg-primary/10 text-primary',
     danger:  'border-danger/18 bg-danger/10 text-danger',
-    warning: 'border-orange-500/20 bg-orange-500/10 text-orange-600',
+    warning: 'border-warning/20 bg-warning/10 text-warning',
     success: 'border-info/18 bg-info/10 text-info',
   }[tone] || 'border-primary/16 bg-primary/10 text-primary';
   return (
@@ -330,7 +331,7 @@ function KpiCard({ icon: Icon, label, value, sub, tone = 'primary', alert = fals
         <Icon size={18} />
       </div>
       <div className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">{label}</div>
-      <div className={`mt-1 text-3xl font-black tracking-tight ${alert && Number(value) > 0 ? 'text-danger' : 'text-on-surface'}`}>{value ?? '—'}</div>
+      <div className={`mt-1 text-3xl font-bold tracking-tight ${alert && Number(value) > 0 ? 'text-danger' : 'text-on-surface'}`}>{value ?? '—'}</div>
       {sub && <div className="mt-1.5 text-xs text-on-surface/55">{sub}</div>}
     </Surface>
   );
@@ -498,7 +499,7 @@ export default function Lgpd() {
       const a = document.createElement('a');
       a.href = url; a.download = `inventario-lgpd-${new Date().toISOString().slice(0, 10)}.pdf`; a.click();
       URL.revokeObjectURL(url);
-    } catch (e) { alert('Erro ao gerar PDF: ' + e.message); }
+    } catch (e) { toast('Erro ao gerar PDF: ' + e.message, 'danger'); }
     finally { setPdfLoading(false); }
   };
 
@@ -625,7 +626,7 @@ export default function Lgpd() {
             <Surface stripe={false} className="p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="max-w-3xl">
-                  <div className="text-sm font-black text-on-surface">Painel ainda sem registros de gestão</div>
+                  <div className="text-sm font-bold text-on-surface">Painel ainda sem registros de gestão</div>
                   <p className="mt-2 text-sm leading-6 text-on-surface/62">
                     O painel não deve parecer quebrado quando está vazio: ele está aguardando o cadastro das áreas que tratam dados pessoais, pedidos de pessoas ou incidentes. Comece pelo mapa de responsabilidades.
                   </p>
@@ -649,7 +650,7 @@ export default function Lgpd() {
                   </div>
                   <div>
                     <div className="text-xs font-semibold uppercase tracking-wider text-on-surface/50">Responsabilidade institucional</div>
-                    <div className="mt-0.5 text-lg font-black text-on-surface">{program.controller_name || 'Controlador não definido'}</div>
+                    <div className="mt-0.5 text-lg font-bold text-on-surface">{program.controller_name || 'Controlador não definido'}</div>
                   </div>
                 </div>
                 <ActionButton tone="ghost" icon={FileCheck2} onClick={() => setProgramDialog(true)}>Editar</ActionButton>
@@ -682,7 +683,7 @@ export default function Lgpd() {
 
             {/* Compliance gaps */}
             <Surface stripe={false} className="p-6">
-              <div className="mb-4 text-sm font-black text-on-surface">Providências que exigem atenção</div>
+              <div className="mb-4 text-sm font-bold text-on-surface">Providências que exigem atenção</div>
               <div className="space-y-3">
                 {[
                   { label: 'Áreas sem responsabilidade completa', value: s.processing?.missing_safeguards ?? 0, desc: 'Falta responsável, retenção ou segurança declarada', tone: 'danger' },
@@ -697,7 +698,7 @@ export default function Lgpd() {
                       <div className="text-sm font-semibold text-on-surface">{item.label}</div>
                       <div className="text-xs text-on-surface/55">{item.desc}</div>
                     </div>
-                    <div className={`text-2xl font-black ${item.value > 0 ? 'text-danger' : 'text-info'}`}>{item.value}</div>
+                    <div className={`text-2xl font-bold ${item.value > 0 ? 'text-danger' : 'text-info'}`}>{item.value}</div>
                   </div>
                 ))}
               </div>
@@ -708,7 +709,7 @@ export default function Lgpd() {
           <Surface stripe={false} className="p-6">
             <div className="mb-4 flex items-center justify-between">
               <div>
-                <div className="text-sm font-black text-on-surface">Pedidos de pessoas</div>
+                <div className="text-sm font-bold text-on-surface">Pedidos de pessoas</div>
                 <div className="mt-0.5 text-xs text-on-surface/50">Que tipo de demanda a Prefeitura está recebendo sobre dados pessoais</div>
               </div>
               <ActionButton tone="ghost" icon={Plus} onClick={() => { setActiveTab('titulares'); setRequestDialog({ open: true, item: null }); }}>Nova solicitação</ActionButton>
@@ -726,7 +727,7 @@ export default function Lgpd() {
                 { key: 'oposicao', label: 'Oposição' },
               ].map((d) => (
                 <div key={d.key} className="rounded-xl border border-outline/10 bg-surface p-3 text-center">
-                  <div className="text-2xl font-black text-on-surface">{(s.rights || {})[d.key] ?? 0}</div>
+                  <div className="text-2xl font-bold text-on-surface">{(s.rights || {})[d.key] ?? 0}</div>
                   <div className="mt-1 text-[10px] leading-tight text-on-surface/50">{d.label}</div>
                 </div>
               ))}
@@ -736,7 +737,7 @@ export default function Lgpd() {
           {/* High risk quick list */}
           {highRiskList.length > 0 && (
             <Surface stripe={false} className="p-6" tone="danger">
-              <div className="mb-3 flex items-center gap-2 text-sm font-black text-danger">
+              <div className="mb-3 flex items-center gap-2 text-sm font-bold text-danger">
                 <ShieldAlert size={15} /> Tratamentos de Alto Risco / Crítico ({highRiskList.length})
               </div>
               <div className="flex flex-wrap gap-2">
@@ -757,7 +758,7 @@ export default function Lgpd() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-base font-black text-on-surface">Inventário de Operações de Tratamento</div>
+              <div className="text-base font-bold text-on-surface">Inventário de Operações de Tratamento</div>
               <div className="text-xs text-on-surface/50">Art. 37, Lei nº 13.709/2018 (LGPD) — registro obrigatório de finalidade, base legal, retenção e medidas de segurança</div>
             </div>
             <div className="flex gap-2">
@@ -819,7 +820,7 @@ export default function Lgpd() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-base font-black text-on-surface">Direitos do Titular</div>
+              <div className="text-base font-bold text-on-surface">Direitos do Titular</div>
               <div className="text-xs text-on-surface/50">Art. 18, Lei nº 13.709/2018 (LGPD) — prazo de atendimento: 15 dias úteis</div>
             </div>
             <ActionButton tone="primary" icon={Plus} onClick={() => setRequestDialog({ open: true, item: null })}>Nova solicitação</ActionButton>
@@ -881,7 +882,7 @@ export default function Lgpd() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-base font-black text-on-surface">Incidentes de Proteção de Dados</div>
+              <div className="text-base font-bold text-on-surface">Incidentes de Proteção de Dados</div>
               <div className="text-xs text-on-surface/50">Art. 48, Lei nº 13.709/2018 (LGPD) — comunicação à ANPD obrigatória em incidentes graves</div>
             </div>
             <ActionButton tone="primary" icon={Plus} onClick={() => setIncidentDialog({ open: true, item: null })}>Novo incidente</ActionButton>
@@ -968,7 +969,7 @@ export default function Lgpd() {
                             <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
                             <Td><StatusChip label={auditTypeLabel(ev.entity_type)} tone="primary" /></Td>
                             <Td>
-                              <div className="text-xs font-black text-on-surface">{action.label}</div>
+                              <div className="text-xs font-bold text-on-surface">{action.label}</div>
                               <div className="mt-0.5 text-[11px] text-on-surface/48">Código: {ev.action || '—'}</div>
                             </Td>
                             <Td className="max-w-[300px]">

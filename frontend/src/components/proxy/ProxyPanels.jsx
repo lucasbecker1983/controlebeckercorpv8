@@ -35,13 +35,13 @@ function MetricSurface({ label, value, subtitle, tone = 'neutral' }) {
     : tone === 'danger'
       ? 'text-danger'
       : tone === 'warning'
-        ? 'text-orange-600 dark:text-orange-300'
+        ? 'text-warning'
         : 'text-primary';
 
   return (
     <Surface className="p-5">
       <div className="text-[11px] font-semibold tracking-tight text-on-surface/62">{label}</div>
-      <div className={`mt-2 text-3xl font-black tracking-tight ${toneClass}`}>{value}</div>
+      <div className={`mt-2 text-3xl font-bold tracking-tight ${toneClass}`}>{value}</div>
       <p className="mt-2 text-sm leading-6 text-on-surface/62">{subtitle}</p>
     </Surface>
   );
@@ -101,7 +101,7 @@ export function ProxyEngine({ engineStatus, refreshAll }) {
         ) : null}
         <Surface className="p-5">
           <div className="text-[11px] font-semibold tracking-tight text-primary">Estado oficial do motor</div>
-          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Saúde e modo de execução</h3>
+          <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Saúde e modo de execução</h3>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {engineServices.map((item) => (
               <Surface key={item.label} stripe={false} className="p-4">
@@ -123,7 +123,7 @@ export function ProxyEngine({ engineStatus, refreshAll }) {
 
         <Surface className="p-5">
           <div className="text-[11px] font-semibold tracking-tight text-primary">Ações operacionais</div>
-          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Intervenção técnica controlada</h3>
+          <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Intervenção técnica controlada</h3>
           <p className="mt-2 text-sm leading-6 text-on-surface/64">
             Esta camada atua na saúde do motor observável. Decisões de política permanecem em `Bloqueios & Liberações`.
           </p>
@@ -150,7 +150,7 @@ export function ProxyEngine({ engineStatus, refreshAll }) {
       <div className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
         <Surface className="p-5">
           <div className="text-[11px] font-semibold tracking-tight text-primary">Certificado institucional</div>
-          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Autoridade do proxy HTTPS</h3>
+          <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Autoridade do proxy HTTPS</h3>
           <div className="mt-4 grid gap-3 text-sm text-on-surface/68">
             <div>Criado em: <strong className="text-on-surface">{fmt(certificate?.created_at)}</strong></div>
             <div>Válido até: <strong className="text-on-surface">{fmt(certificate?.valid_until)}</strong></div>
@@ -168,7 +168,7 @@ export function ProxyEngine({ engineStatus, refreshAll }) {
 
         <Surface className="p-5">
           <div className="text-[11px] font-semibold tracking-tight text-primary">Trilha de ações técnicas</div>
-          <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Últimas intervenções no motor</h3>
+          <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Últimas intervenções no motor</h3>
           <div className="mt-4 space-y-3">
             {actionLogs.length ? actionLogs.map((item, index) => (
               <Surface key={`${item.created_at || index}-${index}`} stripe={false} className="p-4">
@@ -244,7 +244,7 @@ export function ProxyReports() {
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-[11px] font-semibold tracking-tight text-primary">Relatório institucional baseado em SARG</div>
-              <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Uso explícito do proxy no modo ACL + DNS</h3>
+              <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Uso explícito do proxy no modo ACL + DNS</h3>
               <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/64">
                 {institutional.scope?.statement}
               </p>
@@ -338,7 +338,7 @@ export function ProxyReports() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="text-[11px] font-semibold tracking-tight text-primary">Relatórios e artefatos</div>
-            <h3 className="mt-2 text-xl font-black tracking-tight text-on-surface">Saída documental do proxy observável</h3>
+            <h3 className="mt-2 text-xl font-bold tracking-tight text-on-surface">Saída documental do proxy observável</h3>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-on-surface/64">
               Aqui permanecem os artefatos gerados por SARG e outras evidências de navegação observável. O módulo serve suporte técnico e prestação de contas operacional.
             </p>

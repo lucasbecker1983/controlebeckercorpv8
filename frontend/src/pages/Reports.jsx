@@ -21,6 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { toast } from '../components/ui/kit';
 
 const API_BASE = '';
 
@@ -100,13 +101,13 @@ const SummaryCard = ({ label, value, color = 'primary', icon: Icon }) => (
 
 const Pill = ({ children, color = 'gray' }) => {
   const colors = {
-    red:    'bg-red-600 text-white',
-    green:  'bg-emerald-600 text-white',
-    blue:   'bg-blue-600 text-white',
-    purple: 'bg-violet-600 text-white',
-    amber:  'bg-amber-500 text-white',
-    teal:   'bg-teal-600 text-white',
-    gray:   'bg-zinc-500 text-white',
+    red:    'bg-danger text-white',
+    green:  'bg-success text-white',
+    blue:   'bg-primary text-white',
+    purple: 'bg-primary text-white',
+    amber:  'bg-warning text-white',
+    teal:   'bg-success text-white',
+    gray:   'bg-on-surface/15 text-white',
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${colors[color] || colors.gray}`}>
@@ -287,7 +288,7 @@ export default function Reports() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      alert('Erro ao gerar PDF: ' + e.message);
+      toast('Erro ao gerar PDF: ' + e.message, 'danger');
     } finally {
       setNavPdfLoading(null);
     }
@@ -310,7 +311,7 @@ export default function Reports() {
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
-      alert('Erro ao gerar PDF: ' + e.message);
+      toast('Erro ao gerar PDF: ' + e.message, 'danger');
     } finally {
       setAuditPdfLoading(false);
     }
@@ -540,7 +541,7 @@ export default function Reports() {
           )}
 
           {navError && (
-            <div className="rounded-xl border border-red-800/30 bg-red-900/10 p-4 text-sm text-red-400">
+            <div className="rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
               <AlertTriangle size={14} className="mr-2 inline" />
               {navError}
             </div>
@@ -911,7 +912,7 @@ export default function Reports() {
           )}
 
           {auditError && (
-            <div className="rounded-xl border border-red-800/30 bg-red-900/10 p-4 text-sm text-red-400">
+            <div className="rounded-xl border border-danger/30 bg-danger/10 p-4 text-sm text-danger">
               <AlertTriangle size={14} className="mr-2 inline" />
               {auditError}
             </div>
@@ -972,7 +973,7 @@ export default function Reports() {
                           </td>
                           <td className="px-3 py-2 text-xs text-on-surface/60">{ev.status_code || '—'}</td>
                           <td className="px-3 py-2">
-                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${ok ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+                            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${ok ? 'bg-success text-white' : 'bg-danger text-white'}`}>
                               {ok ? <CheckCircle2 size={9} /> : <XCircle size={9} />}
                               {ok ? 'OK' : 'FALHA'}
                             </span>

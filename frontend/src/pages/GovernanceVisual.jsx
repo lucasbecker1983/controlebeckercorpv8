@@ -49,10 +49,10 @@ const buildReportsUrl = (filters = {}) => {
 function Metric({ label, value, sub, icon: Icon, tone = 'primary', onClick }) {
   const toneClass = {
     primary: 'border-primary/14 bg-primary/8 text-primary',
-    success: 'border-emerald-500/18 bg-emerald-500/10 text-emerald-600',
+    success: 'border-success/18 bg-success/10 text-success',
     danger: 'border-danger/20 bg-danger/10 text-danger',
-    warning: 'border-orange-500/22 bg-orange-500/12 text-orange-600',
-    info: 'border-sky-500/18 bg-sky-500/10 text-sky-600',
+    warning: 'border-warning/22 bg-warning/12 text-warning',
+    info: 'border-primary/18 bg-primary/10 text-primary',
   }[tone] || 'border-outline/12 bg-surface-high text-on-surface';
   const Wrapper = onClick ? 'button' : 'div';
   return (
@@ -60,14 +60,14 @@ function Metric({ label, value, sub, icon: Icon, tone = 'primary', onClick }) {
       type={onClick ? 'button' : undefined}
       onClick={onClick}
       className={cx(
-        'min-h-[132px] rounded-[24px] border bg-surface-high p-4 text-left shadow-sm transition hover:border-primary/24 hover:shadow-md',
+        'min-h-[132px] rounded-xl border bg-surface-high p-4 text-left shadow-sm transition hover:border-primary/24 hover:shadow-md',
         onClick ? 'cursor-pointer' : '',
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[11px] font-black uppercase tracking-wide text-on-surface/48">{label}</p>
-          <div className="mt-2 text-3xl font-black tracking-tight text-on-surface">{value}</div>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-on-surface/48">{label}</p>
+          <div className="mt-2 text-3xl font-bold tracking-tight text-on-surface">{value}</div>
         </div>
         <div className={cx('inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border', toneClass)}>
           <Icon size={20} />
@@ -88,11 +88,11 @@ function AreaChart({ rows, onClick }) {
     ? data.map((item, index) => `${(index / (data.length - 1)) * 100},${100 - (num(item.blocked) / max) * 100}`).join(' ')
     : '0,100 100,100';
   return (
-    <button type="button" onClick={onClick} className="block h-72 w-full rounded-[22px] border border-outline/10 bg-surface p-4 text-left transition hover:border-primary/20">
+    <button type="button" onClick={onClick} className="block h-72 w-full rounded-xl border border-outline/10 bg-surface p-4 text-left transition hover:border-primary/20">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-[11px] font-black uppercase tracking-wide text-primary">Linha do tempo</p>
-          <h3 className="mt-1 text-lg font-black text-on-surface">Eventos por hora</h3>
+          <p className="text-[11px] font-bold uppercase tracking-wide text-primary">Linha do tempo</p>
+          <h3 className="mt-1 text-lg font-bold text-on-surface">Eventos por hora</h3>
         </div>
         <StatusChip label="Clicável" tone="primary" />
       </div>
@@ -102,8 +102,8 @@ function AreaChart({ rows, onClick }) {
         <path d={`M0,100 ${blockedPoints}`} fill="none" stroke="#dc2626" strokeWidth="2.2" vectorEffect="non-scaling-stroke" />
       </svg>
       <div className="mt-2 flex items-center gap-4 text-xs font-bold text-on-surface/58">
-        <span className="inline-flex items-center gap-2"><span className="h-2 w-4 rounded-full bg-blue-600" /> Total</span>
-        <span className="inline-flex items-center gap-2"><span className="h-2 w-4 rounded-full bg-red-600" /> Bloqueios</span>
+        <span className="inline-flex items-center gap-2"><span className="h-2 w-4 rounded-full bg-primary" /> Total</span>
+        <span className="inline-flex items-center gap-2"><span className="h-2 w-4 rounded-full bg-danger" /> Bloqueios</span>
       </div>
     </button>
   );
@@ -139,8 +139,8 @@ function Donut({ rows, total, onSlice }) {
           })}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-          <div className="text-2xl font-black text-on-surface">{fmt(sum)}</div>
-          <div className="text-[10px] font-black uppercase text-on-surface/45">eventos</div>
+          <div className="text-2xl font-bold text-on-surface">{fmt(sum)}</div>
+          <div className="text-[10px] font-bold uppercase text-on-surface/45">eventos</div>
         </div>
       </div>
       <div className="grid content-center gap-2">
@@ -155,7 +155,7 @@ function Donut({ rows, total, onSlice }) {
               <span className="h-3 w-3 rounded-full" style={{ backgroundColor: palette[index % palette.length] }} />
               {sourceLabel[item.source_type] || item.source_type}
             </span>
-            <span className="text-sm font-black text-on-surface">{fmt(item.total)}</span>
+            <span className="text-sm font-bold text-on-surface">{fmt(item.total)}</span>
           </button>
         ))}
       </div>
@@ -166,10 +166,10 @@ function Donut({ rows, total, onSlice }) {
 function BarList({ title, eyebrow, rows, valueKey = 'total', labelKey, color = '#2563eb', onRow }) {
   const max = Math.max(...(rows || []).map((item) => num(item[valueKey])), 1);
   return (
-    <div className="rounded-[24px] border border-outline/10 bg-surface p-4">
+    <div className="rounded-xl border border-outline/10 bg-surface p-4">
       <div className="mb-4">
-        <p className="text-[11px] font-black uppercase tracking-wide text-primary">{eyebrow}</p>
-        <h3 className="mt-1 text-lg font-black text-on-surface">{title}</h3>
+        <p className="text-[11px] font-bold uppercase tracking-wide text-primary">{eyebrow}</p>
+        <h3 className="mt-1 text-lg font-bold text-on-surface">{title}</h3>
       </div>
       <div className="space-y-2">
         {(rows || []).length ? rows.map((item, index) => {
@@ -184,7 +184,7 @@ function BarList({ title, eyebrow, rows, valueKey = 'total', labelKey, color = '
             >
               <div className="flex items-center justify-between gap-3">
                 <span className="truncate text-sm font-bold text-on-surface" title={label}>{label}</span>
-                <span className="shrink-0 text-xs font-black text-on-surface/62">{fmt(value)}</span>
+                <span className="shrink-0 text-xs font-bold text-on-surface/62">{fmt(value)}</span>
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-on-surface/8">
                 <div className="h-full rounded-full" style={{ width: pct(value, max), backgroundColor: color }} />
@@ -202,9 +202,9 @@ function BarList({ title, eyebrow, rows, valueKey = 'total', labelKey, color = '
 function VlanBars({ rows, onRow }) {
   const max = Math.max(...(rows || []).map((item) => num(item.total)), 1);
   return (
-    <div className="rounded-[24px] border border-outline/10 bg-surface p-4">
-      <p className="text-[11px] font-black uppercase tracking-wide text-primary">Controle por rede</p>
-      <h3 className="mt-1 text-lg font-black text-on-surface">Eventos por VLAN</h3>
+    <div className="rounded-xl border border-outline/10 bg-surface p-4">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-primary">Controle por rede</p>
+      <h3 className="mt-1 text-lg font-bold text-on-surface">Eventos por VLAN</h3>
       <div className="mt-4 grid gap-3">
         {(rows || []).map((item) => {
           const total = num(item.total);
@@ -213,12 +213,12 @@ function VlanBars({ rows, onRow }) {
           return (
             <button key={item.vlan_id} type="button" onClick={() => onRow?.(item)} className="rounded-2xl border border-outline/10 bg-surface-high px-3 py-3 text-left transition hover:border-primary/20">
               <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-black text-on-surface">VLAN {item.vlan_id}</div>
+                <div className="text-sm font-bold text-on-surface">VLAN {item.vlan_id}</div>
                 <div className="text-xs font-bold text-on-surface/55">{fmt(total)} eventos · {fmt(item.unique_ips)} IPs</div>
               </div>
               <div className="mt-2 flex h-3 overflow-hidden rounded-full bg-on-surface/8" style={{ maxWidth: `${Math.max((total / max) * 100, 8)}%` }}>
-                <div className="bg-red-600" style={{ width: pct(blocked, total) }} />
-                <div className="bg-emerald-600" style={{ width: pct(allowed, total) }} />
+                <div className="bg-danger" style={{ width: pct(blocked, total) }} />
+                <div className="bg-success" style={{ width: pct(allowed, total) }} />
               </div>
             </button>
           );
@@ -312,8 +312,8 @@ export default function GovernanceVisual() {
             <Surface className="p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-wide text-primary">Evidências</p>
-                  <h3 className="mt-1 text-lg font-black text-on-surface">Fontes do motor</h3>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">Evidências</p>
+                  <h3 className="mt-1 text-lg font-bold text-on-surface">Fontes do motor</h3>
                 </div>
                 <PieChart className="text-primary" size={22} />
               </div>
@@ -385,17 +385,17 @@ export default function GovernanceVisual() {
             />
             <Surface className="p-4">
               <div className="mb-4 flex items-center gap-2">
-                <Flame className="text-orange-500" size={20} />
+                <Flame className="text-warning" size={20} />
                 <div>
-                  <p className="text-[11px] font-black uppercase tracking-wide text-primary">Anomalias</p>
-                  <h3 className="text-lg font-black text-on-surface">Picos para questionar</h3>
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-primary">Anomalias</p>
+                  <h3 className="text-lg font-bold text-on-surface">Picos para questionar</h3>
                 </div>
               </div>
               <div className="space-y-2">
                 {(charts.anomalies || []).length ? charts.anomalies.map((item) => (
-                  <button key={item.bucket} type="button" onClick={() => openReports({})} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-outline/10 bg-surface px-3 py-3 text-left transition hover:border-orange-500/30">
+                  <button key={item.bucket} type="button" onClick={() => openReports({})} className="flex w-full items-center justify-between gap-3 rounded-2xl border border-outline/10 bg-surface px-3 py-3 text-left transition hover:border-warning/30">
                     <span className="text-sm font-bold text-on-surface">{new Date(item.bucket).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', day: '2-digit', month: '2-digit' })}</span>
-                    <span className="rounded-full bg-orange-500 px-2 py-1 text-[10px] font-black text-white">{fmt(item.total)} eventos</span>
+                    <span className="rounded-full bg-warning px-2 py-1 text-[10px] font-bold text-white">{fmt(item.total)} eventos</span>
                   </button>
                 )) : (
                   <div className="rounded-2xl border border-dashed border-outline/14 px-4 py-8 text-center text-sm text-on-surface/45">Sem pico relevante no período.</div>
@@ -406,19 +406,19 @@ export default function GovernanceVisual() {
 
           <Surface className="p-5">
             <div className="grid gap-4 md:grid-cols-3">
-              <button type="button" onClick={() => openReports({ source: 'dns' })} className="rounded-[22px] border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
-                <Globe2 className="text-blue-600" />
-                <h3 className="mt-3 text-base font-black text-on-surface">DNS/RPZ</h3>
+              <button type="button" onClick={() => openReports({ source: 'dns' })} className="rounded-xl border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
+                <Globe2 className="text-primary" />
+                <h3 className="mt-3 text-base font-bold text-on-surface">DNS/RPZ</h3>
                 <p className="mt-2 text-sm leading-5 text-on-surface/58">Domínio, categoria, regra e política aplicada.</p>
               </button>
-              <button type="button" onClick={() => openReports({ source: 'proxy' })} className="rounded-[22px] border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
-                <Network className="text-violet-600" />
-                <h3 className="mt-3 text-base font-black text-on-surface">Proxy/ACL</h3>
+              <button type="button" onClick={() => openReports({ source: 'proxy' })} className="rounded-xl border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
+                <Network className="text-primary" />
+                <h3 className="mt-3 text-base font-bold text-on-surface">Proxy/ACL</h3>
                 <p className="mt-2 text-sm leading-5 text-on-surface/58">URL/SNI, método, status, bytes e decisão do proxy.</p>
               </button>
-              <button type="button" onClick={() => openReports({ source: 'ufw' })} className="rounded-[22px] border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
-                <ShieldAlert className="text-orange-500" />
-                <h3 className="mt-3 text-base font-black text-on-surface">UFW</h3>
+              <button type="button" onClick={() => openReports({ source: 'ufw' })} className="rounded-xl border border-outline/10 bg-surface px-4 py-4 text-left transition hover:border-primary/22">
+                <ShieldAlert className="text-warning" />
+                <h3 className="mt-3 text-base font-bold text-on-surface">UFW</h3>
                 <p className="mt-2 text-sm leading-5 text-on-surface/58">Tentativas internas barradas pelo firewall oficial.</p>
               </button>
             </div>

@@ -1,4 +1,4 @@
-import { ToastHost } from './kit';
+import { ConfirmHost, ToastHost } from './kit';
 
 export default function AppShell({ sidebar, topbar, footer, children }) {
   return (
@@ -20,6 +20,7 @@ export default function AppShell({ sidebar, topbar, footer, children }) {
         ) : null}
       </main>
       <ToastHost />
+      <ConfirmHost />
     </div>
   );
 }

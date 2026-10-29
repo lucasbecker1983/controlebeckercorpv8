@@ -4,6 +4,7 @@ import {
   Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { askConfirm, toast } from '../components/ui/kit';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ function Field({ label, value, onChange, type = 'text', required = false, ...pro
 
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
+      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
       <div className="relative">
         <input
           type={isPassword && showPassword ? 'text' : type}
@@ -133,7 +134,7 @@ function Metric({ label, value, icon: Icon, sub }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-[10px] font-bold uppercase text-on-surface/55">{label}</p>
-          <div className="mt-2 text-3xl font-black text-on-surface">{value}</div>
+          <div className="mt-2 text-3xl font-bold text-on-surface">{value}</div>
           {sub && <p className="mt-1 text-xs text-on-surface/45">{sub}</p>}
         </div>
         <div className="rounded-2xl bg-primary/10 p-3 text-primary"><Icon size={24} /></div>
@@ -146,16 +147,16 @@ function TableShell({ title, rows, columns, empty, actions = null }) {
   return (
     <Surface className="p-5">
       <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="text-sm font-black uppercase text-on-surface">{title}</h2>
+        <h2 className="text-sm font-bold uppercase text-on-surface">{title}</h2>
         <div className="flex items-center gap-2">
           {actions}
-          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">{rows.length}</span>
+          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">{rows.length}</span>
         </div>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-xs">
           <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-            <tr>{columns.map((c) => <th key={c.key} className="whitespace-nowrap px-3 py-2 font-black">{c.label}</th>)}</tr>
+            <tr>{columns.map((c) => <th key={c.key} className="whitespace-nowrap px-3 py-2 font-bold">{c.label}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-outline/10">
             {rows.length ? rows.map((row) => (
@@ -184,7 +185,7 @@ function TabBar({ tabs, active, onChange }) {
           key={tab.key}
           onClick={() => onChange(tab.key)}
           className={[
-            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase transition-all',
+            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase transition-all',
             active === tab.key
               ? 'bg-primary text-on-primary shadow-sm'
               : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
@@ -201,7 +202,7 @@ function TabBar({ tabs, active, onChange }) {
 function SelectField({ label, value, onChange, children }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
+      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -309,7 +310,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
   const maxUser = Number(top_users?.[0]?.sessions) || 1;
 
   const methodLabel = { first_register: 'Novo cadastro', reactivated_register: 'Recadastro', cpf_password: 'CPF + Senha', mac_auto: 'Auto (MAC)', mac_confirm: 'Retorno confirmado' };
-  const methodColor = ['bg-primary', 'bg-info', 'bg-orange-500'];
+  const methodColor = ['bg-primary', 'bg-info', 'bg-warning'];
 
   return (
     <div className="space-y-6">
@@ -329,7 +330,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-black uppercase text-on-surface">Usuários únicos por dia</h3>
+          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Usuários únicos por dia</h3>
           <p className="mb-4 text-xs text-on-surface/45">Últimos 7 dias</p>
           {last7.length ? (
             <div className="flex h-28 items-end gap-1.5">
@@ -355,7 +356,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
         </Surface>
 
         <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-black uppercase text-on-surface">Acessos por hora do dia</h3>
+          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Acessos por hora do dia</h3>
           <p className="mb-4 text-xs text-on-surface/45">Distribuição acumulada — últimos 30 dias</p>
           <div className="flex h-28 items-end gap-px">
             {(hourly_distribution || []).map((d, i) => {
@@ -380,18 +381,18 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Ranking de usuários — 30 dias</h3>
+          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Ranking de usuários — 30 dias</h3>
           {top_users?.length ? (
             <div className="space-y-3">
               {top_users.slice(0, 8).map((u, i) => {
                 const pct = Math.round((Number(u.sessions) / maxUser) * 100);
                 return (
                   <div key={i} className="flex items-center gap-3">
-                    <span className="w-5 shrink-0 text-right text-[10px] font-black text-on-surface/40">{i + 1}</span>
+                    <span className="w-5 shrink-0 text-right text-[10px] font-bold text-on-surface/40">{i + 1}</span>
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="truncate text-xs font-bold text-on-surface">{u.full_name}</span>
-                        <span className="shrink-0 text-[10px] font-black text-primary">{u.sessions}x</span>
+                        <span className="shrink-0 text-[10px] font-bold text-primary">{u.sessions}x</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-primary/12">
                         <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
@@ -408,14 +409,14 @@ function MetricsTab({ metrics, loading, onRefresh }) {
         </Surface>
 
         <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Métodos de autenticação</h3>
+          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Métodos de autenticação</h3>
           <div className="space-y-3">
             {auth_methods?.map((m, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-on-surface">{methodLabel[m.auth_method] || m.auth_method}</span>
-                    <span className="shrink-0 text-[10px] font-black text-on-surface/55">{m.count} ({m.pct}%)</span>
+                    <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{m.count} ({m.pct}%)</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-outline/15">
                     <div className={`h-full rounded-full ${methodColor[i] || 'bg-primary'}`} style={{ width: `${m.pct}%` }} />
@@ -427,11 +428,11 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           </div>
 
           <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Distribuição por VLAN</h4>
+            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Distribuição por VLAN</h4>
             <div className="flex flex-wrap gap-2">
               {vlan_distribution?.map((v, i) => (
                 <div key={i} className="rounded-xl border border-outline/14 bg-surface-variant px-3 py-2 text-xs">
-                  <span className="font-black text-on-surface">VLAN {v.vlan_id}</span>
+                  <span className="font-bold text-on-surface">VLAN {v.vlan_id}</span>
                   <span className="ml-2 text-on-surface/55">{v.count} sessões</span>
                 </div>
               ))}
@@ -440,7 +441,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           </div>
 
           <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Sites mais visitados (VLAN 70 — últimos 30 dias)</h4>
+            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Sites mais visitados (VLAN 70 — últimos 30 dias)</h4>
             {top_domains?.length ? (
               <div className="space-y-2">
                 {top_domains.map((d, i) => {
@@ -450,7 +451,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
                     <div key={i}>
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="truncate text-xs font-bold text-on-surface" title={d.domain}>{d.domain}</span>
-                        <span className="shrink-0 text-[10px] font-black text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
+                        <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-outline/15">
                         <div className="h-full rounded-full bg-info/70" style={{ width: `${pct}%` }} />
@@ -497,7 +498,7 @@ function ReportTab({ visitors }) {
       const res = await api.get('/api/hotspot/report', { params: buildParams({ page: 1, limit: 200 }) });
       setReportData(res.data);
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao carregar relatório.');
+      toast(err?.response?.data?.error || 'Falha ao carregar relatório.', 'danger');
     } finally {
       setLoading(false);
     }
@@ -507,11 +508,11 @@ function ReportTab({ visitors }) {
     setSyncing(true);
     try {
       const res = await api.post('/api/hotspot/access-log/sync');
-      alert(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`);
+      toast(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`, 'success');
       setValidationData(null);
       if (reportData) loadReport();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha na sincronização.');
+      toast(err?.response?.data?.error || 'Falha na sincronização.', 'danger');
     } finally {
       setSyncing(false);
     }
@@ -523,7 +524,7 @@ function ReportTab({ visitors }) {
       const res = await api.get('/api/hotspot/report/validate', { params: buildParams() });
       setValidationData(res.data);
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao validar relatório.');
+      toast(err?.response?.data?.error || 'Falha ao validar relatório.', 'danger');
     } finally {
       setValidating(false);
     }
@@ -562,7 +563,7 @@ function ReportTab({ visitors }) {
       };
 
       const win = window.open('', '_blank', 'width=1200,height=820');
-      if (!win) { alert('Permita pop-ups para gerar o relatório em PDF.'); return; }
+      if (!win) { toast('Permita pop-ups para gerar o relatório em PDF.', 'warning'); return; }
 
       win.document.write(`<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8">
@@ -651,7 +652,7 @@ ${rows.map((r, i) => `<tr>
 </body></html>`);
       win.document.close();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao gerar relatório para impressão.');
+      toast(err?.response?.data?.error || 'Falha ao gerar relatório para impressão.', 'danger');
     } finally {
       setPrinting(false);
     }
@@ -663,7 +664,7 @@ ${rows.map((r, i) => `<tr>
         <div className="mb-5 flex items-start gap-3">
           <FileText className="mt-0.5 shrink-0 text-primary" size={20} />
           <div>
-            <h2 className="text-sm font-black uppercase text-on-surface">Relatório Institucional de Acesso</h2>
+            <h2 className="text-sm font-bold uppercase text-on-surface">Relatório Institucional de Acesso</h2>
             <p className="mt-1 text-xs text-on-surface/60">
               Prefeitura Municipal de Jacarezinho — Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.<br />
               Selecione o período, usuário e VLAN para gerar o relatório e exportar em PDF com cabeçalho e rodapé governamental.
@@ -707,7 +708,7 @@ ${rows.map((r, i) => `<tr>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-black uppercase text-on-surface">Validação do Relatório</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Validação do Relatório</h2>
                 <StatusChip
                   tone={validationData.status === 'valid' ? 'success' : validationData.status === 'warning' ? 'warning' : 'danger'}
                   label={validationData.status === 'valid' ? 'Consistente' : validationData.status === 'warning' ? 'Com avisos' : 'Inconsistente'}
@@ -717,16 +718,16 @@ ${rows.map((r, i) => `<tr>
             </div>
             <div className="grid min-w-[260px] grid-cols-3 gap-2 text-center">
               <div className="rounded-xl border border-outline/12 bg-surface-high/60 p-3">
-                <p className="text-[10px] font-black uppercase text-on-surface/45">Sessões</p>
-                <p className="mt-1 text-lg font-black text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-on-surface/45">Sessões</p>
+                <p className="mt-1 text-lg font-bold text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
               </div>
               <div className="rounded-xl border border-danger/16 bg-danger/8 p-3">
-                <p className="text-[10px] font-black uppercase text-danger/75">Críticos</p>
-                <p className="mt-1 text-lg font-black text-danger">{validationData.summary?.critical ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-danger/75">Críticos</p>
+                <p className="mt-1 text-lg font-bold text-danger">{validationData.summary?.critical ?? 0}</p>
               </div>
               <div className="rounded-xl border border-warning/18 bg-warning/8 p-3">
-                <p className="text-[10px] font-black uppercase text-warning/75">Avisos</p>
-                <p className="mt-1 text-lg font-black text-warning">{validationData.summary?.warning ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-warning/75">Avisos</p>
+                <p className="mt-1 text-lg font-bold text-warning">{validationData.summary?.warning ?? 0}</p>
               </div>
             </div>
           </div>
@@ -734,7 +735,7 @@ ${rows.map((r, i) => `<tr>
             {validationData.checks?.map((check) => (
               <div key={check.key} className="flex items-center justify-between gap-3 rounded-xl border border-outline/12 bg-surface-high/48 px-3 py-2">
                 <div>
-                  <p className="text-xs font-black text-on-surface">{check.label}</p>
+                  <p className="text-xs font-bold text-on-surface">{check.label}</p>
                   <p className="text-[10px] uppercase text-on-surface/42">{check.severity === 'critical' ? 'Bloqueia emissão auditável' : 'Revisão recomendada'}</p>
                 </div>
                 <StatusChip tone={check.count ? (check.severity === 'critical' ? 'danger' : 'warning') : 'success'} label={String(check.count || 0)} />
@@ -755,10 +756,10 @@ ${rows.map((r, i) => `<tr>
           <Surface className="p-5">
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-sm font-black uppercase text-on-surface">Registros de Acesso</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Registros de Acesso</h2>
                 <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do hotspot</p>
               </div>
-              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">
+              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">
                 {reportData.rows?.length} / {reportData.total}
               </span>
             </div>
@@ -767,7 +768,7 @@ ${rows.map((r, i) => `<tr>
                 <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
                   <tr>
                     {['Data', 'Hora', 'Usuário', 'CPF', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
-                      <th key={h} className="whitespace-nowrap px-3 py-2 font-black">{h}</th>
+                      <th key={h} className="whitespace-nowrap px-3 py-2 font-bold">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -876,7 +877,7 @@ export default function Hotspot() {
       const res = await api.get('/api/hotspot/metrics');
       setMetrics(res.data);
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao carregar métricas.');
+      toast(err?.response?.data?.error || 'Falha ao carregar métricas.', 'danger');
     } finally {
       setMetricsLoading(false);
     }
@@ -886,20 +887,20 @@ export default function Hotspot() {
   useEffect(() => { if (tab === 'metrics' && !metrics) loadMetrics(); }, [tab]);
 
   const revoke = async (id) => {
-    if (!confirm(`Revogar sessão ${id}?`)) return;
+    if (!(await askConfirm(`Revogar sessão ${id}?`))) return;
     await api.post(`/api/hotspot/sessions/${id}/revoke`);
     load();
   };
 
   const cleanupStaleSessions = async () => {
-    if (!confirm('Ocultar da grade administrativa as sessões já expiradas e revogadas, preservando o Relatório e a trilha de auditoria?')) return;
+    if (!(await askConfirm('Ocultar da grade administrativa as sessões já expiradas e revogadas, preservando o Relatório e a trilha de auditoria?'))) return;
     setCleaningSessions(true);
     try {
       const res = await api.post('/api/hotspot/sessions/cleanup-stale');
-      alert(`Limpeza concluída: ${res.data?.hidden_total || 0} sessão(ões) ocultada(s) apenas da grade administrativa.`);
+      toast(`Limpeza concluída: ${res.data?.hidden_total || 0} sessão(ões) ocultada(s) apenas da grade administrativa.`, 'success');
       await load();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao limpar sessões antigas.');
+      toast(err?.response?.data?.error || 'Falha ao limpar sessões antigas.', 'danger');
     } finally {
       setCleaningSessions(false);
     }
@@ -924,19 +925,19 @@ export default function Hotspot() {
       setVisitorDialog({ open: false, item: null });
       await load();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao salvar visitante.');
+      toast(err?.response?.data?.error || 'Falha ao salvar visitante.', 'danger');
     } finally {
       setSavingVisitor(false);
     }
   };
 
   const deleteVisitor = async (visitor) => {
-    if (!confirm(`Excluir visitante ${visitor.full_name}? As sessões ativas serão revogadas.`)) return;
+    if (!(await askConfirm(`Excluir visitante ${visitor.full_name}? As sessões ativas serão revogadas.`))) return;
     try {
       await api.delete(`/api/hotspot/visitors/${visitor.id}`);
       await load();
     } catch (err) {
-      alert(err?.response?.data?.error || 'Falha ao excluir visitante.');
+      toast(err?.response?.data?.error || 'Falha ao excluir visitante.', 'danger');
     }
   };
 
@@ -979,7 +980,7 @@ export default function Hotspot() {
               <div className="flex items-start gap-3">
                 <Network className="mt-0.5 shrink-0 text-primary" size={22} />
                 <div>
-                  <h2 className="text-sm font-black uppercase text-on-surface">Enforcement cativo VLAN 70</h2>
+                  <h2 className="text-sm font-bold uppercase text-on-surface">Enforcement cativo VLAN 70</h2>
                   <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
                     Runtime complementar com ipset/iptables: não autenticados são mantidos no portal; autenticados seguem para as políticas UFW, DNS, ACL e RPZ existentes.
                   </p>
@@ -998,7 +999,7 @@ export default function Hotspot() {
             <div className="flex items-start gap-3">
               <ShieldCheck className="mt-0.5 shrink-0 text-primary" size={22} />
               <div>
-                <h2 className="text-sm font-black uppercase text-on-surface">Regime operacional</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Regime operacional</h2>
                 <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
                   O Hotspot identifica visitantes e registra sessões. Ele não remove bloqueios institucionais: a VLAN 70 permanece sujeita ao DNS interno, ACLs, RPZ e demais políticas de navegação.
                 </p>
@@ -1028,7 +1029,7 @@ export default function Hotspot() {
                 key: 'action',
                 label: 'Ação',
                 render: (row) => (row.status === 'active' && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()))
-                  ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-black uppercase text-danger">Revogar</button>
+                  ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-bold uppercase text-danger">Revogar</button>
                   : '-',
               },
             ]}
@@ -1039,7 +1040,7 @@ export default function Hotspot() {
               <div className="flex items-start gap-3">
                 <Search className="mt-0.5 shrink-0 text-primary" size={20} />
                 <div>
-                  <h2 className="text-sm font-black uppercase text-on-surface">Pesquisa de visitantes</h2>
+                  <h2 className="text-sm font-bold uppercase text-on-surface">Pesquisa de visitantes</h2>
                   <p className="mt-1 text-xs text-on-surface/55">Use nome, CPF, celular ou MAC. O campo sugere visitantes já cadastrados.</p>
                 </div>
               </div>
@@ -1047,7 +1048,7 @@ export default function Hotspot() {
             </div>
             <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.8fr]">
               <label className="block">
-                <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">Pesquisar visitante</span>
+                <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">Pesquisar visitante</span>
                 <input
                   list="hotspot-visitor-autocomplete"
                   value={visitorFilters.query}
@@ -1077,7 +1078,7 @@ export default function Hotspot() {
             rows={filteredVisitors}
             empty="Nenhum visitante encontrado para os filtros selecionados."
             actions={(
-              <span className="text-[10px] font-black uppercase text-on-surface/45">
+              <span className="text-[10px] font-bold uppercase text-on-surface/45">
                 {filteredVisitors.length} de {visitors.length}
               </span>
             )}

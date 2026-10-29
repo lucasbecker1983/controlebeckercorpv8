@@ -5,6 +5,7 @@ import {
   UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
+import { askConfirm, toast } from '../components/ui/kit';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 function formatDuration(seconds) {
@@ -36,7 +37,7 @@ function Field({ label, value, onChange, type = 'text', required = false, placeh
 
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
+      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
       <div className="relative">
         <input
           type={isPassword && showPassword ? 'text' : type}
@@ -65,7 +66,7 @@ function Field({ label, value, onChange, type = 'text', required = false, placeh
 function SelectField({ label, value, onChange, children }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">{label}</span>
+      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -83,7 +84,7 @@ function Metric({ label, value, icon: Icon, sub }) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-[10px] font-bold uppercase text-on-surface/55">{label}</p>
-          <div className="mt-2 text-3xl font-black text-on-surface">{value}</div>
+          <div className="mt-2 text-3xl font-bold text-on-surface">{value}</div>
           {sub && <p className="mt-1 text-xs text-on-surface/45">{sub}</p>}
         </div>
         <div className="rounded-2xl bg-primary/10 p-3 text-primary"><Icon size={24} /></div>
@@ -101,7 +102,7 @@ function TabBar({ tabs, active, onChange }) {
           type="button"
           onClick={() => onChange(tab.key)}
           className={[
-            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-black uppercase transition-all',
+            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase transition-all',
             active === tab.key ? 'bg-primary text-on-primary shadow-sm' : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
           ].join(' ')}
         >
@@ -202,7 +203,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
   const maxHourly = Math.max(...(hourly_distribution || []).map((d) => Number(d.count) || 0)) || 1;
   const maxUser = Number(top_users?.[0]?.sessions) || 1;
   const methodLabel = { usuario_senha: 'Usuário + senha' };
-  const methodColor = ['bg-primary', 'bg-info', 'bg-orange-500'];
+  const methodColor = ['bg-primary', 'bg-info', 'bg-warning'];
 
   return (
     <div className="space-y-6">
@@ -222,7 +223,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-black uppercase text-on-surface">Usuários únicos por dia</h3>
+          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Usuários únicos por dia</h3>
           <p className="mb-4 text-xs text-on-surface/45">Últimos 7 dias</p>
           {last7.length ? (
             <div className="flex h-28 items-end gap-1.5">
@@ -243,7 +244,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
         </Surface>
 
         <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-black uppercase text-on-surface">Acessos por hora do dia</h3>
+          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Acessos por hora do dia</h3>
           <p className="mb-4 text-xs text-on-surface/45">Distribuição acumulada — últimos 30 dias</p>
           <div className="flex h-28 items-end gap-px">
             {(hourly_distribution || []).map((d, i) => {
@@ -264,18 +265,18 @@ function MetricsTab({ metrics, loading, onRefresh }) {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Ranking de colaboradores — 30 dias</h3>
+          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Ranking de colaboradores — 30 dias</h3>
           {top_users?.length ? (
             <div className="space-y-3">
               {top_users.slice(0, 8).map((u, i) => {
                 const pct = Math.round((Number(u.sessions) / maxUser) * 100);
                 return (
                   <div key={i} className="flex items-center gap-3">
-                    <span className="w-5 shrink-0 text-right text-[10px] font-black text-on-surface/40">{i + 1}</span>
+                    <span className="w-5 shrink-0 text-right text-[10px] font-bold text-on-surface/40">{i + 1}</span>
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="truncate text-xs font-bold text-on-surface">{u.full_name}</span>
-                        <span className="shrink-0 text-[10px] font-black text-primary">{u.sessions}x</span>
+                        <span className="shrink-0 text-[10px] font-bold text-primary">{u.sessions}x</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-primary/12">
                         <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
@@ -292,14 +293,14 @@ function MetricsTab({ metrics, loading, onRefresh }) {
         </Surface>
 
         <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-black uppercase text-on-surface">Métodos de autenticação</h3>
+          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Métodos de autenticação</h3>
           <div className="space-y-3">
             {auth_methods?.map((m, i) => (
               <div key={i} className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <span className="text-xs font-bold text-on-surface">{methodLabel[m.auth_method] || m.auth_method}</span>
-                    <span className="shrink-0 text-[10px] font-black text-on-surface/55">{m.count} ({m.pct}%)</span>
+                    <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{m.count} ({m.pct}%)</span>
                   </div>
                   <div className="h-1.5 rounded-full bg-outline/15">
                     <div className={`h-full rounded-full ${methodColor[i] || 'bg-primary'}`} style={{ width: `${m.pct}%` }} />
@@ -311,11 +312,11 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           </div>
 
           <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Distribuição por VLAN</h4>
+            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Distribuição por VLAN</h4>
             <div className="flex flex-wrap gap-2">
               {vlan_distribution?.map((v, i) => (
                 <div key={i} className="rounded-xl border border-outline/14 bg-surface-variant px-3 py-2 text-xs">
-                  <span className="font-black text-on-surface">VLAN {v.vlan_id}</span>
+                  <span className="font-bold text-on-surface">VLAN {v.vlan_id}</span>
                   <span className="ml-2 text-on-surface/55">{v.count} sessões</span>
                 </div>
               ))}
@@ -324,7 +325,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
           </div>
 
           <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-black uppercase text-on-surface/60">Sites mais visitados (VLAN 30 — últimos 30 dias)</h4>
+            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Sites mais visitados (VLAN 30 — últimos 30 dias)</h4>
             {top_domains?.length ? (
               <div className="space-y-2">
                 {top_domains.map((d, i) => {
@@ -334,7 +335,7 @@ function MetricsTab({ metrics, loading, onRefresh }) {
                     <div key={i}>
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <span className="truncate text-xs font-bold text-on-surface" title={d.domain}>{d.domain}</span>
-                        <span className="shrink-0 text-[10px] font-black text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
+                        <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-outline/15">
                         <div className="h-full rounded-full bg-info/70" style={{ width: `${pct}%` }} />
@@ -379,7 +380,7 @@ function ReportTab({ users }) {
       const res = await api.get('/api/collaborators/report', { params: buildParams({ page: 1, limit: 200 }) });
       setReportData(res.data);
     } catch (error) {
-      alert(error?.response?.data?.error || 'Falha ao carregar relatório.');
+      toast(error?.response?.data?.error || 'Falha ao carregar relatório.', 'danger');
     } finally {
       setLoading(false);
     }
@@ -389,11 +390,11 @@ function ReportTab({ users }) {
     setSyncing(true);
     try {
       const res = await api.post('/api/collaborators/access-log/sync');
-      alert(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`);
+      toast(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`, 'success');
       setValidationData(null);
       if (reportData) loadReport();
     } catch (error) {
-      alert(error?.response?.data?.error || 'Falha na sincronização.');
+      toast(error?.response?.data?.error || 'Falha na sincronização.', 'danger');
     } finally {
       setSyncing(false);
     }
@@ -405,7 +406,7 @@ function ReportTab({ users }) {
       const res = await api.get('/api/collaborators/report/validate', { params: buildParams() });
       setValidationData(res.data);
     } catch (error) {
-      alert(error?.response?.data?.error || 'Falha ao validar relatório.');
+      toast(error?.response?.data?.error || 'Falha ao validar relatório.', 'danger');
     } finally {
       setValidating(false);
     }
@@ -440,7 +441,7 @@ function ReportTab({ users }) {
       };
 
       const win = window.open('', '_blank', 'width=1200,height=820');
-      if (!win) { alert('Permita pop-ups para gerar o relatório em PDF.'); return; }
+      if (!win) { toast('Permita pop-ups para gerar o relatório em PDF.', 'warning'); return; }
 
       win.document.write(`<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8">
@@ -527,7 +528,7 @@ ${rows.map((r, i) => `<tr>
 </body></html>`);
       win.document.close();
     } catch (error) {
-      alert(error?.response?.data?.error || 'Falha ao gerar relatório para impressão.');
+      toast(error?.response?.data?.error || 'Falha ao gerar relatório para impressão.', 'danger');
     } finally {
       setPrinting(false);
     }
@@ -539,7 +540,7 @@ ${rows.map((r, i) => `<tr>
         <div className="mb-5 flex items-start gap-3">
           <FileText className="mt-0.5 shrink-0 text-primary" size={20} />
           <div>
-            <h2 className="text-sm font-black uppercase text-on-surface">Relatório Institucional de Acesso</h2>
+            <h2 className="text-sm font-bold uppercase text-on-surface">Relatório Institucional de Acesso</h2>
             <p className="mt-1 text-xs text-on-surface/60">
               Prefeitura Municipal de Jacarezinho — Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.<br />
               Selecione período, colaborador e VLAN para gerar relatório e exportar em PDF com identidade governamental.
@@ -583,7 +584,7 @@ ${rows.map((r, i) => `<tr>
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-black uppercase text-on-surface">Validação do Relatório</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Validação do Relatório</h2>
                 <StatusChip
                   tone={validationData.status === 'valid' ? 'success' : validationData.status === 'warning' ? 'warning' : 'danger'}
                   label={validationData.status === 'valid' ? 'Consistente' : validationData.status === 'warning' ? 'Com avisos' : 'Inconsistente'}
@@ -593,16 +594,16 @@ ${rows.map((r, i) => `<tr>
             </div>
             <div className="grid min-w-[260px] grid-cols-3 gap-2 text-center">
               <div className="rounded-xl border border-outline/12 bg-surface-high/60 p-3">
-                <p className="text-[10px] font-black uppercase text-on-surface/45">Sessões</p>
-                <p className="mt-1 text-lg font-black text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-on-surface/45">Sessões</p>
+                <p className="mt-1 text-lg font-bold text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
               </div>
               <div className="rounded-xl border border-danger/16 bg-danger/8 p-3">
-                <p className="text-[10px] font-black uppercase text-danger/75">Críticos</p>
-                <p className="mt-1 text-lg font-black text-danger">{validationData.summary?.critical ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-danger/75">Críticos</p>
+                <p className="mt-1 text-lg font-bold text-danger">{validationData.summary?.critical ?? 0}</p>
               </div>
               <div className="rounded-xl border border-warning/18 bg-warning/8 p-3">
-                <p className="text-[10px] font-black uppercase text-warning/75">Avisos</p>
-                <p className="mt-1 text-lg font-black text-warning">{validationData.summary?.warning ?? 0}</p>
+                <p className="text-[10px] font-bold uppercase text-warning/75">Avisos</p>
+                <p className="mt-1 text-lg font-bold text-warning">{validationData.summary?.warning ?? 0}</p>
               </div>
             </div>
           </div>
@@ -610,7 +611,7 @@ ${rows.map((r, i) => `<tr>
             {validationData.checks?.map((check) => (
               <div key={check.key} className="flex items-center justify-between gap-3 rounded-xl border border-outline/12 bg-surface-high/48 px-3 py-2">
                 <div>
-                  <p className="text-xs font-black text-on-surface">{check.label}</p>
+                  <p className="text-xs font-bold text-on-surface">{check.label}</p>
                   <p className="text-[10px] uppercase text-on-surface/42">{check.severity === 'critical' ? 'Bloqueia emissão auditável' : 'Revisão recomendada'}</p>
                 </div>
                 <StatusChip tone={check.count ? (check.severity === 'critical' ? 'danger' : 'warning') : 'success'} label={String(check.count || 0)} />
@@ -631,10 +632,10 @@ ${rows.map((r, i) => `<tr>
           <Surface className="p-5">
             <div className="mb-4 flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-sm font-black uppercase text-on-surface">Registros de Acesso</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Registros de Acesso</h2>
                 <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do acesso mobile</p>
               </div>
-              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">
+              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">
                 {reportData.rows?.length} / {reportData.total}
               </span>
             </div>
@@ -643,7 +644,7 @@ ${rows.map((r, i) => `<tr>
                 <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
                   <tr>
                     {['Data', 'Hora', 'Colaborador', 'Usuário', 'Departamento', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
-                      <th key={h} className="whitespace-nowrap px-3 py-2 font-black">{h}</th>
+                      <th key={h} className="whitespace-nowrap px-3 py-2 font-bold">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -745,7 +746,7 @@ export default function Collaborators() {
       const res = await api.get('/api/collaborators/metrics');
       setMetrics(res.data);
     } catch (error) {
-      alert(error?.response?.data?.error || 'Falha ao carregar métricas.');
+      toast(error?.response?.data?.error || 'Falha ao carregar métricas.', 'danger');
     } finally {
       setMetricsLoading(false);
     }
@@ -767,7 +768,7 @@ export default function Collaborators() {
   };
 
   const deleteUser = async (user) => {
-    const ok = window.confirm(`Inativar o colaborador ${user.full_name}? Sessões ativas serão revogadas.`);
+    const ok = await askConfirm(`Inativar o colaborador ${user.full_name}? Sessões ativas serão revogadas.`);
     if (!ok) return;
     await api.delete(`/api/collaborators/users/${user.id}`);
     await load();
@@ -857,7 +858,7 @@ export default function Collaborators() {
                 </p>
               </div>
               <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-outline/14 bg-surface-high/72 px-4 py-3">
-                <span className="text-sm font-black text-on-surface">Exigir login</span>
+                <span className="text-sm font-bold text-on-surface">Exigir login</span>
                 <input type="checkbox" checked={authRequired} onChange={toggleAuthRequired} className="h-5 w-5 rounded border-outline/30 text-primary" />
               </label>
             </div>
@@ -868,7 +869,7 @@ export default function Collaborators() {
               <div className="flex items-start gap-3">
                 <Search className="mt-0.5 shrink-0 text-primary" size={20} />
                 <div>
-                  <h2 className="text-sm font-black uppercase text-on-surface">Pesquisa de colaboradores</h2>
+                  <h2 className="text-sm font-bold uppercase text-on-surface">Pesquisa de colaboradores</h2>
                   <p className="mt-1 text-xs text-on-surface/55">Use nome, usuário, departamento ou cargo. O campo sugere colaboradores já cadastrados.</p>
                 </div>
               </div>
@@ -876,7 +877,7 @@ export default function Collaborators() {
             </div>
             <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.9fr]">
               <label className="block">
-                <span className="mb-1.5 block text-xs font-black uppercase text-on-surface/55">Pesquisar colaborador</span>
+                <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">Pesquisar colaborador</span>
                 <input
                   list="collab-user-autocomplete"
                   value={userFilters.query}
@@ -903,18 +904,18 @@ export default function Collaborators() {
           <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
             <Surface className="p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-black uppercase text-on-surface">Colaboradores</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Colaboradores</h2>
                 <StatusChip tone={loading ? 'warning' : 'success'}>{loading ? 'Carregando' : `${filteredUsers.length} de ${users.length}`}</StatusChip>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-xs">
                   <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
                     <tr>
-                      <th className="px-3 py-2 font-black">Nome</th>
-                      <th className="px-3 py-2 font-black">Usuário</th>
-                      <th className="px-3 py-2 font-black">Departamento</th>
-                      <th className="px-3 py-2 font-black">Estado</th>
-                      <th className="px-3 py-2 font-black">Ação</th>
+                      <th className="px-3 py-2 font-bold">Nome</th>
+                      <th className="px-3 py-2 font-bold">Usuário</th>
+                      <th className="px-3 py-2 font-bold">Departamento</th>
+                      <th className="px-3 py-2 font-bold">Estado</th>
+                      <th className="px-3 py-2 font-bold">Ação</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-outline/10">
@@ -926,8 +927,8 @@ export default function Collaborators() {
                         <td className="whitespace-nowrap px-3 py-3"><StatusChip tone={user.active ? 'success' : 'neutral'}>{user.active ? 'Ativo' : 'Inativo'}</StatusChip></td>
                         <td className="whitespace-nowrap px-3 py-3">
                           <div className="flex items-center gap-3">
-                            <button type="button" className="text-xs font-black text-primary" onClick={() => setDialog({ open: true, item: user })}>Editar</button>
-                            <button type="button" className="text-xs font-black text-danger disabled:cursor-not-allowed disabled:opacity-40" disabled={!user.active} onClick={() => deleteUser(user)}>
+                            <button type="button" className="text-xs font-bold text-primary" onClick={() => setDialog({ open: true, item: user })}>Editar</button>
+                            <button type="button" className="text-xs font-bold text-danger disabled:cursor-not-allowed disabled:opacity-40" disabled={!user.active} onClick={() => deleteUser(user)}>
                               Inativar
                             </button>
                           </div>
@@ -942,7 +943,7 @@ export default function Collaborators() {
 
             <Surface className="p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-black uppercase text-on-surface">Sessões ativas</h2>
+                <h2 className="text-sm font-bold uppercase text-on-surface">Sessões ativas</h2>
                 <StatusChip tone="info">{sessions.length}</StatusChip>
               </div>
               <div className="space-y-3">
@@ -950,7 +951,7 @@ export default function Collaborators() {
                   <div key={session.id} className="rounded-2xl border border-outline/12 bg-surface-high/55 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-sm font-black text-on-surface">{session.full_name || session.username}</p>
+                        <p className="text-sm font-bold text-on-surface">{session.full_name || session.username}</p>
                         <p className="mt-1 font-mono text-xs text-on-surface/55">{session.client_ip} {session.mac_address ? `- ${session.mac_address}` : ''}</p>
                       </div>
                       <button type="button" title="Revogar sessão" className="rounded-xl border border-danger/18 bg-danger/10 p-2 text-danger" onClick={() => revokeSession(session.id)}>

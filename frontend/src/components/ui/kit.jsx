@@ -282,3 +282,40 @@ export const fmtDateTime = (value) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
 };
+
+/*
+ * Confirmação que pode ser chamada de qualquer lugar e devolve uma promessa:
+ *   if (!(await askConfirm('Excluir o item?'))) return;
+ * Substitui o confirm() do navegador nos módulos antigos.
+ */
+export function askConfirm(options) {
+  const detail = typeof options === 'string' ? { description: options } : (options || {});
+  return new Promise((resolve) => {
+    window.dispatchEvent(new CustomEvent('sgcg:confirm', { detail: { ...detail, resolve } }));
+  });
+}
+
+export function ConfirmHost() {
+  const [req, setReq] = useState(null);
+  useEffect(() => {
+    const onAsk = (e) => setReq(e.detail);
+    window.addEventListener('sgcg:confirm', onAsk);
+    return () => window.removeEventListener('sgcg:confirm', onAsk);
+  }, []);
+  const close = (value) => {
+    req?.resolve?.(value);
+    setReq(null);
+  };
+  const danger = req?.tone === 'danger' || /exclu|remov|revog|apag|bloque|desativ|limpar/i.test(`${req?.title || ''} ${req?.description || ''}`);
+  return (
+    <ConfirmDialog
+      open={Boolean(req)}
+      title={req?.title || 'Confirmar ação'}
+      description={req?.description}
+      tone={danger ? 'danger' : 'primary'}
+      confirmLabel={req?.confirmLabel || 'Confirmar'}
+      onClose={() => close(false)}
+      onConfirm={() => close(true)}
+    />
+  );
+}

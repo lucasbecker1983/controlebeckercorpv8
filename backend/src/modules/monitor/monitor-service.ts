@@ -181,7 +181,7 @@ class MonitorService {
         setTimeout(() => this.sweepPresence().catch(() => null), 5000).unref?.();
         const traffic = setInterval(() => this.collectTraffic().catch(() => null), TRAFFIC_MS);
         traffic.unref?.();
-        setTimeout(() => this.collectTraffic().catch(() => null), 3000).unref?.();
+        setTimeout(() => this.collectTraffic().catch(() => null), 6000).unref?.();
     }
 
     private listVlanIfaces() {
@@ -500,6 +500,36 @@ class MonitorService {
         }
     }
 
+    private reverseQueue = new Set<string>();
+    private reverseActive = 0;
+
+    // Nome do destino sem esperar: usa o que já se sabe e busca o resto em segundo plano.
+    private nameForRemoteNow(ip: string): string | null {
+        const mapped = this.ipToDomain.get(ip);
+        if (mapped) return mapped.domain;
+        const known = KNOWN_RANGES.find(([pattern]) => pattern.test(ip));
+        if (known) return known[1];
+        const cached = this.reverseCache.get(ip);
+        if (cached && Date.now() - cached.at < 60 * 60 * 1000) return cached.name;
+        if (!this.reverseQueue.has(ip) && this.reverseQueue.size < 500) {
+            this.reverseQueue.add(ip);
+            this.pumpReverse();
+        }
+        return null;
+    }
+
+    private pumpReverse() {
+        while (this.reverseActive < 8 && this.reverseQueue.size) {
+            const ip = this.reverseQueue.values().next().value as string;
+            this.reverseQueue.delete(ip);
+            this.reverseActive += 1;
+            this.nameForRemote(ip).catch(() => null).finally(() => {
+                this.reverseActive -= 1;
+                this.pumpReverse();
+            });
+        }
+    }
+
     private async nameForRemote(ip: string) {
         const mapped = this.ipToDomain.get(ip);
         if (mapped) return mapped.domain;
@@ -540,9 +570,13 @@ class MonitorService {
         return pairs;
     }
 
+    private trafficStartedAt = 0;
+
     private async collectTraffic() {
-        if (this.trafficRunning) return;
+        // Proteção: uma coleta presa por mais de 30 s é descartada e a próxima começa.
+        if (this.trafficRunning && Date.now() - this.trafficStartedAt < 30000) return;
         this.trafficRunning = true;
+        this.trafficStartedAt = Date.now();
         try {
             const ifaces = this.listVlanIfaces().filter(({ id }) => {
                 const vlan = this.vlans.get(id);
@@ -585,7 +619,7 @@ class MonitorService {
                         else if (remoteVlan && this.vlans.get(remoteVlan)) label = `${this.vlans.get(remoteVlan)?.name} · ${remote}`;
                         else label = `Rede interna · ${remote}`;
                     } else {
-                        const name = await this.nameForRemote(remote);
+                        const name = this.nameForRemoteNow(remote);
                         domain = name ? registrableDomain(name) : null;
                         label = name ? friendlyName(name) : remote;
                     }

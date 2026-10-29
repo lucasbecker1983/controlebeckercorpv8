@@ -210,7 +210,7 @@ export default function AiAssistant() {
                 <Bot size={19} />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-black text-on-surface">Chat operacional</div>
+                <div className="text-sm font-bold text-on-surface">Chat operacional</div>
                 <div className="mt-0.5 text-xs text-on-surface/58">
                   {latestAssistant?.meta?.external_ai_used ? latestAssistant.meta.model : 'RAG local com fallback'}
                 </div>
@@ -233,7 +233,7 @@ export default function AiAssistant() {
                         <Bot size={17} />
                       </div>
                     ) : null}
-                    <div className={`max-w-[min(92%,760px)] rounded-[22px] border px-4 py-3 shadow-sm ${
+                    <div className={`max-w-[min(92%,760px)] rounded-xl border px-4 py-3 shadow-sm ${
                       assistant
                         ? 'border-outline/12 bg-surface-high/76 text-on-surface'
                         : 'border-primary/18 bg-primary text-on-primary'
@@ -248,17 +248,17 @@ export default function AiAssistant() {
                         </div>
                       ) : null}
                       {assistant && message.meta?.external_ai_error ? (
-                        <div className="mt-3 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-orange-700 dark:text-orange-300">
+                        <div className="mt-3 rounded-2xl border border-warning/30 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
                           {message.meta.external_ai_error}
                         </div>
                       ) : null}
                       {assistant && message.sources?.length ? (
                         <details className="mt-3 rounded-2xl border border-outline/10 bg-surface/62 px-3 py-2">
-                          <summary className="cursor-pointer text-xs font-black text-on-surface/70">Fontes recuperadas</summary>
+                          <summary className="cursor-pointer text-xs font-bold text-on-surface/70">Fontes recuperadas</summary>
                           <div className="mt-3 space-y-2">
                             {message.sources.slice(0, 5).map((source, index) => (
                               <div key={`${message.id}-${source.source}-${index}`} className="rounded-xl border border-outline/10 bg-surface-high/70 p-2">
-                                <div className="break-all text-[11px] font-black text-primary">{source.source}:{source.line_start}-{source.line_end}</div>
+                                <div className="break-all text-[11px] font-bold text-primary">{source.source}:{source.line_start}-{source.line_end}</div>
                                 <div className="mt-1 text-xs leading-5 text-on-surface/64">{source.excerpt}</div>
                               </div>
                             ))}
@@ -292,7 +292,7 @@ export default function AiAssistant() {
           </div>
 
           {error ? (
-            <div className="mx-4 mb-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-orange-700 dark:text-orange-300 sm:mx-5">
+            <div className="mx-4 mb-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning sm:mx-5">
               {error}
             </div>
           ) : null}
@@ -322,7 +322,7 @@ export default function AiAssistant() {
 
         <div className="space-y-4">
           <Surface className="p-4" stripe={false}>
-            <div className="flex items-center gap-2 text-sm font-black text-on-surface">
+            <div className="flex items-center gap-2 text-sm font-bold text-on-surface">
               <Sparkles size={17} className="text-primary" />
               Perguntas rápidas
             </div>
@@ -342,7 +342,7 @@ export default function AiAssistant() {
           </Surface>
 
           <Surface className="p-4" stripe={false}>
-            <div className="flex items-center gap-2 text-sm font-black text-on-surface">
+            <div className="flex items-center gap-2 text-sm font-bold text-on-surface">
               <FileSearch size={17} className="text-primary" />
               Estado do RAG
             </div>
