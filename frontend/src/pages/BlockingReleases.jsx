@@ -2289,7 +2289,7 @@ const MODULE_CONTEXT = {
   description: 'Este módulo passa a organizar decisão administrativa, escopo de rede, conformidade e execução técnica na mesma linguagem visual. A leitura privilegia clareza para governança sem perder profundidade operacional.',
 };
 
-export default function BlockingReleases({ initialTab = 'overview', allowedTabs = null, context = null, showQuickPanels = true }) {
+export default function BlockingReleases({ initialTab = 'overview', allowedTabs = null, context = null, showQuickPanels = true, hideHeader = false }) {
   const { data, setData, loadAll, loading, loadingState, banner, flash } = useModuleData();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromQuery = searchParams.get('tab');
@@ -4102,12 +4102,14 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         }}
       />
 
-      <ModuleHero
-        eyebrow={currentContext.eyebrow}
-        title={currentContext.title}
-        description={currentContext.description}
-        badges={headerBadges}
-      />
+      {hideHeader ? null : (
+        <ModuleHero
+          eyebrow={currentContext.eyebrow}
+          title={currentContext.title}
+          description={currentContext.description}
+          badges={headerBadges}
+        />
+      )}
 
       {showQuickPanels ? quickActionsPanel : null}
       {showQuickPanels ? quickVlanRulePanel : null}
@@ -4141,11 +4143,13 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         </ListRow>
       ) : null}
 
-      <SegmentedTabs
-        tabs={visibleTabs}
-        value={activeTab}
-        onChange={(tabKey) => startTransition(() => handleTabChange(tabKey))}
-      />
+      {hideHeader && visibleTabs.length <= 1 ? null : (
+        <SegmentedTabs
+          tabs={visibleTabs}
+          value={activeTab}
+          onChange={(tabKey) => startTransition(() => handleTabChange(tabKey))}
+        />
+      )}
 
       {loading ? (
         <SectionCard title="Carregando módulo" subtitle="Buscando políticas, VLANs, VIPs, saúde do motor e contingência." />

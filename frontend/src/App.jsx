@@ -13,6 +13,8 @@ import Users from './pages/Users';
 import Proxy from './pages/Proxy';
 import BlockingReleases from './pages/BlockingReleases';
 import Operations from './pages/Operations';
+import DnsProxy from './pages/DnsProxy';
+import AccessPolicies from './pages/AccessPolicies';
 import AiAssistant from './pages/AiAssistant';
 import Backups from './pages/Backups';
 import Security from './pages/Security';
@@ -95,28 +97,7 @@ function readStoredUser() {
   }
 }
 
-const POLICY_CONTEXT = {
-  eyebrow: 'Controlar',
-  title: 'Políticas de Acesso',
-  description: 'Bloqueios e liberações por VLAN, exceções VIP e liberações temporárias. Para uma ação simples, use Ações Rápidas.',
-};
-
-const DNS_PROXY_CONTEXT = {
-  eyebrow: 'Controlar',
-  title: 'DNS & Proxy',
-  description: 'Motor de filtragem, contingência de DNS, domínios ignorados e telemetria do proxy.',
-};
-
-const POLICY_TABS = ['overview', 'policies', 'vlans', 'vips', 'sporadic'];
 const DNS_PROXY_TABS = ['observability', 'engine', 'contingency', 'metrics', 'ignored'];
-
-function PolicyPage() {
-  return <BlockingReleases allowedTabs={POLICY_TABS} initialTab="policies" context={POLICY_CONTEXT} />;
-}
-
-function DnsProxyPage() {
-  return <BlockingReleases allowedTabs={DNS_PROXY_TABS} initialTab="engine" context={DNS_PROXY_CONTEXT} showQuickPanels={false} />;
-}
 
 // Endereços antigos continuam funcionando e levam para a tela nova.
 function LegacyRedirect({ to }) {
@@ -262,8 +243,8 @@ export default function App() {
           <Route path="/servidor" element={<Server />} />
           <Route path="/acoes-rapidas" element={<QuickActions />} />
           <Route path="/rede" element={<Network />} />
-          <Route path="/politicas" element={<PolicyPage />} />
-          <Route path="/dns-proxy" element={<DnsProxyPage />} />
+          <Route path="/politicas" element={<AccessPolicies />} />
+          <Route path="/dns-proxy" element={<DnsProxy />} />
           <Route path="/seguranca" element={<Security />} />
           <Route path="/chamados" element={<SupportTickets />} />
           <Route path="/hotspot" element={<Hotspot />} />
