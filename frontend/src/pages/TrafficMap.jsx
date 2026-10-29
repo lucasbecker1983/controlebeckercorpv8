@@ -269,6 +269,41 @@ export default function TrafficMap() {
         return true;
       };
 
+      // Rede neural: todas as camadas ligadas por sinapses finas (fundo); as ligações reais vêm por cima.
+      const layers = [devices, vlans, [wan], sites];
+      ctx.lineWidth = 0.9;
+      for (let li = 0; li < layers.length - 1; li += 1) {
+        for (const a of layers[li]) {
+          for (const b of layers[li + 1]) {
+            const c = curve(a, b);
+            ctx.beginPath();
+            ctx.moveTo(c[0], c[1]);
+            ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
+            ctx.strokeStyle = alpha(C.muted, s ? 0.05 : 0.16);
+            ctx.stroke();
+          }
+        }
+      }
+      // Sinais elétricos discretos correndo pelas sinapses de fundo.
+      if (!reduce && !s) {
+        let sig = 0;
+        for (let li = 0; li < layers.length - 1; li += 1) {
+          layers[li].forEach((a, ai) => {
+            layers[li + 1].forEach((b, bi) => {
+              sig += 1;
+              const seedv = ((ai * 73 + bi * 151 + li * 37) % 97) / 97;
+              const t = (phase * 0.22 + seedv) % 1;
+              if (((ai + bi + li) % 2) !== 0) return;
+              const p = bez(curve(a, b), t);
+              ctx.beginPath();
+              ctx.arc(p[0], p[1], 1.5, 0, Math.PI * 2);
+              ctx.fillStyle = alpha(C.accent, 0.55 * Math.sin(Math.PI * t));
+              ctx.fill();
+            });
+          });
+        }
+      }
+
       const edges = [];
       devices.forEach((dv) => {
         const v = vlans.find((x) => x.id === dv.vlan);
@@ -318,6 +353,13 @@ export default function TrafficMap() {
       }
 
       const circle = (x, y, r, col, on, hov) => {
+        ctx.beginPath();
+        ctx.arc(x, y, r + 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = alpha(col, on ? 0.12 : 0.04);
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = alpha(col, on ? 0.35 : 0.1);
+        ctx.stroke();
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fillStyle = on ? col : alpha(col, 0.2);
