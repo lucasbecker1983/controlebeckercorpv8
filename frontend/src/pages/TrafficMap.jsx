@@ -10,18 +10,18 @@ import { api } from '../services/api';
 
 const MAX_SITES = 12;
 const P = {
-  bg: '#0a1317',
-  canvas: '#0c171b',
-  surface: '#101c21',
-  sunken: '#0d171b',
-  ink: '#e2ebee',
-  muted: '#8ea2aa',
-  line: '#213239',
-  accent: '#3cc3cc',
-  crit: '#f06b5d',
-  warn: '#e2a53f',
-  ok: '#4cc488',
-  vlan: { 10: '#6ea7e8', 30: '#b28cf0', 40: '#e2a53f', 50: '#4cc488', 70: '#f06b5d', 80: '#3cc3cc', 99: '#8ea2aa' },
+  bg: '#eef2f4',
+  canvas: '#f7fafb',
+  surface: '#ffffff',
+  sunken: '#e4eaed',
+  ink: '#0f1d24',
+  muted: '#566a73',
+  line: '#d3dde2',
+  accent: '#0a737c',
+  crit: '#bf3226',
+  warn: '#a8690f',
+  ok: '#1d7f47',
+  vlan: { 10: '#2c66a8', 30: '#8152c2', 40: '#a8690f', 50: '#1d7f47', 70: '#bf3226', 80: '#0a737c', 99: '#566a73' },
 };
 const vcol = (id) => P.vlan[id] || P.muted;
 const F_DISPLAY = '"Archivo", "Arial Narrow", system-ui, sans-serif';
@@ -40,12 +40,12 @@ const shortName = (d) => (d.hostname ? d.hostname.split(' · ')[0] : `VLAN ${d.v
 
 const CSS = `
 .tm { --bg:${P.bg}; --surface:${P.surface}; --sunken:${P.sunken}; --ink:${P.ink}; --muted:${P.muted}; --line:${P.line}; --accent:${P.accent}; --warn:${P.warn}; --ok:${P.ok}; --crit:${P.crit};
-  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-family: ${F_BODY}; color-scheme: dark; }
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-family: ${F_BODY}; color-scheme: light; }
 .tm-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 16px; padding:12px 16px; border-bottom:1px solid var(--line); }
 .tm-title { font-family:${F_DISPLAY}; font-stretch:85%; font-weight:750; font-size:16px; }
 .tm-tag { font-family:${F_MONO}; font-size:11px; padding:3px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; display:inline-flex; align-items:center; gap:6px; }
-.tm-tag.live { border-color: rgba(76,196,136,.5); color: var(--ok); }
-.tm-tag.live i { width:6px; height:6px; border-radius:50%; background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: tmPulse 1.6s ease-in-out infinite; }
+.tm-tag.live { border-color: rgba(29,127,71,.45); color: var(--ok); }
+.tm-tag.live i { width:6px; height:6px; border-radius:50%; background: var(--ok); animation: tmPulse 1.6s ease-in-out infinite; }
 .tm-tag.paused { border-color: var(--warn); color: var(--warn); }
 @keyframes tmPulse { 0%,100% { opacity:.35 } 50% { opacity:1 } }
 .tm-seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
@@ -66,7 +66,7 @@ const CSS = `
 .tm-rank h3 { font-size:13px; font-family:${F_MONO}; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); font-weight:600; margin:0 0 8px; }
 .tm-rank ol { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
 .tm-rank li button { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:2px 8px; width:100%; font:inherit; font-size:13px; text-align:left; color:var(--ink); background:transparent; border:0; cursor:pointer; padding:3px 4px; border-radius:6px; }
-.tm-rank li button:hover, .tm-rank li button.sel { background: rgba(60,195,204,.12); }
+.tm-rank li button:hover, .tm-rank li button.sel { background: rgba(10,115,124,.10); }
 .tm-name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tm-mb { font-family:${F_MONO}; font-size:12px; font-variant-numeric:tabular-nums; }
 .tm-barline { grid-column:1/-1; height:4px; border-radius:2px; background:var(--sunken); overflow:hidden; }
@@ -104,11 +104,11 @@ function buildModel(data, view, mode) {
   const keyOf = (f) => (view === 'internet'
     ? f.label
     : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label);
-  // Todos os dispositivos ligados, sempre na mesma ordem (VLAN e IP), com ou sem tráfego.
+  // Como no protótipo: só quem está trafegando, agrupado por VLAN e ordenado pela banda.
   const devices = (data.devices || []).map((d) => {
     const flows = d.flows.filter((f) => (view === 'internet' ? f.kind === 'internet' : f.kind === 'internal'));
     return { ...d, flows, val: flows.reduce((s, f) => s + pick(f), 0) };
-  });
+  }).filter((d) => d.val > 0.01).sort((a, b) => a.vlan - b.vlan || b.val - a.val);
   const siteMap = new Map();
   for (const d of devices) {
     for (const f of d.flows) {
@@ -131,7 +131,7 @@ function buildModel(data, view, mode) {
     const info = vlanInfo.get(id) || {};
     return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, neighbors: info.neighbors || 0, val: devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0) };
   });
-  return { devices, sites, vlans, wan: mode === 'd' ? data.wan.down : data.wan.up };
+  return { devices, sites, vlans, wan: mode === 'd' ? data.wan.down : data.wan.up, online: (data.devices || []).length };
 }
 
 export default function TrafficMap() {
@@ -213,8 +213,8 @@ export default function TrafficMap() {
       const top = 34;
       const bottom = H - 22;
       const X = inet
-        ? { dev: W * 0.198, vlan: W * 0.407, wan: W * 0.581, site: W * 0.767 }
-        : { dev: W * 0.22, vlan: W * 0.47, site: W * 0.72 };
+        ? { dev: Math.max(190, W * 0.198), vlan: W * 0.407, wan: W * 0.581, site: W * 0.767 }
+        : { dev: Math.max(190, W * 0.22), vlan: W * 0.47, site: W * 0.72 };
 
       m.devices.forEach((d, i) => {
         d.x = X.dev;
@@ -266,36 +266,26 @@ export default function TrafficMap() {
         ctx.beginPath();
         ctx.moveTo(c[0], c[1]);
         ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
-        if (on && w > 0.3) {
-          ctx.shadowColor = col;
-          ctx.shadowBlur = 6 + Math.min(16, lw) + beat * 6;
-          ctx.strokeStyle = alpha(col, 0.36 + beat * 0.16);
-        } else {
-          ctx.shadowBlur = 0;
-          ctx.strokeStyle = alpha(col, on ? 0.18 : 0.06);
-        }
+        ctx.shadowBlur = 0;
+        ctx.strokeStyle = on && w > 0.3 ? alpha(col, 0.34 + beat * 0.14) : alpha(col, on ? 0.42 : 0.07);
         ctx.lineWidth = lw;
         ctx.stroke();
         ctx.shadowBlur = 0;
         if (reduce || !on || w <= 0.2) return;
-        const n = Math.min(18, 2 + Math.floor(w / 3.5));
-        const speed = 0.18 + Math.min(w, 80) / 140;
-        const size = 1.4 + Math.min(2.2, lw / 6);
+        const n = Math.min(12, 2 + Math.floor(w / 5));
+        const speed = 0.15 + Math.min(w, 60) / 160;
+        const size = 1.6 + Math.min(1.6, lw / 8);
         for (let k = 0; k < n; k += 1) {
           let t = ((phase * speed) + k / n + seed * 0.137) % 1;
           if (md === 'd') t = 1 - t;
           const p = bez(c, t);
           ctx.beginPath();
           ctx.arc(p[0], p[1], size + 3, 0, Math.PI * 2);
-          ctx.fillStyle = alpha(col, 0.18);
+          ctx.fillStyle = alpha(col, 0.14);
           ctx.fill();
           ctx.beginPath();
           ctx.arc(p[0], p[1], size + 0.8, 0, Math.PI * 2);
           ctx.fillStyle = alpha(col, 0.95);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(p[0], p[1], size * 0.55, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(255,255,255,0.75)';
           ctx.fill();
         }
       };
@@ -337,7 +327,7 @@ export default function TrafficMap() {
       const circle = (n, col, on, key, glow) => {
         ctx.beginPath();
         ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-        if (on && glow) { ctx.shadowColor = col; ctx.shadowBlur = 14; }
+        if (on && glow && false) { ctx.shadowColor = col; ctx.shadowBlur = 14; }
         ctx.fillStyle = on ? col : alpha(col, 0.2);
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -355,8 +345,7 @@ export default function TrafficMap() {
         const lim = m.vlans.find((x) => x.id === d.vlan)?.limit || 100;
         if (d.val >= Math.max(15, lim * 0.15)) {
           const pulse = 0.5 + 0.5 * Math.sin(phase * 6);
-          ctx.shadowColor = P.crit;
-          ctx.shadowBlur = 12 + pulse * 10;
+          ctx.shadowBlur = 0;
           ctx.beginPath();
           ctx.arc(d.x, d.y, d.r + 4 + pulse * 5, 0, Math.PI * 2);
           ctx.strokeStyle = alpha(P.crit, 0.35 + pulse * 0.6);
@@ -412,8 +401,6 @@ export default function TrafficMap() {
         ctx.stroke();
         ctx.beginPath();
         ctx.arc(wan.x, wan.y, wan.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, u));
-        ctx.shadowColor = ringCol;
-        ctx.shadowBlur = 12;
         ctx.strokeStyle = ringCol;
         ctx.lineWidth = 7;
         ctx.lineCap = 'round';
@@ -487,7 +474,7 @@ export default function TrafficMap() {
           <span className="tm-title">Mapa de Tráfego</span>
           <span className={`tm-tag ${paused ? 'paused' : 'live'}`}>{paused ? 'pausado' : <><i />ao vivo</>}</span>
           {updated ? <span className="tm-tag">{updated}</span> : null}
-          <span className="tm-tag">{deviceCount} dispositivos ligados</span>
+          <span className="tm-tag">{model?.online ?? 0} ligados · {deviceCount} com tráfego</span>
           <div className="tm-seg" role="group" aria-label="Tipo de tráfego" style={{ marginLeft: 'auto' }}>
             <button type="button" aria-pressed={internet} onClick={() => { setView('internet'); setSel(null); }}>Internet</button>
             <button type="button" aria-pressed={!internet} onClick={() => { setView('internal'); setSel(null); }}>Rede interna</button>
@@ -617,7 +604,7 @@ export default function TrafficMap() {
             <span key={v.id}><i style={{ background: vcol(v.id) }} />VLAN {v.id} {v.name}{v.limit_down ? ` · QoS ${v.limit_down} Mbps` : ''}</span>
           ))}
           <span>Anel da VLAN: uso do limite (verde, âmbar acima de 70%, vermelho acima de 90%)</span>
-          <span><i style={{ background: P.crit, boxShadow: `0 0 6px ${P.crit}` }} />Pisca em vermelho: consumo alto</span>
+          <span><i style={{ background: P.crit }} />Pisca em vermelho: consumo alto</span>
         </div>
       </section>
     </div>
