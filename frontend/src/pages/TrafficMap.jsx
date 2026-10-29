@@ -36,7 +36,7 @@ const alpha = (hex, a) => {
   const n = parseInt(hex.replace('#', ''), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 };
-const shortName = (d) => (d.hostname ? d.hostname.split(' · ')[0] : `VLAN ${d.vlan}`);
+const shortName = (d) => (d.hostname ? d.hostname.split(' · ')[0] : 'Dispositivo');
 
 const CSS = `
 .tm { --bg:${P.bg}; --surface:${P.surface}; --sunken:${P.sunken}; --ink:${P.ink}; --muted:${P.muted}; --line:${P.line}; --accent:${P.accent}; --warn:${P.warn}; --ok:${P.ok}; --crit:${P.crit};
@@ -179,7 +179,8 @@ export default function TrafficMap() {
   const deviceCount = model?.devices.length || 0;
   // Mesmo espaçamento do protótipo (rótulo em duas linhas por dispositivo).
   const rowH = 31.5;
-  const height = Math.max(560, Math.round(deviceCount * rowH + 56), (model?.sites.length || 0) * 42 + 56);
+  const vlanCount = model?.vlans.length || 0;
+  const height = Math.max(560, Math.round(deviceCount * rowH + 56), (model?.sites.length || 0) * 42 + 56, vlanCount * 72 + 70);
 
   stateRef.current = { model, sel, mode, paused, width, height, LINK, internet };
 
@@ -221,16 +222,25 @@ export default function TrafficMap() {
         d.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.devices.length);
         d.r = d.val > 0.01 ? 3 + Math.sqrt(d.val) * 1.6 : 2.5;
       });
-      // Cada VLAN na altura média dos seus dispositivos (leque de rede neural), sem sobreposição.
-      let prevY = top - 40;
-      m.vlans.forEach((v) => {
+      // Cada VLAN na altura média dos seus dispositivos (leque de rede neural).
+      // As sem tráfego ocupam os espaços livres, sempre com distância mínima entre elas.
+      const GAP = 66;
+      const first = top + 14;
+      const last = bottom - 34;
+      const slot = (last - first) / Math.max(1, m.vlans.length - 1);
+      m.vlans.forEach((v, i) => {
         const mine = m.devices.filter((d) => d.vlan === v.id);
-        const desired = mine.length ? mine.reduce((acc, d) => acc + d.y, 0) / mine.length : prevY + 70;
         v.x = X.vlan;
-        v.y = Math.min(bottom - 30, Math.max(desired, prevY + 64));
+        v.y = mine.length ? mine.reduce((acc, d) => acc + d.y, 0) / mine.length : first + i * slot;
         v.r = 8 + Math.sqrt(v.val) * 1.3;
-        prevY = v.y;
       });
+      for (let i = 1; i < m.vlans.length; i += 1) m.vlans[i].y = Math.max(m.vlans[i].y, m.vlans[i - 1].y + GAP);
+      if (m.vlans.length) m.vlans[m.vlans.length - 1].y = Math.min(m.vlans[m.vlans.length - 1].y, last);
+      for (let i = m.vlans.length - 2; i >= 0; i -= 1) m.vlans[i].y = Math.min(m.vlans[i].y, m.vlans[i + 1].y - GAP);
+      if (m.vlans.length && m.vlans[0].y < first) {
+        const shift = first - m.vlans[0].y;
+        m.vlans.forEach((v) => { v.y += shift; });
+      }
       const wan = inet ? { x: X.wan, y: (top + bottom) / 2, r: 40 } : null;
       m.sites.forEach((t, i) => {
         t.x = X.site;
