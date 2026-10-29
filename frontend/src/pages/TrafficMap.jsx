@@ -133,9 +133,11 @@ function buildModel(data, mode) {
       val: d.val,
       flows: d.flows.filter((f) => siteIdx.has(f.label)).map((f) => ({ site: siteIdx.get(f.label), d: f.down, u: f.up })),
     }));
-  const vlans = Array.from(new Set(devices.map((d) => d.vlan))).sort((a, b) => a - b).map((id) => {
+  // Todas as VLANs aparecem; as sem tráfego ficam apagadas, com a contagem de aparelhos ligados.
+  const vlanIds = Array.from(new Set([...(data.vlans || []).map((v) => v.id), ...devices.map((d) => d.vlan)])).sort((a, b) => a - b);
+  const vlans = vlanIds.map((id) => {
     const info = vlanInfo.get(id) || {};
-    return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, val: devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0) };
+    return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, neighbors: info.neighbors || 0, val: devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0) };
   });
   return { devices, vlans, sites, wan: mode === 'd' ? data.wan.down : data.wan.up };
 }
@@ -234,12 +236,24 @@ export default function TrafficMap() {
         d.y = top + (i + 0.5) * (bottom - top) / devices.length;
         d.r = 3 + Math.sqrt(d.val) * 1.6;
       });
-      vlans.forEach((v) => {
+      // VLANs com tráfego no meio dos seus aparelhos; as demais ocupam os espaços livres, sem sobrepor.
+      const vGap = Math.min(66, (bottom - top - 40) / Math.max(1, vlans.length - 1));
+      const vFirst = top + 14;
+      const vEnd = bottom - 34;
+      const vSlot = (vEnd - vFirst) / Math.max(1, vlans.length - 1);
+      vlans.forEach((v, i) => {
         const mine = devices.filter((d) => d.vlan === v.id);
         v.x = XS.vlan;
-        v.y = mine.reduce((acc, d) => acc + d.y, 0) / mine.length;
+        v.y = mine.length ? mine.reduce((acc, d) => acc + d.y, 0) / mine.length : vFirst + i * vSlot;
         v.r = 8 + Math.sqrt(v.val) * 1.3;
       });
+      for (let i = 1; i < vlans.length; i += 1) vlans[i].y = Math.max(vlans[i].y, vlans[i - 1].y + vGap);
+      if (vlans.length) vlans[vlans.length - 1].y = Math.min(vlans[vlans.length - 1].y, vEnd);
+      for (let i = vlans.length - 2; i >= 0; i -= 1) vlans[i].y = Math.min(vlans[i].y, vlans[i + 1].y - vGap);
+      if (vlans.length && vlans[0].y < vFirst) {
+        const shift = vFirst - vlans[0].y;
+        vlans.forEach((v) => { v.y += shift; });
+      }
       const wan = { x: XS.wan, y: (top + bottom) / 2, r: 40 };
       sites.forEach((t, i) => {
         const ty = top + (i + 0.5) * (bottom - top) / sites.length;
@@ -309,7 +323,7 @@ export default function TrafficMap() {
         const v = vlans.find((x) => x.id === dv.vlan);
         if (v) edges.push({ a: dv, b: v, w: dv.val, col: vcol(dv.vlan), key: 'd', dev: dv, vlan: dv.vlan });
       });
-      vlans.forEach((v) => edges.push({ a: v, b: wan, w: v.val, col: vcol(v.id), key: 'v', vlan: v.id }));
+      vlans.forEach((v) => { if (v.val > 0.01) edges.push({ a: v, b: wan, w: v.val, col: vcol(v.id), key: 'v', vlan: v.id }); });
       sites.forEach((t) => edges.push({ a: wan, b: t, w: t.val, col: C.accent, key: 's', site: t.i }));
       edges.forEach((e) => {
         const on = related(e);
@@ -397,8 +411,9 @@ export default function TrafficMap() {
 
       vlans.forEach((v) => {
         const on = !s || (s.t === 'vlan' && s.id === v.id) || (s.t === 'dev' && devices.find((d) => d.ip === s.ip)?.vlan === v.id) || (s.t === 'site' && devices.some((d) => d.vlan === v.id && d.flows.some((f) => f.site === s.i)));
-        circle(v.x, v.y, v.r, vcol(v.id), on, hv === `vlan:${v.id}`);
-        if (v.limit) {
+        const idleV = v.val <= 0.01;
+        circle(v.x, v.y, v.r, vcol(v.id), on && !idleV, hv === `vlan:${v.id}`);
+        if (v.limit && !idleV) {
           const use = v.val / v.limit;
           ctx.beginPath();
           ctx.arc(v.x, v.y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
@@ -408,11 +423,11 @@ export default function TrafficMap() {
         }
         ctx.textAlign = 'center';
         ctx.font = `700 11px ${F_BODY}`;
-        ctx.fillStyle = on ? C.ink : alpha(C.muted, 0.5);
+        ctx.fillStyle = on && !idleV ? C.ink : alpha(C.muted, 0.7);
         ctx.fillText(`${v.id} · ${v.name}`, v.x, v.y + v.r + 17);
         ctx.font = `10px ${F_MONO}`;
         ctx.fillStyle = on ? C.muted : alpha(C.muted, 0.4);
-        ctx.fillText(`${fmt(v.val)}${v.limit ? `/${v.limit}` : ''}`, v.x, v.y + v.r + 29);
+        ctx.fillText(idleV ? `sem tráfego · ${v.neighbors} disp.` : `${fmt(v.val)}${v.limit ? `/${v.limit}` : ''}`, v.x, v.y + v.r + 29);
       });
 
       const u = m.wan / L;
