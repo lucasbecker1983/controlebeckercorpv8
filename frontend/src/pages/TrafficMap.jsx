@@ -295,6 +295,20 @@ export default function TrafficMap() {
         const idle = d.val <= 0.01;
         const on = devOn(d);
         circle(d, C.vlan(d.vlan), on && !idle, `dev:${d.ip}`);
+        // Consumo alto pisca em vermelho: 15 Mbps ou 15% do limite da VLAN.
+        const lim = m.vlans.find((x) => x.id === d.vlan)?.limit || 100;
+        if (d.val >= Math.max(15, lim * 0.15)) {
+          const pulse = 0.5 + 0.5 * Math.sin(phase * 6);
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r + 4 + pulse * 5, 0, Math.PI * 2);
+          ctx.strokeStyle = alpha(C.crit, 0.35 + pulse * 0.6);
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+          ctx.fillStyle = alpha(C.crit, 0.4 + pulse * 0.6);
+          ctx.fill();
+        }
         const kind = shortName(d);
         const name = kind.length > 22 ? `${kind.slice(0, 21)}…` : kind;
         const rate = idle ? 'sem tráfego' : `${fmt(d.val)} Mbps`;

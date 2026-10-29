@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Shield, ShieldAlert, ShieldCheck, Lock, Unlock, Server, Activity, Globe, Trash2, Terminal, Radar, Ban, Mail, X, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { api } from '../services/api';
 import { ActionButton, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
+import { Badge, Button, ConfirmDialog, DataTable, Kpi, KpiRow, Notice, PageHeader, Panel, RiskItem, RiskZone, Tabs, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
+
+const SECURITY_TABS = [
+    { key: 'firewall', label: 'Firewall' },
+    { key: 'ataques', label: 'Bloqueio de ataques' },
+    { key: 'email', label: 'Notificações por e-mail' },
+];
 
 const defaultSmtpForm = {
     host: '',
@@ -231,17 +238,21 @@ function SmtpModal({ open, onClose }) {
 }
 
 export default function Security() {
+    const [tab, setTab] = useUrlTab(SECURITY_TABS, 'firewall');
     const [data, setData] = useState({
         ufw: { active: false, installed: true, runtime_source: 'ufw', message: '', rules: [] },
         fail2ban: { active: false, currently_banned: 0, total_banned: 0, banned_ips: [] },
         public_ips: [],
-        sentinel_metrics: { top_ports: [], top_ips: [] }
+        sentinel_metrics: { top_ports: [], top_ips: [] },
     });
-    const [loading, setLoading] = useState(false);
     const [banIp, setBanIp] = useState('');
     const [smtpModalOpen, setSmtpModalOpen] = useState(false);
-    const [smtpSummary, setSmtpSummary] = useState(defaultSmtpForm);
-    const [smtpSummaryError, setSmtpSummaryError] = useState('');
+    const [smtp, setSmtp] = useState(defaultSmtpForm);
+    const [smtpError, setSmtpError] = useState('');
+    const [ruleFilter, setRuleFilter] = useState('');
+    const [dialog, setDialog] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [dialogError, setDialogError] = useState('');
 
     const load = async () => {
         try {
@@ -255,317 +266,173 @@ export default function Security() {
             }));
         } catch {}
     };
-
-    const loadSmtpSummary = async () => {
+    const loadSmtp = async () => {
         try {
             const res = await api.get('/api/security/smtp');
-            setSmtpSummary({ ...defaultSmtpForm, ...res.data });
-            setSmtpSummaryError('');
+            setSmtp({ ...defaultSmtpForm, ...res.data });
+            setSmtpError('');
         } catch (error) {
-            setSmtpSummary({ ...defaultSmtpForm });
-            setSmtpSummaryError(error?.response?.data?.error || 'Falha ao carregar a configuração SMTP.');
+            setSmtp({ ...defaultSmtpForm });
+            setSmtpError(errorMessage(error, 'Falha ao carregar a configuração de e-mail.'));
+        }
+    };
+    useEffect(() => { load(); loadSmtp(); const i = setInterval(load, 10000); return () => clearInterval(i); }, []);
+
+    const run = async (fn, ok) => {
+        setBusy(true);
+        setDialogError('');
+        try {
+            await fn();
+            toast(ok);
+            setDialog(null);
+            load();
+        } catch (error) {
+            setDialogError(errorMessage(error));
+        } finally {
+            setBusy(false);
         }
     };
 
-    useEffect(() => {
-        load();
-        loadSmtpSummary();
-        const i = setInterval(load, 5000);
-        return () => clearInterval(i);
-    }, []);
+    const banned = data.fail2ban.banned_ips || [];
+    const ask = (config) => { setDialogError(''); setDialog(config); };
+    const askBan = (ip) => ask({ title: `Bloquear o IP ${ip}`, description: 'O IP fica bloqueado pelo Fail2ban e não acessa mais o servidor.', tone: 'danger', confirmLabel: 'Bloquear', onConfirm: () => run(async () => { await api.post('/api/security/f2b/ban', { ip }); setBanIp(''); }, `${ip} bloqueado.`) });
+    const askUnban = (ip) => ask({ title: `Desbloquear o IP ${ip}`, description: 'O IP volta a poder tentar acesso ao servidor.', confirmLabel: 'Desbloquear', onConfirm: () => run(() => api.post('/api/security/f2b/unban', { ip }), `${ip} desbloqueado.`) });
+    const askDeleteRule = (r) => ask({ title: `Excluir a regra ${r.id} do firewall`, description: `${r.action} ${r.to} vindo de ${r.from}. A mudança vale na hora.`, tone: 'danger', confirmLabel: 'Excluir regra', onConfirm: () => run(() => api.post('/api/security/ufw/delete', { id: r.id }), `Regra ${r.id} excluída.`) });
+    const askHardening = () => ask({ title: 'Aplicar a blindagem do SSH', description: 'Abre o SSH externo na porta 18122, restringe a porta 22 à rede interna e à VPN e fecha a 22 para a internet. Se você estiver conectado pela 22 de fora, vai perder a conexão.', tone: 'danger', minReason: 10, reasonLabel: 'Motivo', confirmLabel: 'Aplicar blindagem', onConfirm: () => run(() => api.post('/api/security/setup-cockpit'), 'Blindagem aplicada.') });
 
-    const handleBlindagem = async () => {
-        if (!confirm('Isso aplicara as regras: SSH Ext (18122), SSH Int (22) restrito a LAN/VPN e fechara a 22 na WAN. Confirmar?')) return;
-        setLoading(true);
-        try {
-            await api.post('/api/security/setup-cockpit');
-            alert('Blindagem V8 aplicada com sucesso.');
-            load();
-        } catch (error) {
-            alert(error?.response?.data?.error || 'Erro ao aplicar blindagem.');
-        }
-        setLoading(false);
-    };
-
-    const handleUnban = async (ip) => {
-        if (!confirm(`Perdoar e remover banimento de ${ip}?`)) return;
-        try {
-            await api.post('/api/security/f2b/unban', { ip });
-            load();
-        } catch {}
-    };
-
-    const handleBan = async () => {
-        if (!banIp) return;
-        try {
-            await api.post('/api/security/f2b/ban', { ip: banIp });
-            setBanIp('');
-            load();
-        } catch {}
-    };
-
-    const handleBanSpecific = async (ip) => {
-        if (!confirm(`Bloquear imediatamente o IP hostil ${ip}?`)) return;
-        try {
-            await api.post('/api/security/f2b/ban', { ip });
-            load();
-        } catch {}
-    };
-
-    const deleteRule = async (id) => {
-        if (!confirm(`Excluir regra UFW [${id}]?`)) return;
-        if (data.ufw.runtime_source !== 'ufw') return;
-        try {
-            await api.post('/api/security/ufw/delete', { id });
-            load();
-        } catch (error) {
-            alert(error?.response?.data?.error || 'Erro ao excluir regra.');
-        }
-    };
+    const rules = (data.ufw.rules || []).filter((r) => !ruleFilter || `${r.id} ${r.to} ${r.from} ${r.action}`.toLowerCase().includes(ruleFilter.toLowerCase()));
+    const onlinePublic = (data.public_ips || []).filter((ip) => ip.online).length;
 
     return (
-        <>
-            <div className="space-y-8 pb-20 animate-in fade-in duration-500">
-                <ModuleHeader
-                    eyebrow="Controle"
-                    title="Segurança Operacional"
-                    description="Firewall, fail2ban, resposta rápida, sentinela de ataque e trilha de regras ativas em uma linguagem mais adequada à gestão institucional do ambiente."
-                    badges={(
-                        <>
-                            <StatusChip label="Enforcement local" tone="primary" />
-                            <StatusChip label="Resposta imediata" tone="warning" />
-                            <StatusChip label="Firewall e banimento" tone="neutral" />
-                        </>
-                    )}
-                    actions={(
-                        <ActionButton tone="primary" icon={loading ? Activity : ShieldCheck} onClick={handleBlindagem} disabled={loading}>
-                            {loading ? 'Aplicando blindagem...' : 'Aplicar blindagem'}
-                        </ActionButton>
-                    )}
-                />
+        <div className="space-y-4">
+            <PageHeader title="Segurança" description="Firewall do servidor, bloqueio de ataques e notificações por e-mail." />
+            <KpiRow>
+                <Kpi icon={Shield} label="Firewall (UFW)" value={data.ufw.active ? 'Ativo' : 'Atenção'} tone={data.ufw.active ? 'success' : 'danger'} sub={`${(data.ufw.rules || []).length} regras · fonte ${data.ufw.runtime_source === 'iptables' ? 'iptables' : 'ufw'}`} />
+                <Kpi icon={Lock} label="IPs bloqueados agora" value={data.fail2ban.currently_banned ?? 0} tone={data.fail2ban.currently_banned ? 'warning' : 'success'} sub={`${data.fail2ban.total_banned ?? 0} bloqueios no histórico`} />
+                <Kpi icon={Radar} label="Origens hostis recentes" value={(data.sentinel_metrics?.top_ips || []).length} sub="Tentativas barradas pelo firewall" />
+                <Kpi icon={Globe} label="IPs públicos" value={(data.public_ips || []).length ? `${onlinePublic}/${data.public_ips.length}` : '—'} tone={onlinePublic === (data.public_ips || []).length ? 'success' : 'danger'} sub="Respondendo" />
+            </KpiRow>
+            {data.ufw.message ? <Notice tone="warning">{data.ufw.message}</Notice> : null}
+            <Tabs tabs={SECURITY_TABS.map((t) => (t.key === 'ataques' ? { ...t, count: banned.length || null } : t))} value={tab} onChange={setTab} />
 
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-                    <div className="space-y-6">
-                        <Surface className="p-6">
-                            <div className="flex items-start justify-between gap-4">
-                                <div>
-                                    <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">SMTP institucional</p>
-                                    <h3 className="mt-1 text-xl font-black text-on-surface">
-                                        {smtpSummary.is_active ? 'Notificações habilitadas' : 'Notificações inativas'}
-                                    </h3>
-                                    <p className="mt-2 text-xs leading-5 text-on-surface/62">
-                                        {smtpSummary.host ? `${smtpSummary.host}:${smtpSummary.port}` : 'Servidor SMTP ainda não configurado.'}
-                                    </p>
-                                </div>
-                                <div className="rounded-2xl bg-primary/10 p-4 text-primary">
-                                    <Mail size={28} />
-                                </div>
-                            </div>
-
-                            <div className="mt-4 flex flex-wrap gap-2">
-                                <StatusChip label={smtpSummary.is_active ? 'Ativo' : 'Inativo'} tone={smtpSummary.is_active ? 'success' : 'warning'} />
-                                <StatusChip label={smtpSummary.requires_auth ? 'Com autenticação' : 'Sem autenticação'} tone="primary" />
-                                <StatusChip label={smtpSummary.has_password ? 'Senha salva' : 'Sem senha'} tone={smtpSummary.has_password ? 'success' : 'warning'} />
-                            </div>
-
-                            <div className="mt-4 space-y-2 text-xs text-on-surface/72">
-                                <div>Usuário: <span className="font-mono">{smtpSummary.username || 'não definido'}</span></div>
-                                <div>Remetente: <span className="font-mono">{smtpSummary.from_email || 'não definido'}</span></div>
-                                <div>Destino padrão: <span className="font-mono">{smtpSummary.to_email || 'não definido'}</span></div>
-                            </div>
-
-                            {smtpSummaryError ? (
-                                <div className="mt-4 rounded-2xl border border-danger/20 bg-danger/10 px-4 py-3 text-xs text-danger">
-                                    {smtpSummaryError}
-                                </div>
-                            ) : null}
-
-                            <div className="mt-5 flex flex-wrap gap-2">
-                                <ActionButton tone="ghost" icon={RefreshCw} onClick={loadSmtpSummary}>
-                                    Recarregar SMTP
-                                </ActionButton>
-                                <ActionButton tone="primary" icon={Mail} onClick={() => setSmtpModalOpen(true)}>
-                                    Configurar SMTP
-                                </ActionButton>
-                            </div>
-                        </Surface>
-
-                        <Surface className="p-6">
-                            <div className="flex items-center justify-between gap-4">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Firewall UFW</p>
-                                <h3 className={`text-xl font-black ${data.ufw.active ? 'text-info' : 'text-danger'}`}>
-                                    {data.ufw.active ? (data.ufw.installed ? 'Ativo e blindado' : 'Runtime ativo') : 'Requer atenção'}
-                                </h3>
-                                <p className="mt-1 text-[10px] uppercase tracking-wide text-on-surface/50">
-                                    Fonte: {data.ufw.runtime_source === 'iptables' ? 'iptables' : 'ufw'}
-                                </p>
-                            </div>
-                            <div className={`rounded-2xl p-4 ${data.ufw.active ? 'bg-info/10 text-info' : 'bg-danger/10 text-danger'}`}>
-                                {data.ufw.active ? <Shield size={28} /> : <ShieldAlert size={28} />}
-                            </div>
-                            </div>
-                            {data.ufw.message ? (
-                                <div className="mt-4 rounded-2xl border border-warning/20 bg-warning/10 px-4 py-3 text-xs text-warning">
-                                    {data.ufw.message}
-                                </div>
-                            ) : null}
-                        </Surface>
-
-                        <Surface className="flex items-center justify-between p-6">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase opacity-60 text-on-surface">Fail2Ban (SSHD)</p>
-                                <h3 className="text-xl font-black text-on-surface"><span className="text-danger">{data.fail2ban.currently_banned}</span> IPs bloqueados</h3>
-                                <p className="text-[10px] text-on-surface opacity-40">Historico de {data.fail2ban.total_banned} banimentos</p>
-                            </div>
-                            <div className="rounded-2xl bg-danger/10 p-4 text-danger">
-                                <Lock size={28} />
-                            </div>
-                        </Surface>
-
-                        <Surface className="p-6">
-                            <div className="mb-4 flex items-center justify-between">
-                                <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-primary"><Ban size={18} /> Resposta rapida</h3>
-                                <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Manual</span>
-                            </div>
-                            <div className="flex gap-2">
-                                <input value={banIp} onChange={(e) => setBanIp(e.target.value)} placeholder="IP suspeito" className="flex-1 rounded-xl border border-outline/20 bg-surface p-3 text-xs text-on-surface outline-none focus:ring-2 focus:ring-primary" />
-                                <button onClick={handleBan} className="rounded-xl bg-danger px-4 text-xs font-black uppercase text-white transition-all hover:opacity-90">Banir</button>
-                            </div>
-                        </Surface>
-
-                        <Surface className="p-6">
-                            <div className="mb-4 flex items-center justify-between">
-                                <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-info"><Globe size={18} /> IPs publicos</h3>
-                                <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Monitorados</span>
-                            </div>
-                            <div className="space-y-2">
-                                {(data.public_ips || []).map((ip) => (
-                                    <div key={ip.ip} className="group flex items-center justify-between rounded-xl border border-outline/10 bg-surface p-3 transition-colors hover:border-outline/30">
-                                        <div className="flex items-center gap-3">
-                                            <span className={`h-2.5 w-2.5 rounded-full ${ip.online ? 'bg-info' : 'bg-danger'}`} />
-                                            <span className="font-mono text-xs text-on-surface">{ip.ip}</span>
-                                        </div>
-                                        <span className={`rounded-full px-2.5 py-1 text-[9px] font-black uppercase ${ip.online ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>{ip.online ? 'ONLINE' : 'OFFLINE'}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </Surface>
-
-                        <Surface className="p-6">
-                            <div className="mb-4 flex items-center justify-between">
-                                <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-orange-500"><Unlock size={18} /> Bans atuais</h3>
-                                <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">{data.fail2ban.banned_ips.length} IPs</span>
-                            </div>
-                            <div className="space-y-2">
-                                {data.fail2ban.banned_ips.length === 0 ? (
-                                    <p className="py-4 text-center text-xs italic text-on-surface opacity-40">Nenhum IP bloqueado no momento.</p>
-                                ) : (
-                                    data.fail2ban.banned_ips.map((ip) => (
-                                        <div key={ip} className="group flex items-center justify-between rounded-xl border border-outline/10 bg-surface p-3 transition-colors hover:border-outline/30">
-                                            <div className="flex items-center gap-3">
-                                                <Lock size={14} className="text-danger" />
-                                                <span className="font-mono text-xs text-on-surface">{ip}</span>
-                                            </div>
-                                            <button onClick={() => handleUnban(ip)} className="rounded-lg bg-info/10 px-3 py-1.5 text-[9px] font-black uppercase text-info opacity-0 transition-all group-hover:opacity-100 hover:bg-info hover:text-white">
-                                                <Unlock size={12} className="inline" /> Perdoar
-                                            </button>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                        </Surface>
-
-                        <Surface className="flex flex-col p-6">
-                            <h3 className="mb-6 flex items-center gap-2 text-sm font-bold uppercase text-orange-500"><Radar size={18} /> Sentinela: vetores observados</h3>
-                            <div className="grid flex-1 grid-cols-1 gap-6 sm:grid-cols-2">
-                                <div>
-                                    <span className="mb-3 block text-[10px] font-bold uppercase opacity-50 text-on-surface">Portas alvo</span>
-                                    {(!data.sentinel_metrics?.top_ports || data.sentinel_metrics.top_ports.length === 0) ? (
-                                        <p className="text-xs italic opacity-40">Sem registros recentes.</p>
-                                    ) : (
-                                        data.sentinel_metrics.top_ports.map((p, i) => (
-                                            <div key={i} className="mb-2 flex items-center justify-between border-b border-outline/10 pb-2 font-mono text-xs last:border-0">
-                                                <span className="font-bold text-on-surface">Porta {p.port}</span>
-                                                <span className="rounded bg-orange-500/10 px-2 py-0.5 font-black text-orange-500">{p.count}x</span>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
-                                <div>
-                                    <span className="mb-3 block text-[10px] font-bold uppercase opacity-50 text-on-surface">Origens hostis</span>
-                                    {(!data.sentinel_metrics?.top_ips || data.sentinel_metrics.top_ips.length === 0) ? (
-                                        <p className="text-xs italic opacity-40">Sem registros recentes.</p>
-                                    ) : (
-                                        data.sentinel_metrics.top_ips.map((p, i) => {
-                                            const isBanned = data.fail2ban.banned_ips.includes(p.ip);
-                                            return (
-                                                <div key={i} className="group mb-2 flex items-center justify-between border-b border-outline/10 pb-2 font-mono text-xs last:border-0">
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="max-w-[90px] truncate text-on-surface" title={p.ip}>{p.ip}</span>
-                                                        <span className="rounded bg-danger/10 px-1.5 py-0.5 text-[9px] font-black text-danger">{p.count}x</span>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => isBanned ? handleUnban(p.ip) : handleBanSpecific(p.ip)}
-                                                        className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[9px] font-black uppercase shadow-sm transition-all ${isBanned ? 'bg-danger text-white hover:bg-danger/80' : 'bg-info text-white hover:bg-info/80'}`}
-                                                    >
-                                                        {isBanned ? <Lock size={10} /> : <Ban size={10} />}
-                                                        {isBanned ? 'BLOQUEADO' : 'BLOQUEAR'}
-                                                    </button>
-                                                </div>
-                                            );
-                                        })
-                                    )}
-                                </div>
-                            </div>
-                        </Surface>
-                    </div>
-
-                    <Surface className="flex min-h-[500px] flex-col p-6 lg:col-span-2">
-                        <div className="mb-6 flex items-center justify-between">
-                            <h3 className="flex items-center gap-2 text-sm font-bold uppercase text-blue-500"><Terminal size={18} /> Regras ativas do firewall</h3>
-                            <span className="text-[10px] font-bold uppercase opacity-50 text-on-surface">Total: {data.ufw.rules.length}</span>
-                        </div>
-
-                        <div className="custom-scrollbar flex-1 space-y-2 overflow-y-auto pr-2">
-                            {data.ufw.rules.length === 0 ? (
-                                <p className="py-10 text-center text-xs italic text-on-surface opacity-50">Nenhuma regra ativa no momento.</p>
-                            ) : (
-                                data.ufw.rules.map((r, i) => (
-                                    <div key={i} className="group flex items-center justify-between rounded-xl border border-outline/10 bg-surface p-3 transition-colors hover:border-outline/40">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-8 text-center text-[10px] font-bold opacity-30">[{r.id}]</div>
-                                            <div>
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-sm font-bold text-on-surface">{r.to}</span>
-                                                    <span className={`rounded px-2 py-0.5 text-[9px] font-black uppercase tracking-widest ${r.action === 'ALLOW' ? 'bg-info/20 text-info' : 'bg-danger/20 text-danger'}`}>
-                                                        {r.action}
-                                                    </span>
-                                                </div>
-                                                <div className="mt-1 text-[10px] font-mono text-on-surface opacity-50">Origem: {r.from}</div>
-                                            </div>
-                                        </div>
-                                        {r.source === 'ufw' ? (
-                                            <button onClick={() => deleteRule(r.id)} className="rounded-lg p-2 text-on-surface opacity-30 transition-all hover:bg-danger/10 hover:text-danger hover:opacity-100">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        ) : (
-                                            <span className="rounded-lg border border-outline/10 px-2.5 py-1 text-[9px] font-black uppercase text-on-surface/40">
-                                                runtime
-                                            </span>
-                                        )}
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </Surface>
+            {tab === 'firewall' ? (
+                <div className="space-y-4">
+                    <Panel title="Regras do firewall" description="Regras ativas no UFW. As marcadas como do sistema são aplicadas pelo SGCG e não podem ser excluídas aqui." padded={false}
+                        actions={<input aria-label="Filtrar regras" className={`${inputCls} w-56`} value={ruleFilter} onChange={(e) => setRuleFilter(e.target.value)} placeholder="Filtrar regras" />}>
+                        <DataTable
+                            rowKey={(r) => `${r.id}-${r.to}-${r.from}`}
+                            rows={rules}
+                            empty="Nenhuma regra encontrada."
+                            columns={[
+                                { key: 'id', label: 'Nº', mono: true, width: 56, render: (r) => r.id },
+                                { key: 'to', label: 'Porta / destino', render: (r) => <span className="tabular font-medium text-on-surface">{r.to}</span> },
+                                { key: 'action', label: 'Ação', render: (r) => (r.action === 'ALLOW' ? <Badge tone="success">Permite</Badge> : <Badge tone="danger">{r.action === 'DENY' ? 'Nega' : r.action}</Badge>) },
+                                { key: 'from', label: 'Origem', mono: true, render: (r) => r.from },
+                                { key: 'a', label: '', align: 'right', render: (r) => (r.source === 'ufw' ? <Button variant="ghost" icon={Trash2} onClick={() => askDeleteRule(r)}>Excluir</Button> : <Badge>Do sistema</Badge>) },
+                            ]}
+                        />
+                    </Panel>
+                    <RiskZone description="Muda o acesso remoto ao servidor.">
+                        <RiskItem title="Blindagem do SSH" description="SSH externo na 18122, porta 22 só para a rede interna e a VPN." action={<Button variant="danger-soft" icon={ShieldCheck} onClick={askHardening}>Aplicar</Button>} />
+                    </RiskZone>
                 </div>
-            </div>
+            ) : null}
 
-            <SmtpModal open={smtpModalOpen} onClose={() => {
-                setSmtpModalOpen(false);
-                loadSmtpSummary();
-            }} />
-        </>
+            {tab === 'ataques' ? (
+                <div className="space-y-4">
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        <Panel title={`IPs bloqueados (${banned.length})`} padded={false}
+                            actions={(
+                                <form onSubmit={(e) => { e.preventDefault(); if (banIp.trim()) askBan(banIp.trim()); }} className="flex gap-2">
+                                    <input aria-label="IP para bloquear" className={`${inputCls} tabular w-40`} value={banIp} onChange={(e) => setBanIp(e.target.value)} placeholder="IP suspeito" />
+                                    <Button type="submit" variant="danger-soft" icon={Ban} disabled={!banIp.trim()}>Bloquear</Button>
+                                </form>
+                            )}>
+                            <DataTable
+                                rowKey={(ip) => ip}
+                                rows={banned}
+                                empty="Nenhum IP bloqueado agora."
+                                columns={[
+                                    { key: 'ip', label: 'IP', mono: true, render: (ip) => ip },
+                                    { key: 'a', label: '', align: 'right', render: (ip) => <Button variant="ghost" icon={Unlock} onClick={() => askUnban(ip)}>Desbloquear</Button> },
+                                ]}
+                            />
+                        </Panel>
+                        <Panel title="Origens das tentativas" description="IPs que mais tentaram acessar o servidor e foram barrados." padded={false}>
+                            <DataTable
+                                rowKey="ip"
+                                rows={data.sentinel_metrics?.top_ips || []}
+                                empty="Sem tentativas recentes."
+                                columns={[
+                                    { key: 'ip', label: 'IP', mono: true, render: (p) => p.ip },
+                                    { key: 'c', label: 'Tentativas', mono: true, render: (p) => p.count },
+                                    { key: 'a', label: '', align: 'right', render: (p) => (banned.includes(p.ip) ? <Button variant="ghost" icon={Unlock} onClick={() => askUnban(p.ip)}>Desbloquear</Button> : <Button variant="danger-soft" icon={Ban} onClick={() => askBan(p.ip)}>Bloquear</Button>) },
+                                ]}
+                            />
+                        </Panel>
+                    </div>
+                    <div className="grid gap-4 xl:grid-cols-2">
+                        <Panel title="Portas mais visadas" padded={false}>
+                            <DataTable
+                                rowKey="port"
+                                rows={data.sentinel_metrics?.top_ports || []}
+                                empty="Sem registros recentes."
+                                columns={[
+                                    { key: 'p', label: 'Porta', mono: true, render: (p) => p.port },
+                                    { key: 'c', label: 'Tentativas', mono: true, render: (p) => p.count },
+                                ]}
+                            />
+                        </Panel>
+                        <Panel title="IPs públicos do servidor" padded={false}>
+                            <DataTable
+                                rowKey="ip"
+                                rows={data.public_ips || []}
+                                empty="Nenhum IP público monitorado."
+                                columns={[
+                                    { key: 'ip', label: 'IP', mono: true, render: (p) => p.ip },
+                                    { key: 's', label: 'Situação', render: (p) => (p.online ? <Badge tone="success" dot>Respondendo</Badge> : <Badge tone="danger" dot>Sem resposta</Badge>) },
+                                ]}
+                            />
+                        </Panel>
+                    </div>
+                </div>
+            ) : null}
+
+            {tab === 'email' ? (
+                <Panel title="Notificações por e-mail" description="Servidor de e-mail usado para alertas e avisos do SGCG." actions={<><Button icon={RefreshCw} onClick={loadSmtp}>Recarregar</Button><Button variant="primary" icon={Mail} onClick={() => setSmtpModalOpen(true)}>Configurar</Button></>}>
+                    {smtpError ? <Notice tone="danger">{smtpError}</Notice> : null}
+                    <dl className="grid gap-3 text-[13px] sm:grid-cols-2 lg:grid-cols-3">
+                        {[
+                            ['Situação', smtp.is_active ? <Badge tone="success" dot>Ativo</Badge> : <Badge tone="warning" dot>Inativo</Badge>],
+                            ['Servidor', smtp.host ? `${smtp.host}:${smtp.port}` : 'Não configurado'],
+                            ['Autenticação', smtp.requires_auth ? 'Com usuário e senha' : 'Sem autenticação'],
+                            ['Usuário', smtp.username || '—'],
+                            ['Remetente', smtp.from_email || '—'],
+                            ['Destino padrão', smtp.to_email || '—'],
+                        ].map(([k, v]) => (
+                            <div key={k} className="rounded-lg border border-outline p-3">
+                                <dt className="text-[11.5px] text-on-surface/50">{k}</dt>
+                                <dd className="mt-0.5 font-medium text-on-surface">{v}</dd>
+                            </div>
+                        ))}
+                    </dl>
+                </Panel>
+            ) : null}
+
+            <ConfirmDialog
+                open={Boolean(dialog)}
+                title={dialog?.title}
+                description={dialog?.description}
+                tone={dialog?.tone}
+                confirmLabel={dialog?.confirmLabel}
+                minReason={dialog?.minReason || 0}
+                reasonLabel={dialog?.reasonLabel}
+                busy={busy}
+                error={dialogError}
+                onClose={() => !busy && setDialog(null)}
+                onConfirm={(reason) => dialog?.onConfirm?.(reason)}
+            />
+            <SmtpModal open={smtpModalOpen} onClose={() => { setSmtpModalOpen(false); loadSmtp(); }} />
+        </div>
     );
 }

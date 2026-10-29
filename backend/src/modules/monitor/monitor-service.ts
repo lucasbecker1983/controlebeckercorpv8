@@ -175,6 +175,10 @@ class MonitorService {
         const dns = setInterval(() => this.refreshDnsMap().catch(() => null), 30000);
         dns.unref?.();
         this.refreshDnsMap().catch(() => null);
+        // Varredura de presença: todo aparelho ligado responde ARP, mesmo sem tráfego.
+        const sweep = setInterval(() => this.sweepPresence().catch(() => null), 120000);
+        sweep.unref?.();
+        setTimeout(() => this.sweepPresence().catch(() => null), 5000).unref?.();
         const traffic = setInterval(() => this.collectTraffic().catch(() => null), TRAFFIC_MS);
         traffic.unref?.();
         setTimeout(() => this.collectTraffic().catch(() => null), 3000).unref?.();
@@ -419,6 +423,32 @@ class MonitorService {
         } catch {}
     }
 
+    private sweeping = false;
+
+    private async sweepPresence() {
+        if (this.sweeping) return;
+        this.sweeping = true;
+        try {
+            const subnets = this.listVlanIfaces().map(({ id }) => `192.168.${id}.0/24`).join(' ');
+            if (!subnets) return;
+            const out = await execCmd(`sudo nmap -sn -n --min-rate 1000 ${subnets}`);
+            const now = Date.now();
+            let current: string | null = null;
+            for (const line of out.split('\n')) {
+                const ip = line.match(/Nmap scan report for (\d+\.\d+\.\d+\.\d+)/)?.[1];
+                if (ip) {
+                    current = ip;
+                    if (!ip.endsWith('.1')) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
+                    continue;
+                }
+                const mac = line.match(/MAC Address: ([0-9A-F:]{17})/i)?.[1];
+                if (mac && current && !current.endsWith('.1')) this.seen.set(current, { mac: mac.toLowerCase(), at: now });
+            }
+        } finally {
+            this.sweeping = false;
+        }
+    }
+
     private async readInternet() {
         const snapshot: any = await getLinkSentinelSnapshot();
         this.internet = {
@@ -570,7 +600,7 @@ class MonitorService {
                 }
             }
             // Todos os dispositivos conectados: tabela ARP, IPs ativos no DHCP e quem teve tráfego.
-            // Quem some fica 30 minutos na lista, para o mapa não mudar a cada coleta.
+            // Quem para de responder sai da lista depois de 10 minutos (desligou ou saiu da rede).
             const now = Date.now();
             const managed = new Set(this.listVlanIfaces().map((v) => v.id));
             for (const n of this.neighborList) {
@@ -579,7 +609,7 @@ class MonitorService {
             for (const l of this.activeLeases) this.seen.set(l.ip, { mac: l.mac, at: now });
             for (const ip of devices.keys()) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
             for (const [ip, info] of this.seen) {
-                if (now - info.at > 30 * 60 * 1000) { this.seen.delete(ip); continue; }
+                if (now - info.at > 10 * 60 * 1000) { this.seen.delete(ip); continue; }
                 const id = vlanOfIp(ip);
                 if (!id || !managed.has(id) || ip.endsWith('.1')) continue;
                 const existing = devices.get(ip);
@@ -742,6 +772,26 @@ class MonitorService {
         };
         this.dnsCache = { at: Date.now(), data };
         return data;
+    }
+
+    async getDeviceDns(ip: string, minutes = 120) {
+        const [events, top] = await Promise.all([
+            pool.query(
+                `SELECT occurred_at, query_name AS domain, query_type, action, category, policy_source, identity_user, identity_computer
+                 FROM dns_policy_events
+                 WHERE client_ip = $1::inet AND occurred_at > NOW() - ($2 || ' minutes')::interval
+                 ORDER BY occurred_at DESC LIMIT 400`,
+                [ip, String(minutes)],
+            ),
+            pool.query(
+                `SELECT query_name AS domain, COUNT(*)::int AS total, COUNT(*) FILTER (WHERE action = 'blocked')::int AS blocked
+                 FROM dns_policy_events
+                 WHERE client_ip = $1::inet AND occurred_at > NOW() - ($2 || ' minutes')::interval
+                 GROUP BY 1 ORDER BY 2 DESC LIMIT 15`,
+                [ip, String(minutes)],
+            ),
+        ]);
+        return { ip, minutes, name: this.nameFor(ip), events: events.rows, top_domains: top.rows };
     }
 
     async getAlerts() {

@@ -39,6 +39,18 @@ router.get('/dns-summary', async (_req, res) => {
     }
 });
 
+router.get('/dns-device', async (req, res) => {
+    const ip = String(req.query.ip || '').trim();
+    if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return res.status(400).json({ error: 'IP inválido.' });
+    const minutes = Math.min(1440, Math.max(5, Number(req.query.minutes) || 120));
+    try {
+        res.json(await monitorService.getDeviceDns(ip, minutes));
+    } catch (error) {
+        console.error('[MONITOR] Falha no DNS por dispositivo:', error);
+        res.status(500).json({ error: 'Falha ao ler as consultas do dispositivo.' });
+    }
+});
+
 router.get('/alerts', async (_req, res) => {
     try {
         res.json({ alerts: await monitorService.getAlerts() });

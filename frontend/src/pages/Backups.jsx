@@ -1,141 +1,167 @@
-import React, { useState, useEffect } from 'react';
-import { Database, Download, Trash2, RefreshCcw, Save } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download, History, Plus, RotateCcw, Trash2 } from 'lucide-react';
 import { api } from '../services/api';
-import { ActionButton, ModuleHeader, Surface } from '../components/ui/primitives';
+import { Button, ConfirmDialog, DataTable, Kpi, KpiRow, Notice, PageHeader, Panel, errorMessage, toast } from '../components/ui/kit';
+
+const JOB_LABEL = { running: 'Em andamento', success: 'Concluído', failed: 'Falhou', rolled_back: 'Desfeito' };
+const JOB_TONE = { running: 'primary', success: 'success', failed: 'danger', rolled_back: 'warning' };
 
 export default function Backups() {
-    const [files, setFiles] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [job, setJob] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [job, setJob] = useState(null);
+  const [dialog, setDialog] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [dialogError, setDialogError] = useState('');
 
-    const load = async () => { try { const res = await api.get('/api/backups'); setFiles(Array.isArray(res.data) ? res.data : []); } catch (e) { setFiles([]); } };
-    useEffect(() => { load(); }, []);
+  const load = () => api.get('/api/backups').then((r) => setFiles(Array.isArray(r.data) ? r.data : [])).catch(() => setFiles([]));
+  useEffect(() => { load(); }, []);
 
-    useEffect(() => {
-        if (!job?.id || !['running'].includes(job.status)) return undefined;
-        const interval = window.setInterval(async () => {
-            try {
-                const response = await api.get(`/api/backups/jobs/${job.id}`);
-                setJob(response.data);
-                if (response.data.status !== 'running') {
-                    setLoading(false);
-                    if (response.data.status === 'success') await load();
-                }
-            } catch (_) {
-                // A tarefa continua no servidor mesmo se a consulta de progresso falhar momentaneamente.
-            }
-        }, 3000);
-        return () => window.clearInterval(interval);
-    }, [job?.id, job?.status]);
-
-    const create = async () => {
-        if(!confirm("Gerar NOVO backup consistente (código, dados persistentes e banco)? Dependências e builds serão excluídos.")) return;
-        setLoading(true);
-        try {
-            const response = await api.post('/api/backups/create');
-            setJob(response.data.job);
-        } catch(e) {
-            const current = e?.response?.data?.job;
-            if (current) setJob(current);
-            else alert(e?.response?.data?.error || 'Erro ao iniciar backup.');
-            setLoading(false);
+  useEffect(() => {
+    if (!job?.id || job.status !== 'running') return undefined;
+    const t = window.setInterval(async () => {
+      try {
+        const r = await api.get(`/api/backups/jobs/${job.id}`);
+        setJob(r.data);
+        if (r.data.status !== 'running') {
+          toast(r.data.status === 'success' ? `${r.data.kind === 'restore' ? 'Restauração' : 'Backup'} concluído.` : r.data.message || 'A tarefa terminou com falha.', r.data.status === 'success' ? 'success' : 'danger');
+          if (r.data.status === 'success') load();
         }
-    };
+      } catch {
+        // a tarefa continua no servidor mesmo se a consulta falhar
+      }
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [job?.id, job?.status]);
 
-    const restore = async (filename) => {
-        const warning = [
-            `RESTAURAR o backup ${filename}?`,
-            'O SGCG ficará em manutenção durante a operação.',
-            'Antes de alterar, o sistema cria um snapshot local de rollback do código e do banco atuais.',
-            'A restauração recompõe banco, dependências, builds e somente os serviços SGCG.',
-        ].join('\n\n');
-        if (!confirm(warning)) return;
-        if (!confirm('Confirma a restauração deste backup? Esta ação substitui o estado atual após o snapshot de segurança.')) return;
-        setLoading(true);
-        try {
-            const response = await api.post('/api/backups/restore', { filename });
-            setJob(response.data.job);
-        } catch (e) {
-            const current = e?.response?.data?.job;
-            if (current) setJob(current);
-            else alert(e?.response?.data?.error || 'Erro ao iniciar restauração.');
-            setLoading(false);
-        }
-    };
+  const running = job?.status === 'running';
 
-    const remove = async (filename) => {
-        if(!confirm(`EXCLUIR PERMANENTEMENTE o arquivo ${filename}?`)) return;
-        try { await api.post('/api/backups/delete', { filename }); load(); } catch(e) {}
-    };
+  const start = async (fn) => {
+    setBusy(true);
+    setDialogError('');
+    try {
+      const r = await fn();
+      setJob(r.data.job);
+      setDialog(null);
+    } catch (e) {
+      const current = e?.response?.data?.job;
+      if (current) { setJob(current); setDialog(null); } else setDialogError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-    const download = async (filename) => {
-        try {
-            const res = await api.post('/api/backups/download', { filename }, { responseType: 'blob' });
-            const url = window.URL.createObjectURL(new Blob([res.data]));
-            const link = document.createElement('a'); link.href = url; link.setAttribute('download', filename);
-            document.body.appendChild(link); link.click(); link.remove();
-        } catch(e) { alert("Erro no download."); }
-    };
+  const askCreate = () => setDialog({
+    title: 'Gerar backup agora',
+    description: 'Copia o código, os dados e o banco do SGCG. Dependências e builds ficam de fora. Leva alguns minutos e roda em segundo plano.',
+    confirmLabel: 'Gerar backup',
+    onConfirm: () => start(() => api.post('/api/backups/create')),
+  });
 
-    return (
-        <div className="space-y-8 animate-in fade-in duration-500">
-            <ModuleHeader
-                eyebrow="Controle"
-                title="Continuidade & Backup"
-                description="Gerencie salvaguardas operacionais do ambiente, preservando a recuperação técnica e a continuidade de serviços essenciais do SGCG."
-                badges={[
-                    <span key="arquivos" className="inline-flex min-h-[var(--chip-height)] items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[10px] font-black uppercase tracking-[0.16em] text-primary">
-                        {files.length} artefatos no cofre
-                    </span>,
-                ]}
-                actions={[
-                    <ActionButton key="backup" tone="primary" icon={Save} onClick={create} disabled={loading}>
-                        {loading ? 'Tarefa em andamento...' : 'Criar Backup Agora'}
-                    </ActionButton>,
-                ]}
-            />
+  const askRestore = (f) => setDialog({
+    title: `Restaurar ${f.name}`,
+    description: 'O SGCG entra em manutenção. Antes de mudar qualquer coisa, o sistema guarda uma cópia do estado atual para poder desfazer. Banco, dependências e builds são refeitos e só os serviços do SGCG são reiniciados.',
+    tone: 'danger',
+    minReason: 10,
+    reasonLabel: 'Motivo da restauração',
+    confirmLabel: 'Restaurar este backup',
+    onConfirm: () => start(() => api.post('/api/backups/restore', { filename: f.name })),
+  });
 
-            {job && (
-                <Surface className={`border ${job.status === 'success' ? 'border-emerald-500/30' : job.status === 'failed' ? 'border-red-500/30' : job.status === 'rolled_back' ? 'border-amber-500/30' : 'border-primary/30'}`}>
-                    <div className="flex items-start gap-3 p-4">
-                        <RefreshCcw size={18} className={`mt-0.5 shrink-0 ${job.status === 'running' ? 'animate-spin text-primary' : 'text-on-surface/70'}`} />
-                        <div>
-                            <div className="text-xs font-black uppercase tracking-[0.14em] text-on-surface">{job.kind === 'restore' ? 'Restauração' : 'Backup'} · {job.step}</div>
-                            <p className="mt-1 text-sm text-on-surface/75">{job.message}</p>
-                        </div>
-                    </div>
-                </Surface>
-            )}
+  const askRemove = (f) => setDialog({
+    title: `Excluir ${f.name}`,
+    description: 'O arquivo é apagado do servidor e não pode ser recuperado.',
+    tone: 'danger',
+    confirmLabel: 'Excluir',
+    onConfirm: async () => {
+      setBusy(true);
+      try {
+        await api.post('/api/backups/delete', { filename: f.name });
+        toast('Backup excluído.');
+        setDialog(null);
+        load();
+      } catch (e) {
+        setDialogError(errorMessage(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+  });
 
-            <Surface className="overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-surface-high/72 text-on-surface/70 uppercase text-[10px] tracking-wider">
-                            <tr>
-                                <th className="p-4 font-bold">Arquivo</th>
-                                <th className="p-4 font-bold">Tamanho</th>
-                                <th className="p-4 font-bold">Data de Criação</th>
-                                <th className="p-4 text-right font-bold">Ações</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-outline/10">
-                            {files.map(f => (
-                                <tr key={f.name} className="hover:bg-surface-high/52 transition-colors">
-                                    <td className="p-4 text-on-surface font-bold flex items-center gap-2"><Database size={16} className="text-primary"/> {f.name}</td>
-                                    <td className="p-4 text-info font-mono">{f.size}</td>
-                                    <td className="p-4 text-on-surface opacity-80">{new Date(f.date).toLocaleString('pt-BR')}</td>
-                                    <td className="p-4 flex justify-end gap-2">
-                                        <button onClick={() => download(f.name)} className="p-2 bg-blue-500/10 text-blue-600 dark:text-blue-400 rounded-xl hover:bg-blue-500 hover:text-on-surface transition-all"><Download size={18}/></button>
-                                        <button disabled={loading} title="Restaurar este backup" onClick={() => restore(f.name)} className="p-2 bg-amber-500/10 text-amber-700 dark:text-amber-300 rounded-xl hover:bg-amber-500 hover:text-on-surface transition-all disabled:cursor-not-allowed disabled:opacity-50"><RefreshCcw size={18}/></button>
-                                        <button onClick={() => remove(f.name)} className="p-2 bg-red-500/10 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-500 hover:text-on-surface transition-all"><Trash2 size={18}/></button>
-                                    </td>
-                                </tr>
-                            ))}
-                            {files.length === 0 && <tr><td colSpan="4" className="p-12 text-center text-on-surface opacity-50 italic">Cofre vazio. Nenhum backup encontrado.</td></tr>}
-                        </tbody>
-                    </table>
+  const download = async (f) => {
+    try {
+      const r = await api.post('/api/backups/download', { filename: f.name }, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([r.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = f.name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast('Não foi possível baixar o arquivo.', 'danger');
+    }
+  };
+
+  const latest = files[0];
+  const old = latest && Date.now() - new Date(latest.date).getTime() > 8 * 864e5;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Backups"
+        description="Cópias do código, dos dados e do banco do SGCG, com restauração que pode ser desfeita."
+        actions={<Button variant="primary" icon={Plus} onClick={askCreate} disabled={running}>Gerar backup</Button>}
+      />
+      <KpiRow>
+        <Kpi icon={History} label="Backups guardados" value={files.length} />
+        <Kpi label="Mais recente" value={latest ? new Date(latest.date).toLocaleDateString('pt-BR') : '—'} sub={latest ? latest.size : 'Nenhum backup'} tone={latest && !old ? 'success' : 'warning'} />
+        <Kpi label="Tarefa atual" value={job ? JOB_LABEL[job.status] || job.status : 'Nenhuma'} tone={job ? JOB_TONE[job.status] : 'neutral'} sub={job ? `${job.kind === 'restore' ? 'Restauração' : 'Backup'}${job.step ? ` · ${job.step}` : ''}` : null} />
+        <Kpi label="Cópia fora do servidor" value="Não" tone="warning" sub="Use Baixar para guardar uma cópia" />
+      </KpiRow>
+      {old ? <Notice tone="warning">O último backup tem mais de uma semana.</Notice> : null}
+      {job ? (
+        <Notice tone={JOB_TONE[job.status] === 'primary' ? 'primary' : JOB_TONE[job.status]} title={`${job.kind === 'restore' ? 'Restauração' : 'Backup'}: ${JOB_LABEL[job.status] || job.status}`}>
+          {job.step ? <span className="font-medium">{job.step}. </span> : null}{job.message}
+        </Notice>
+      ) : null}
+      <Panel title="Arquivos de backup" padded={false}>
+        <DataTable
+          rowKey="name"
+          rows={files}
+          empty="Nenhum backup encontrado."
+          columns={[
+            { key: 'name', label: 'Arquivo', render: (f) => <span className="tabular break-all font-medium text-on-surface">{f.name}</span> },
+            { key: 'date', label: 'Data', mono: true, render: (f) => new Date(f.date).toLocaleString('pt-BR') },
+            { key: 'size', label: 'Tamanho', mono: true },
+            {
+              key: 'a',
+              label: '',
+              align: 'right',
+              render: (f) => (
+                <div className="flex justify-end gap-1">
+                  <Button variant="ghost" icon={Download} onClick={() => download(f)}>Baixar</Button>
+                  <Button variant="ghost" icon={RotateCcw} onClick={() => askRestore(f)} disabled={running}>Restaurar</Button>
+                  <Button variant="ghost" icon={Trash2} onClick={() => askRemove(f)} disabled={running}>Excluir</Button>
                 </div>
-            </Surface>
-        </div>
-    );
+              ),
+            },
+          ]}
+        />
+      </Panel>
+      <ConfirmDialog
+        open={Boolean(dialog)}
+        title={dialog?.title}
+        description={dialog?.description}
+        tone={dialog?.tone}
+        confirmLabel={dialog?.confirmLabel}
+        minReason={dialog?.minReason || 0}
+        reasonLabel={dialog?.reasonLabel}
+        busy={busy}
+        error={dialogError}
+        onClose={() => !busy && setDialog(null)}
+        onConfirm={(r) => dialog?.onConfirm?.(r)}
+      />
+    </div>
+  );
 }

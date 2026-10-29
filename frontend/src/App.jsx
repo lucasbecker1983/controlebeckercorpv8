@@ -10,7 +10,7 @@ import QuickActions from './pages/QuickActions';
 import Network from './pages/Network';
 import Server from './pages/Server';
 import Users from './pages/Users';
-import Proxy from './pages/Proxy';
+import RadarDns from './pages/RadarDns';
 import BlockingReleases from './pages/BlockingReleases';
 import Operations from './pages/Operations';
 import DnsProxy from './pages/DnsProxy';
@@ -239,7 +239,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/mapa-trafego" element={<TrafficMap />} />
-          <Route path="/radar-dns" element={<Proxy />} />
+          <Route path="/radar-dns" element={<RadarDns />} />
           <Route path="/servidor" element={<Server />} />
           <Route path="/acoes-rapidas" element={<QuickActions />} />
           <Route path="/rede" element={<Network />} />
