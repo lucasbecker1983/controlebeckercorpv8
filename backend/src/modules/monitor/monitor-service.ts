@@ -935,7 +935,29 @@ class MonitorService {
         const openTickets = Number(tickets.rows[0]?.total || 0);
         if (openTickets > 0) alerts.push({ severity: 'info', title: `${openTickets} chamado${openTickets > 1 ? 's' : ''} em aberto`, detail: 'Atendimentos aguardando ação.', link: '/chamados' });
         const sporadicActive = Number(sporadic.rows[0]?.total || 0);
-        if (sporadicActive > 0) alerts.push({ severity: 'info', title: `${sporadicActive} liberação${sporadicActive > 1 ? 'ões' : ''} temporária${sporadicActive > 1 ? 's' : ''} em vigor`, detail: 'Exceções com prazo de validade.', link: '/acoes-rapidas' });
+        if (sporadicActive > 0) alerts.push({ severity: 'info', title: `${sporadicActive} liberação${sporadicActive > 1 ? 'ões' : ''} temporária${sporadicActive > 1 ? 's' : ''} em vigor`, detail: 'Exceções com prazo de validade.', link: '/politicas?tab=temporarias' });
+
+        // VIPs: revisão vencida ou perto de vencer, sem vínculo ao aparelho, e IP de VIP usado por outro aparelho.
+        const vipRows = await pool.query(
+            `SELECT host(ip) AS ip, COALESCE(NULLIF(description, ''), NULLIF(hostname, ''), host(ip)) AS name,
+                    review_date::text AS review_date, UPPER(NULLIF(mac_address, '')) AS mac
+             FROM policy_exceptions WHERE active = TRUE`,
+        ).catch(() => ({ rows: [] as any[] }));
+        const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) + 'T00:00:00Z').getTime();
+        const daysTo = (value: any) => Math.round((new Date(String(value).slice(0, 10) + 'T00:00:00Z').getTime() - today) / 86400000);
+        const overdue = vipRows.rows.filter((row) => row.review_date && daysTo(row.review_date) < 0);
+        const dueSoon = vipRows.rows.filter((row) => row.review_date && daysTo(row.review_date) >= 0 && daysTo(row.review_date) <= 15);
+        const noReview = vipRows.rows.filter((row) => !row.review_date);
+        const unbound = vipRows.rows.filter((row) => !row.mac);
+        const macNow = new Map<string, string>(this.traffic.devices.filter((d: any) => d.mac).map((d: any) => [String(d.ip), String(d.mac).toUpperCase()]));
+        const macMismatch = vipRows.rows.filter((row) => row.mac && macNow.has(row.ip) && macNow.get(row.ip) !== row.mac);
+        const names = (rows: any[]) => rows.slice(0, 4).map((row) => `${row.name} (${row.ip})`).join(', ') + (rows.length > 4 ? ` e mais ${rows.length - 4}` : '');
+        const plural = (n: number, one: string, many: string) => (n === 1 ? one : many.replace('#', String(n)));
+        if (macMismatch.length) alerts.push({ severity: 'warning', title: plural(macMismatch.length, 'IP de VIP usado por outro aparelho', '# IPs de VIP usados por outro aparelho'), detail: `${names(macMismatch)}. O aparelho atual não recebe a liberação VIP; confira se o equipamento foi trocado.`, link: '/politicas?tab=vips' });
+        if (overdue.length) alerts.push({ severity: 'warning', title: plural(overdue.length, 'VIP com revisão vencida', '# VIPs com revisão vencida'), detail: `${names(overdue)}. Renove ou desative.`, link: '/politicas?tab=vips' });
+        if (dueSoon.length) alerts.push({ severity: 'info', title: plural(dueSoon.length, 'Revisão de VIP vence em até 15 dias', 'Revisão de # VIPs vence em até 15 dias'), detail: names(dueSoon), link: '/politicas?tab=vips' });
+        if (noReview.length) alerts.push({ severity: 'info', title: plural(noReview.length, 'VIP sem prazo de revisão', '# VIPs sem prazo de revisão'), detail: names(noReview), link: '/politicas?tab=vips' });
+        if (unbound.length) alerts.push({ severity: 'info', title: plural(unbound.length, 'VIP sem vínculo ao aparelho', '# VIPs sem vínculo ao aparelho'), detail: `Valem para qualquer aparelho que pegar o IP: ${names(unbound)}.`, link: '/politicas?tab=vips' });
 
         const order = { critical: 0, warning: 1, info: 2 };
         return alerts.sort((a, b) => order[a.severity] - order[b.severity]);

@@ -564,7 +564,7 @@ export default function TrafficMap() {
                   <div>{selDev.flows.map((f) => <div key={f.site}>{model.sites[f.site]?.name} <span className="tm-mono tm-muted">↓{fmt(f.d)} ↑{fmt(f.u)}</span></div>)}</div>
                   <div className="tm-acts">
                     <Link to={`/acoes-rapidas?acao=banda&ip=${selDev.ip}`}>Limitar banda</Link>
-                    <Link to={`/politicas?tab=policies`}>Bloquear</Link>
+                    <Link to={`/politicas?tab=regras`}>Bloquear</Link>
                     <Link to={`/radar-dns?ip=${selDev.ip}`}>Ver no Radar DNS</Link>
                   </div>
                 </>

@@ -249,6 +249,51 @@ export function ConfirmDialog({ open, title, description, confirmLabel = 'Confir
   );
 }
 
+/*
+ * Painel lateral para formulários (criar/editar). Fecha com Esc ou clicando fora, exceto durante o salvamento.
+ */
+export function Drawer({ open, title, description, onClose, busy = false, footer, children, width = 'max-w-xl' }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape' && !busy) onClose?.(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, busy, onClose]);
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-[70] flex justify-end bg-scrim" role="dialog" aria-modal="true" aria-labelledby="drawer-title" onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose?.(); }}>
+      <div className={`flex h-full w-full ${width} flex-col border-l border-outline bg-container shadow-[var(--shadow-medium)]`}>
+        <div className="flex items-start justify-between gap-3 border-b border-outline px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="drawer-title" className="text-[17px] font-semibold text-on-surface">{title}</h2>
+            {description ? <p className="mt-0.5 text-[12.5px] leading-5 text-on-surface/55">{description}</p> : null}
+          </div>
+          <button type="button" onClick={onClose} disabled={busy} className="rounded-md p-1 text-on-surface/50 hover:bg-on-surface/5" aria-label="Fechar"><X size={18} /></button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">{children}</div>
+        {footer ? <div className="flex flex-wrap items-center justify-end gap-2 border-t border-outline px-5 py-3">{footer}</div> : null}
+      </div>
+    </div>
+  );
+}
+
+// Chave liga/desliga acessível.
+export function Switch({ checked, onChange, disabled = false, label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); onChange?.(!checked); }}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${checked ? 'bg-success' : 'bg-on-surface/20'}`}
+    >
+      <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+    </button>
+  );
+}
+
 // Avisos curtos no canto da tela, disparados de qualquer módulo com toast('...').
 export function toast(message, t = 'success') {
   window.dispatchEvent(new CustomEvent('sgcg:toast', { detail: { message, tone: t, id: Date.now() + Math.random() } }));
