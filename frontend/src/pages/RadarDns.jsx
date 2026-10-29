@@ -42,7 +42,7 @@ export default function RadarDns() {
 
   const load = useCallback(async () => {
     try {
-      const statsReq = api.get('/api/dns/stats').then((r) => setStats(r.data || null)).catch(() => null);
+      const statsReq = api.get('/api/monitor/dns-stats').then((r) => setStats(r.data || null)).catch(() => null);
       if (ip) {
         const r = await api.get(`/api/monitor/dns-device?ip=${encodeURIComponent(ip)}&minutes=180`);
         setDevice(r.data);
@@ -51,7 +51,7 @@ export default function RadarDns() {
         const q = new URLSearchParams({ limit: '300' });
         if (vlan !== 'todas') q.set('vlan', vlan);
         if (blockedOnly) q.set('blocked', 'true');
-        const r = await api.get(`/api/dns/radar?${q.toString()}`);
+        const r = await api.get(`/api/monitor/dns-recent?${q.toString()}`);
         setEntries(Array.isArray(r.data?.entries) ? r.data.entries : []);
         setDevice(null);
       }
@@ -101,7 +101,7 @@ export default function RadarDns() {
         <Kpi label="Consultas hoje" value={stats?.total_hoje != null ? Number(stats.total_hoje).toLocaleString('pt-BR') : '—'} />
         <Kpi label="Bloqueadas hoje" value={stats?.bloqueados_hoje != null ? Number(stats.bloqueados_hoje).toLocaleString('pt-BR') : '—'} tone="danger" />
         <Kpi label="Dispositivos ativos" value={stats?.ips_ativos ?? '—'} />
-        <Kpi label="Últimos 5 minutos" value={stats?.queries_5min != null ? Number(stats.queries_5min).toLocaleString('pt-BR') : '—'} sub="consultas" />
+        <Kpi label="Últimos 5 minutos" value={stats?.queries_5min != null ? Number(stats.queries_5min).toLocaleString('pt-BR') : '—'} sub={stats?.ultimo_evento ? `última às ${new Date(stats.ultimo_evento).toLocaleTimeString('pt-BR')}` : 'consultas'} />
       </KpiRow>
 
       {error ? <Notice tone="danger">{error}</Notice> : null}
@@ -167,7 +167,7 @@ export default function RadarDns() {
             empty="Nenhuma consulta no recorte atual."
             columns={[
               { key: 't', label: 'Hora', mono: true, render: (e) => time(e.timestamp) },
-              { key: 'ip', label: 'Dispositivo', render: (e) => <button type="button" onClick={() => { setIpInput(e.client_ip); applyIp(e.client_ip); }} className="text-left hover:text-primary"><div className="tabular font-medium">{e.client_ip}</div><div className="text-[11.5px] text-on-surface/50">{e.identity_display_user || e.identity_user || e.identity_computer || e.hostname || '—'}</div></button> },
+              { key: 'ip', label: 'Dispositivo', render: (e) => <button type="button" onClick={() => { setIpInput(e.client_ip); applyIp(e.client_ip); }} className="text-left hover:text-primary"><div className="tabular font-medium">{e.client_ip}</div><div className="text-[11.5px] text-on-surface/50">{e.hostname || e.identity_user || e.identity_computer || (e.vlan_id ? `VLAN ${e.vlan_id}` : '—')}</div></button> },
               { key: 'd', label: 'Site', render: (e) => <span className="break-all">{e.domain}</span> },
               { key: 'q', label: 'Tipo', render: (e) => e.query_type || '—' },
               { key: 's', label: 'Situação', render: (e) => actionBadge(e.action, e.blocked) },

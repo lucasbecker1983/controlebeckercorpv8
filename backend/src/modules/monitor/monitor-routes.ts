@@ -39,6 +39,25 @@ router.get('/dns-summary', async (_req, res) => {
     }
 });
 
+router.get('/dns-stats', async (_req, res) => {
+    try {
+        res.json(await monitorService.getDnsStats());
+    } catch (error) {
+        console.error('[MONITOR] Falha nos indicadores DNS:', error);
+        res.status(500).json({ error: 'Falha ao ler os indicadores de DNS.' });
+    }
+});
+
+router.get('/dns-recent', async (req, res) => {
+    const vlan = Number(String(req.query.vlan || '').replace(/\D/g, '')) || null;
+    try {
+        res.json({ entries: await monitorService.getDnsRecent({ vlan, blocked: String(req.query.blocked) === 'true', limit: Number(req.query.limit) || 300 }) });
+    } catch (error) {
+        console.error('[MONITOR] Falha nas consultas DNS:', error);
+        res.status(500).json({ error: 'Falha ao ler as consultas de DNS.' });
+    }
+});
+
 router.get('/dns-device', async (req, res) => {
     const ip = String(req.query.ip || '').trim();
     if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) return res.status(400).json({ error: 'IP inválido.' });

@@ -812,6 +812,42 @@ class MonitorService {
         return data;
     }
 
+    private dnsStatsCache: { at: number; data: any } | null = null;
+
+    // Indicadores do Radar DNS direto da tabela de eventos ao vivo (a API antiga lia fontes paradas).
+    async getDnsStats() {
+        if (this.dnsStatsCache && Date.now() - this.dnsStatsCache.at < 30000) return this.dnsStatsCache.data;
+        const { rows } = await pool.query(
+            `SELECT COUNT(*)::int AS total_hoje,
+                    COUNT(*) FILTER (WHERE action = 'blocked')::int AS bloqueados_hoje,
+                    COUNT(DISTINCT client_ip)::int AS ips_ativos,
+                    COUNT(*) FILTER (WHERE occurred_at > NOW() - INTERVAL '5 minutes')::int AS queries_5min,
+                    MAX(occurred_at) AS ultimo_evento
+             FROM dns_policy_events
+             WHERE occurred_at >= date_trunc('day', NOW() AT TIME ZONE 'America/Sao_Paulo') AT TIME ZONE 'America/Sao_Paulo'`,
+        );
+        this.dnsStatsCache = { at: Date.now(), data: rows[0] };
+        return rows[0];
+    }
+
+    async getDnsRecent(opts: { vlan?: number | null; blocked?: boolean; limit?: number }) {
+        const params: any[] = [];
+        const where = ["occurred_at > NOW() - INTERVAL '2 hours'"];
+        if (opts.vlan) { params.push(opts.vlan); where.push(`vlan_id = $${params.length}`); }
+        if (opts.blocked) where.push("action = 'blocked'");
+        params.push(Math.min(500, Math.max(20, opts.limit || 300)));
+        const { rows } = await pool.query(
+            `SELECT occurred_at AS timestamp, host(client_ip) AS client_ip, vlan_id, query_name AS domain, query_type,
+                    action, (action = 'blocked') AS blocked, category, policy_source, identity_user, identity_computer
+             FROM dns_policy_events
+             WHERE ${where.join(' AND ')}
+             ORDER BY occurred_at DESC
+             LIMIT $${params.length}`,
+            params,
+        );
+        return rows.map((row) => ({ ...row, hostname: this.nameFor(row.client_ip) }));
+    }
+
     async getDeviceDns(ip: string, minutes = 120) {
         const [events, top] = await Promise.all([
             pool.query(
