@@ -101,12 +101,19 @@ function useFonts() {
 // Mesmo modelo do protótipo: dispositivos (com fluxos por site), VLANs e sites.
 function buildModel(data, mode) {
   if (!data) return null;
-  const pick = (f) => (mode === 'd' ? f.down : f.up);
   const vlanInfo = new Map((data.vlans || []).map((v) => [v.id, v]));
+  // Internet conta no sentido escolhido; tráfego interno (ex.: câmeras) conta nos dois sentidos.
+  const valOf = (f) => (f.kind === 'internal' ? f.down + f.up : mode === 'd' ? f.down : f.up);
+  const keyOf = (f) => {
+    if (f.kind !== 'internal') return f.label;
+    if (f.remoteVlan && vlanInfo.get(f.remoteVlan)) return `Rede interna · ${vlanInfo.get(f.remoteVlan).name}`;
+    return f.label.startsWith('Servidor') ? 'Rede interna · Servidor SGCG' : 'Rede interna';
+  };
   const active = (data.devices || [])
     .map((d) => {
-      const flows = d.flows.filter((f) => f.kind === 'internet');
-      return { ...d, flows, val: flows.reduce((s, f) => s + pick(f), 0) };
+      const flows = d.flows.filter((f) => valOf(f) > 0.005);
+      const inet = flows.filter((f) => f.kind !== 'internal').reduce((s, f) => s + valOf(f), 0);
+      return { ...d, flows, inet, val: flows.reduce((s, f) => s + valOf(f), 0) };
     })
     .filter((d) => d.val > 0.01)
     .sort((a, b) => b.val - a.val)
@@ -114,10 +121,12 @@ function buildModel(data, mode) {
   const siteMap = new Map();
   for (const d of active) {
     for (const f of d.flows) {
-      const s = siteMap.get(f.label) || { name: f.label, dom: f.domain || '', val: 0 };
-      s.val += pick(f);
-      if (!s.dom && f.domain) s.dom = f.domain;
-      siteMap.set(f.label, s);
+      const key = keyOf(f);
+      const internal = f.kind === 'internal';
+      const s = siteMap.get(key) || { name: key, dom: internal ? '' : f.domain || '', val: 0, internal, color: internal ? vcol(f.remoteVlan || 99) : null };
+      s.val += valOf(f);
+      if (!s.dom && f.domain && !internal) s.dom = f.domain;
+      siteMap.set(key, s);
     }
   }
   const sites = Array.from(siteMap.values()).sort((a, b) => b.val - a.val).slice(0, MAX_SITES).map((s, i) => ({ ...s, i }));
@@ -131,13 +140,15 @@ function buildModel(data, mode) {
       kind: kindOf(d),
       qosVip: d.qosVip,
       val: d.val,
-      flows: d.flows.filter((f) => siteIdx.has(f.label)).map((f) => ({ site: siteIdx.get(f.label), d: f.down, u: f.up })),
+      inet: d.inet,
+      flows: d.flows.filter((f) => siteIdx.has(keyOf(f))).map((f) => ({ site: siteIdx.get(keyOf(f)), d: f.down, u: f.up, v: valOf(f) })),
     }));
   // Todas as VLANs aparecem; as sem tráfego ficam apagadas, com a contagem de aparelhos ligados.
   const vlanIds = Array.from(new Set([...(data.vlans || []).map((v) => v.id), ...devices.map((d) => d.vlan)])).sort((a, b) => a - b);
   const vlans = vlanIds.map((id) => {
     const info = vlanInfo.get(id) || {};
-    return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, neighbors: info.neighbors || 0, val: devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0) };
+    const mine = devices.filter((d) => d.vlan === id);
+    return { id, name: info.name || `VLAN ${id}`, limit: mode === 'd' ? info.limit_down : info.limit_up, neighbors: info.neighbors || 0, val: mine.reduce((s, d) => s + d.val, 0), inet: mine.reduce((s, d) => s + d.inet, 0) };
   });
   return { devices, vlans, sites, wan: mode === 'd' ? data.wan.down : data.wan.up };
 }
@@ -275,6 +286,7 @@ export default function TrafficMap() {
           return e.vlan === dv.vlan;
         }
         if (s.t === 'site') {
+          if (e.site != null && e.key === 'i') return e.site === s.i;
           if (e.site != null) return e.site === s.i;
           if (e.dev) return e.dev.flows.some((f) => f.site === s.i);
           return devices.some((d) => d.vlan === e.vlan && d.flows.some((f) => f.site === s.i));
@@ -323,8 +335,15 @@ export default function TrafficMap() {
         const v = vlans.find((x) => x.id === dv.vlan);
         if (v) edges.push({ a: dv, b: v, w: dv.val, col: vcol(dv.vlan), key: 'd', dev: dv, vlan: dv.vlan });
       });
-      vlans.forEach((v) => { if (v.val > 0.01) edges.push({ a: v, b: wan, w: v.val, col: vcol(v.id), key: 'v', vlan: v.id }); });
-      sites.forEach((t) => edges.push({ a: wan, b: t, w: t.val, col: C.accent, key: 's', site: t.i }));
+      vlans.forEach((v) => { if (v.inet > 0.01) edges.push({ a: v, b: wan, w: v.inet, col: vcol(v.id), key: 'v', vlan: v.id }); });
+      sites.forEach((t) => {
+        if (!t.internal) { edges.push({ a: wan, b: t, w: t.val, col: C.accent, key: 's', site: t.i }); return; }
+        // Tráfego interno não passa pelo link: liga a VLAN de origem direto ao destino.
+        vlans.forEach((v) => {
+          const w = devices.filter((d) => d.vlan === v.id).reduce((acc, d) => acc + d.flows.filter((f) => f.site === t.i).reduce((a2, f) => a2 + f.v, 0), 0);
+          if (w > 0.01) edges.push({ a: v, b: t, w, col: vcol(v.id), key: 'i', site: t.i, vlan: v.id });
+        });
+      });
       edges.forEach((e) => {
         const on = related(e);
         const c = curve(e.a, e.b);
@@ -414,7 +433,7 @@ export default function TrafficMap() {
         const idleV = v.val <= 0.01;
         circle(v.x, v.y, v.r, vcol(v.id), on && !idleV, hv === `vlan:${v.id}`);
         if (v.limit && !idleV) {
-          const use = v.val / v.limit;
+          const use = v.inet / v.limit;
           ctx.beginPath();
           ctx.arc(v.x, v.y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
           ctx.strokeStyle = use > 0.9 ? C.crit : use > 0.7 ? C.warn : C.ok;
@@ -458,14 +477,14 @@ export default function TrafficMap() {
 
       sites.forEach((t) => {
         const on = !s || (s.t === 'site' && s.i === t.i) || (s.t === 'dev' && devices.find((d) => d.ip === s.ip)?.flows.some((f) => f.site === t.i)) || (s.t === 'vlan' && devices.some((d) => d.vlan === s.id && d.flows.some((f) => f.site === t.i)));
-        circle(t.x, t.y, t.r, C.accent, on, hv === `site:${t.i}`);
+        circle(t.x, t.y, t.r, t.internal ? t.color : C.accent, on, hv === `site:${t.i}`);
         ctx.textAlign = 'left';
         ctx.font = `600 11.5px ${F_BODY}`;
         ctx.fillStyle = on ? C.ink : alpha(C.muted, 0.5);
         ctx.fillText(t.name.length > 26 ? `${t.name.slice(0, 25)}…` : t.name, t.x + t.r + 8, t.y - 1);
         ctx.font = `10px ${F_MONO}`;
         ctx.fillStyle = on ? C.muted : alpha(C.muted, 0.4);
-        ctx.fillText(`${fmt(t.val)} Mbps · ${Math.round((t.val / L) * 100)}%`, t.x + t.r + 8, t.y + 11);
+        ctx.fillText(t.internal ? `${fmt(t.val)} Mbps · interno` : `${fmt(t.val)} Mbps · ${Math.round((t.val / L) * 100)}%`, t.x + t.r + 8, t.y + 11);
       });
 
       if (!devices.length) {
@@ -497,7 +516,7 @@ export default function TrafficMap() {
   const select = (next) => setSel((cur) => (cur && next && cur.key === next.key ? null : next));
 
   const topIps = model ? [...model.devices].sort((a, b) => b.val - a.val).slice(0, 5) : [];
-  const topSites = model ? model.sites.slice(0, 5) : [];
+  const topSites = model ? model.sites.filter((t) => !t.internal).slice(0, 5) : [];
   const selDev = sel?.t === 'dev' ? model?.devices.find((d) => d.ip === sel.ip) : null;
   const selSite = sel?.t === 'site' ? model?.sites[sel.i] : null;
   const selVlan = sel?.t === 'vlan' ? (data?.vlans || []).find((v) => v.id === sel.id) : null;
@@ -591,7 +610,7 @@ export default function TrafficMap() {
                   <div>
                     {model.devices.filter((d) => d.flows.some((f) => f.site === selSite.i)).map((d) => {
                       const f = d.flows.find((x) => x.site === selSite.i);
-                      return <div key={d.ip}><span className="tm-mono">{d.ip}</span> <span className="tm-muted">{fmt(mode === 'd' ? f.d : f.u)} Mbps</span></div>;
+                      return <div key={d.ip}><span className="tm-mono">{d.ip}</span> <span className="tm-muted">{fmt(f.v)} Mbps</span></div>;
                     })}
                   </div>
                   {selSite.dom ? (
