@@ -104,7 +104,9 @@ export default function Backups() {
   };
 
   const latest = files[0];
-  const old = latest && Date.now() - new Date(latest.date).getTime() > 8 * 864e5;
+  const ageDays = latest ? Math.floor((Date.now() - new Date(latest.date).getTime()) / 864e5) : null;
+  const old = latest && ageDays > 7;
+  const stale = ageDays != null && ageDays > 30;
 
   return (
     <div className="space-y-4">
@@ -115,11 +117,14 @@ export default function Backups() {
       />
       <KpiRow>
         <Kpi icon={History} label="Backups guardados" value={files.length} />
-        <Kpi label="Mais recente" value={latest ? new Date(latest.date).toLocaleDateString('pt-BR') : '—'} sub={latest ? latest.size : 'Nenhum backup'} tone={latest && !old ? 'success' : 'warning'} />
+        <Kpi label="Mais recente" value={latest ? new Date(latest.date).toLocaleDateString('pt-BR') : '—'} sub={latest ? `${ageDays === 0 ? 'hoje' : `há ${ageDays} dia${ageDays === 1 ? '' : 's'}`} · ${latest.size}` : 'Nenhum backup'} tone={latest && !old ? 'success' : stale || !latest ? 'danger' : 'warning'} />
         <Kpi label="Tarefa atual" value={job ? JOB_LABEL[job.status] || job.status : 'Nenhuma'} tone={job ? JOB_TONE[job.status] : 'neutral'} sub={job ? `${job.kind === 'restore' ? 'Restauração' : 'Backup'}${job.step ? ` · ${job.step}` : ''}` : null} />
         <Kpi label="Cópia fora do servidor" value="Não" tone="warning" sub="Use Baixar para guardar uma cópia" />
       </KpiRow>
-      {old ? <Notice tone="warning">O último backup tem mais de uma semana.</Notice> : null}
+      {old ? <Notice tone={stale ? 'danger' : 'warning'} title={stale ? 'Backups parados' : undefined}>O último backup tem {ageDays} dias. {stale ? 'Gere um backup novo antes de qualquer mudança grande no sistema.' : 'Gere um novo para não perder alterações recentes.'}</Notice> : null}
+      <Notice tone="primary" title="Retenção de 30 dias">
+        A regra é guardar 30 dias. Quando o backup diário roda, ele apaga os backups mais antigos que isso, mas os 3 mais recentes ficam sempre e nada é apagado se não houver um backup recente.
+      </Notice>
       {job ? (
         <Notice tone={JOB_TONE[job.status] === 'primary' ? 'primary' : JOB_TONE[job.status]} title={`${job.kind === 'restore' ? 'Restauração' : 'Backup'}: ${JOB_LABEL[job.status] || job.status}`}>
           {job.step ? <span className="font-medium">{job.step}. </span> : null}{job.message}
