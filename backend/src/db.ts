@@ -4,7 +4,7 @@ export const pool = new Pool({
     user: 'postgres',
     host: 'localhost',
     database: 'controlebeckercorp_v8',
-    password: 'becker_admin_secure',
+    password: process.env.DB_PASSWORD,
     port: 5432,
 });
 

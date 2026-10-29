@@ -12,7 +12,7 @@ const router = Router();
 const pool = new Pool({
     database: 'controlebeckercorp_v8',
     user: 'postgres',
-    password: 'becker_admin_secure',
+    password: process.env.DB_PASSWORD,
     host: 'localhost',
 });
 

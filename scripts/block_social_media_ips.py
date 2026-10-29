@@ -65,10 +65,23 @@ SOCIAL_IP_RANGES = [
 ]
 
 PROJECT_ROOT = os.environ.get("PROJECT_ROOT", "/opt/controlebeckercorp-v8")
-DB_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgres://postgres:change_me@127.0.0.1:5432/controlebeckercorp_v8",
-)
+def _load_db_url() -> str:
+    """DATABASE_URL vem do ambiente ou do backend/.env do projeto; nunca fica fixa no código."""
+    value = os.environ.get("DATABASE_URL", "").strip()
+    if value:
+        return value
+    env_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "backend", ".env")
+    try:
+        with open(env_file, encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("DATABASE_URL="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    raise SystemExit("DATABASE_URL não definido: informe no ambiente ou em backend/.env")
+
+
+DB_URL = _load_db_url()
 
 # ---------------------------------------------------------------------------
 # Utilitários

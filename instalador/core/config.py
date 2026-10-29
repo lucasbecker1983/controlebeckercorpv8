@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -90,7 +91,7 @@ class FirewallConfig:
 
 @dataclass
 class RuntimeConfig:
-    jwt_secret: str = "change_me"
+    jwt_secret: str = field(default_factory=lambda: secrets.token_urlsafe(48))
     jwt_expires_in: str = "12h"
     gateway_ip: str = "192.168.10.1"
     public_ips: list[str] = field(default_factory=list)

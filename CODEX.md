@@ -3526,7 +3526,7 @@ O bypass emergencial total ativado anteriormente mantinha regras de ACCEPT diret
 **`backend/src/modules/qos/routes.ts` — arquivo morto removido**
 - Arquivo legado sem importacao em nenhum ponto do sistema
 - Usava TBF (token bucket filter) em vez de HTB — sem suporte a VIP
-- Credencial hardcoded: `postgres://postgres:becker_admin_secure@...`
+- Credencial hardcoded: `postgres://postgres:<senha-no-.env>@...`
 - Tabela errada `control_qos_policies` (tabela real: `net_qos_policies`)
 - `ON CONFLICT (id)` incoerente (tabela nao tem `id` unico)
 - Arquivo deletado
@@ -6443,7 +6443,7 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - isso elimina a necessidade de copiar manualmente o `username/password` gerado pelo app Android para o backend do `Hotspot`
 - emissor tecnico preparado nesta rodada:
   - usuario tecnico confirmado no `SMSGate`: `SGCGGW`
-  - senha tecnica registrada para compatibilidade: `SgcgSms@2026`
+  - senha tecnica registrada para compatibilidade: `valor em HOTSPOT_SMS_PASSWORD no .env`
   - dispositivo emissor atualmente vinculado no `backend/.env`:
     - `HOTSPOT_SMS_USER_ID=SGCGGW`
     - `HOTSPOT_SMS_DEVICE_ID=sROhMPL9Oc8fy3k1hpC_f`
@@ -7660,7 +7660,7 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `scripts/update_govbr_allowlist.py` passou a cobrir `cav.receita.fazenda.gov.br`, `api.hcaptcha.com`, `imgs.hcaptcha.com`, `accounts.hcaptcha.com`, wildcard relacionado `w.hcaptcha.com`, `pgfn.gov.br`, `regularize.pgfn.gov.br`, `www.regularize.pgfn.gov.br`, `salas-apps.pr.sebrae.com.br`, `sebrae.com.br` e `www.sebrae.com.br`
   - a rotina tambem passou a coletar dominios recentes contendo `hcaptcha`, `sebrae` e `pgfn` a partir dos logs/tabelas operacionais
   - `backend-proxy/src/services/blocking-release-service.ts` corrigiu o seed institucional de `salas-apps-pr.sebrae.com.br` para `salas-apps.pr.sebrae.com.br`
-  - executado `DATABASE_URL=postgres://postgres:change_me@127.0.0.1:5432/controlebeckercorp_v8 python3 scripts/update_govbr_allowlist.py`, com resultado `ok members=232`
+  - executado `DATABASE_URL=postgres://postgres:<senha-no-.env>@127.0.0.1:5432/controlebeckercorp_v8 python3 scripts/update_govbr_allowlist.py`, com resultado `ok members=232`
   - `backend-proxy` foi recompilado e reiniciado via PM2
   - entradas antigas de `conntrack` do `192.168.10.118` para Receita/hCaptcha/SEBRAE/PGFN foram removidas seletivamente para forcar reconexao limpa
 - validacao:
@@ -8470,3 +8470,11 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 
 - MAC privado (29/10): celulares novos usam endereço Wi-Fi aleatório por rede (bit "administrado localmente" no primeiro byte do MAC), que muda ao esquecer a rede, ao restaurar o aparelho ou periodicamente em algumas versões; quando muda, o aparelho pega outro IP e perde o VIP. Levantamento: 6 de 33 aparelhos da VLAN 10, 3 de 4 da VLAN 30 e 6 de 7 da VLAN 70 usam MAC aleatório; 128 das 174 reservas do DHCP são de MAC aleatório; entre os VIPs vinculados, só o Celular Lucas (.212). Tela de VIPs: selo "MAC privado" (clicável) no vínculo, guia iPhone/Android para fixar o endereço só na rede da prefeitura, aviso no editor e confirmação "Vincular mesmo assim" ao vincular MAC privado (`isPrivateMac` em `components/policies/shared.jsx`). Alerta novo "VIP vinculado a MAC privado". Nenhum VIP sem vínculo estava ligado às 15:02 (ping e arp-scan sem resposta), então nenhum foi vinculado; os MACs antigos das concessões do DHCP não foram usados.
 - Barra superior: o bloco de banda só aparece se `/api/monitor/live` trouxer `wan` (antes, um retorno sem `wan` derrubava a interface inteira no erro global "Portal indisponível no navegador").
+
+
+## Segredos fora do código - 2026-10-29
+
+- Auditoria de segredos fixos (pedida pelo responsável). Achados: a senha do banco estava como valor padrão em `backend/src/config/env.ts` e `backend-proxy/src/config/env.ts` e em 4 scripts Python (`update_whatsapp_allowlist.py` no cron de 6 em 6 h, `update_govbr_allowlist.py` no systemd, `sanitize_doh_vlans.py`, `block_social_media_ips.py`); o mesmo texto servia de segredo de JWT de reserva (nos `env.ts`, nos projetos v9 e no instalador); os `.env.example` traziam a senha real; o `CODEX.md` registrava a senha do banco (URL de comando) e a senha técnica do SMS do hotspot. Os segredos reais de JWT (backend, proxy e SMS) e a chave do Gemini nunca foram versionados.
+- Correções: `required('DATABASE_URL')` e `required('JWT_SECRET')` nos dois `env.ts` (sem valor padrão; o serviço não sobe se faltar no `.env`); scripts Python passam a ler `DATABASE_URL` do ambiente ou de `backend/.env` (função `_load_db_url`); v9 sem valores padrão de banco e JWT; instalador gera `secrets.token_urlsafe(48)` por instalação; `.env.example` com `TROQUE_A_SENHA` e `GERE_UM_SEGREDO_ALEATORIO_DE_64_CARACTERES`; `CODEX.md` sem as duas senhas; `db.ts` e `new-proxy/*` (código sem uso) leem `DB_PASSWORD` do ambiente. `backend-proxy/.env` estava com permissão 664 (legível por qualquer usuário local) e passou a 600, como `backend/.env`.
+- Ainda pendente (decisão do responsável): o repositório `lucasbecker1983/controlebeckercorp-v8` no GitHub é público e o histórico (60 commits) contém a senha do banco e a do SMS; só rotacionar as senhas resolve (reescrever o histórico não apaga cópias já feitas). O PostgreSQL só escuta em 127.0.0.1 e o `pg_hba.conf` está em `trust` para conexões locais, então a senha do banco hoje nem é conferida. `rescue-core/server.js` devolve um token fixo para qualquer login (ferramenta de resgate, não roda em produção). `.claude/settings.local.json` guarda uma regra de permissão com `PGPASSWORD=` em texto (arquivo local, fora do Git).
+- Validação: `tsc --noEmit` do backend e do proxy sem erro; sintaxe dos scripts Python conferida; helper de `_load_db_url` lê o `backend/.env`; nenhum segredo real restou na árvore de trabalho; build do proxy; `bcc-backend` e `backend-proxy` reiniciados com firewall VIP refeito (161 regras no FORWARD e no NAT, 23 VIPs ativos, 78 com MAC), alertas e DNS respondendo.

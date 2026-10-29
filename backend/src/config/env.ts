@@ -5,6 +5,15 @@ dotenv.config({
     path: path.resolve(__dirname, '../../.env'),
 });
 
+// Segredos nunca têm valor padrão no código: se faltarem no .env, o serviço não sobe.
+const required = (name: string): string => {
+    const value = process.env[name];
+    if (!value || !value.trim()) {
+        throw new Error(`Variável ${name} não definida no .env (${path.resolve(__dirname, '../../.env')}).`);
+    }
+    return value;
+};
+
 const toNumber = (value: string | undefined, fallback: number) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
@@ -17,8 +26,8 @@ const toBool = (value: string | undefined, fallback: boolean) => {
 
 export const env = {
     corePort: toNumber(process.env.CORE_PORT, 6778),
-    databaseUrl: process.env.DATABASE_URL || 'postgres://postgres:change_me@127.0.0.1:5432/controlebeckercorp_v8',
-    jwtSecret: process.env.JWT_SECRET || 'change_me',
+    databaseUrl: required('DATABASE_URL'),
+    jwtSecret: required('JWT_SECRET'),
     jwtExpiresIn: process.env.JWT_EXPIRES_IN || '30m',
     corsOrigin: process.env.CORS_ORIGIN || '*',
     projectRoot: process.env.PROJECT_ROOT || '/opt/controlebeckercorp-v8',
