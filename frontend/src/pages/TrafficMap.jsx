@@ -1,86 +1,129 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Ban, Gauge, Pause, Play, Radar, Unlock } from 'lucide-react';
 import { api } from '../services/api';
 
-const VLAN_TOKENS = ['--chart-1', '--chart-4', '--chart-3', '--chart-2', '--chart-5', '--chart-6'];
-const fmt = (v = 0) => Number(v || 0).toLocaleString('pt-BR', { maximumFractionDigits: v >= 100 ? 0 : 1, minimumFractionDigits: v >= 100 ? 0 : 1 });
-const MAX_DEVICES = 18;
-const MAX_TARGETS = 14;
+/*
+ * Mapa de Tráfego em camadas: dispositivos → VLANs → link WAN → sites.
+ * A espessura de cada ligação é a banda em uso. Cores fixas por VLAN.
+ */
 
-function readColors() {
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+const SANS = 'Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif';
+const MAX_DEVICES = 16;
+const MAX_SITES = 12;
+const fmt = (v) => {
+  const n = Number(v || 0);
+  return n >= 100 ? n.toFixed(0) : n.toFixed(1).replace('.', ',');
+};
+
+function readTheme() {
   const cs = getComputedStyle(document.documentElement);
-  const get = (k) => cs.getPropertyValue(k).trim();
+  const g = (k) => cs.getPropertyValue(k).trim();
   return {
-    text: get('--md-on-surface'),
-    surface: get('--md-container'),
-    bg: get('--md-surface'),
-    outline: get('--md-outline'),
-    primary: get('--chart-1'),
-    internal: get('--chart-3'),
-    danger: get('--md-danger'),
-    warning: get('--md-warning'),
-    success: get('--md-success'),
-    vlan: VLAN_TOKENS.map(get),
+    ink: g('--md-on-surface'),
+    surface: g('--md-container'),
+    line: g('--md-outline'),
+    accent: g('--chart-2') || g('--md-primary'),
+    bg: g('--map-bg') || g('--md-surface'),
+    crit: g('--md-danger'),
+    warn: g('--md-warning'),
+    ok: g('--md-success'),
+    vlan: (id) => g(`--vlan-${id}`) || g('--vlan-99') || g('--md-primary'),
   };
 }
 
-function rgba(color, alpha) {
-  const hex = color.replace('#', '');
-  if (!/^[0-9a-f]{6}$/i.test(hex)) return color;
-  const n = parseInt(hex, 16);
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+function alpha(color, a) {
+  const h = String(color || '').replace('#', '');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return color;
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
-// Monta as camadas do grafo a partir do que o backend coletou.
-function buildGraph(data, mode, dir) {
-  if (!data) return null;
-  const pick = (f) => (dir === 'down' ? f.down : f.up);
-  const vlanMeta = new Map((data.vlans || []).map((v) => [v.id, v]));
-  const devices = (data.devices || []).map((d) => {
-    const flows = d.flows.filter((f) => (mode === 'internet' ? f.kind === 'internet' : f.kind === 'internal'));
-    return { ...d, flows, value: flows.reduce((s, f) => s + pick(f), 0) };
-  }).filter((d) => d.value > 0.02).sort((a, b) => b.value - a.value);
+function useTheme() {
+  const [theme, setTheme] = useState(() => readTheme());
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(readTheme()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-accent'] });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
 
-  const shown = devices.slice(0, MAX_DEVICES);
-  const others = devices.slice(MAX_DEVICES);
-  const targetMap = new Map();
-  for (const d of devices) {
+const shortName = (d) => (d.hostname ? d.hostname.split(' · ')[0] : `VLAN ${d.vlan}`);
+
+// Converte a coleta do backend nas camadas do mapa.
+function buildModel(data, view, mode) {
+  if (!data) return null;
+  const pick = (f) => (mode === 'd' ? f.down : f.up);
+  const vlanInfo = new Map((data.vlans || []).map((v) => [v.id, v]));
+  const all = (data.devices || []).map((d) => {
+    const flows = d.flows.filter((f) => (view === 'internet' ? f.kind === 'internet' : f.kind === 'internal'));
+    return { ...d, flows, val: flows.reduce((s, f) => s + pick(f), 0) };
+  }).filter((d) => d.val > 0.02).sort((a, b) => a.vlan - b.vlan || b.val - a.val);
+
+  const top = [...all].sort((a, b) => b.val - a.val).slice(0, MAX_DEVICES);
+  const keep = new Set(top.map((d) => d.ip));
+  const devices = all.filter((d) => keep.has(d.ip));
+
+  const siteMap = new Map();
+  for (const d of all) {
     for (const f of d.flows) {
-      const key = mode === 'internet' ? f.label : (f.remoteVlan ? `vlan:${f.remoteVlan}` : f.label.startsWith('Servidor') ? 'server' : f.label);
-      const label = mode === 'internet'
+      const key = view === 'internet'
         ? f.label
-        : f.remoteVlan && vlanMeta.get(f.remoteVlan) ? `VLAN ${f.remoteVlan} · ${vlanMeta.get(f.remoteVlan).name}` : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label;
-      const t = targetMap.get(key) || { key, label, value: 0, domains: new Set(), devices: new Set() };
-      t.value += pick(f);
-      if (f.domain) t.domains.add(f.domain);
-      t.devices.add(d.ip);
-      targetMap.set(key, t);
+        : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label;
+      const s = siteMap.get(key) || { name: key, dom: new Set(), val: 0, users: new Map() };
+      s.val += pick(f);
+      if (f.domain) s.dom.add(f.domain);
+      s.users.set(d.ip, (s.users.get(d.ip) || 0) + pick(f));
+      siteMap.set(key, s);
     }
   }
-  const targets = Array.from(targetMap.values()).filter((t) => t.value > 0.01).sort((a, b) => b.value - a.value).slice(0, MAX_TARGETS);
-  const vlanIds = Array.from(new Set(shown.map((d) => d.vlan))).sort((a, b) => a - b);
-  const vlans = vlanIds.map((id, index) => {
-    const meta = vlanMeta.get(id) || {};
-    const value = devices.filter((d) => d.vlan === id).reduce((s, d) => s + d.value, 0);
-    return { id, name: meta.name || `VLAN ${id}`, limit: dir === 'down' ? meta.limit_down : meta.limit_up, value, colorIndex: index % VLAN_TOKENS.length };
+  const sites = Array.from(siteMap.values()).filter((s) => s.val > 0.01).sort((a, b) => b.val - a.val).slice(0, MAX_SITES)
+    .map((s, i) => ({ ...s, i, dom: Array.from(s.dom) }));
+  const siteIndex = new Map(sites.map((s) => [s.name, s.i]));
+  devices.forEach((d) => {
+    d.links = [];
+    for (const f of d.flows) {
+      const key = view === 'internet' ? f.label : f.remoteVlan ? `VLAN ${f.remoteVlan} · ${vlanInfo.get(f.remoteVlan)?.name || ''}`.trim() : f.label.startsWith('Servidor') ? 'Servidor SGCG' : f.label;
+      if (siteIndex.has(key)) d.links.push({ site: siteIndex.get(key), val: pick(f), down: f.down, up: f.up });
+    }
   });
-  const total = devices.reduce((s, d) => s + d.value, 0);
-  return { devices: shown, othersCount: others.length, othersValue: others.reduce((s, d) => s + d.value, 0), targets, vlans, total, targetMap };
+
+  // Todas as VLANs aparecem, mesmo sem tráfego no momento.
+  const vlanIds = Array.from(new Set([...(data.vlans || []).map((v) => v.id), ...devices.map((d) => d.vlan)])).sort((a, b) => a - b);
+  const vlans = vlanIds.map((id) => {
+    const info = vlanInfo.get(id) || {};
+    return {
+      id,
+      name: info.name || `VLAN ${id}`,
+      limit: mode === 'd' ? info.limit_down : info.limit_up,
+      neighbors: info.neighbors || 0,
+      val: all.filter((d) => d.vlan === id).reduce((s, d) => s + d.val, 0),
+    };
+  });
+  return {
+    devices,
+    sites,
+    vlans,
+    hidden: all.length - devices.length,
+    wan: mode === 'd' ? data.wan.down : data.wan.up,
+  };
 }
 
 export default function TrafficMap() {
+  const theme = useTheme();
   const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
-  const [mode, setMode] = useState('internet');
-  const [dir, setDir] = useState('down');
+  const [error, setError] = useState(false);
+  const [mode, setMode] = useState('d');
+  const [view, setView] = useState('internet');
   const [paused, setPaused] = useState(false);
-  const [selected, setSelected] = useState(null);
+  const [sel, setSel] = useState(null);
+  const [width, setWidth] = useState(860);
   const canvasRef = useRef(null);
-  const wrapRef = useRef(null);
-  const layoutRef = useRef({ nodes: [] });
+  const scrollRef = useRef(null);
+  const nodesRef = useRef({ devices: [], vlans: [], sites: [], wan: null });
   const hoverRef = useRef(null);
-  const [width, setWidth] = useState(960);
+  const stateRef = useRef({});
 
   useEffect(() => {
     if (paused) return undefined;
@@ -88,399 +131,426 @@ export default function TrafficMap() {
     const load = async () => {
       try {
         const res = await api.get('/api/monitor/traffic');
-        if (alive) { setData(res.data); setError(null); }
-      } catch (err) {
-        if (alive) setError(err);
+        if (alive) { setData(res.data); setError(false); }
+      } catch {
+        if (alive) setError(true);
       }
     };
     load();
-    const timer = window.setInterval(load, 5000);
+    const timer = window.setInterval(load, 3000);
     return () => { alive = false; window.clearInterval(timer); };
   }, [paused]);
 
   useEffect(() => {
-    const el = wrapRef.current;
+    const el = scrollRef.current;
     if (!el) return undefined;
-    const observer = new ResizeObserver(() => setWidth(Math.max(900, el.clientWidth)));
+    const observer = new ResizeObserver(() => setWidth(Math.max(860, Math.floor(el.clientWidth))));
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
-  const graph = useMemo(() => buildGraph(data, mode, dir), [data, mode, dir]);
-  const capacity = data?.link_mbps || 300;
-  const rows = Math.max(graph?.devices.length || 0, graph?.targets.length || 0, 8);
-  const height = Math.max(420, rows * 34 + 70);
+  const model = useMemo(() => buildModel(data, view, mode), [data, view, mode]);
+  const LINK = data?.link_mbps || 300;
+  const rows = Math.max(model?.devices.length || 0, model?.sites.length || 0, 10);
+  const height = Math.max(560, rows * 33 + 60);
+  const internet = view === 'internet';
 
-  const draw = useCallback((phase = 0) => {
+  stateRef.current = { model, theme, sel, mode, paused, width, height, LINK, internet };
+
+  // Animação contínua: lê o estado atual pelo ref, sem recriar o loop.
+  useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !graph) return;
-    const C = readColors();
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (canvas.width !== width * dpr || canvas.height !== height * dpr) {
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
-    }
+    if (!canvas) return undefined;
     const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    let frame;
+    let phase = 0;
+    let last = 0;
 
-    const top = 44;
-    const bottom = height - 18;
-    const isInternet = mode === 'internet';
-    const X = isInternet
-      ? { dev: width * 0.2, vlan: width * 0.4, link: width * 0.57, target: width * 0.74 }
-      : { dev: width * 0.22, vlan: width * 0.45, target: width * 0.7 };
-    const nodes = [];
-    const place = (list, x, kind) => list.map((item, i) => {
-      const y = top + (i + 0.5) * ((bottom - top) / list.length);
-      const node = { ...item, kind, x, y, r: 4 + Math.sqrt(Math.max(0, item.value)) * 1.5 };
-      nodes.push(node);
-      return node;
-    });
-    const devN = place(graph.devices, X.dev, 'device');
-    const vlanN = graph.vlans.map((v) => {
-      const mine = devN.filter((d) => d.vlan === v.id);
-      const y = mine.reduce((s, d) => s + d.y, 0) / Math.max(1, mine.length);
-      const node = { ...v, kind: 'vlan', x: X.vlan, y, r: 9 + Math.sqrt(v.value) * 1.2 };
-      nodes.push(node);
-      return node;
-    });
-    const linkN = isInternet ? { kind: 'link', x: X.link, y: (top + bottom) / 2, r: 40, value: graph.total } : null;
-    if (linkN) nodes.push(linkN);
-    const tgtN = place(graph.targets, X.target, 'target');
-    layoutRef.current = { nodes };
+    const draw = (ts) => {
+      const st = stateRef.current;
+      const { model: m, theme: C, sel: s, mode: md, width: W, height: H, LINK: L, internet: inet } = st;
+      if (!st.paused) phase += (ts - last) / 1000 || 0;
+      last = ts;
+      const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
+        canvas.width = W * dpr;
+        canvas.height = H * dpr;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = C.bg;
+      ctx.fillRect(0, 0, W, H);
+      if (!m) { frame = requestAnimationFrame(draw); return; }
 
-    const sel = selected;
-    const relatedDevice = (d) => !sel
-      || (sel.kind === 'device' && sel.ip === d.ip)
-      || (sel.kind === 'vlan' && sel.id === d.vlan)
-      || (sel.kind === 'target' && graph.targetMap.get(sel.key)?.devices.has(d.ip));
-    const relatedTarget = (t) => !sel
-      || (sel.kind === 'target' && sel.key === t.key)
-      || (sel.kind === 'device' && t.devices.has(sel.ip))
-      || (sel.kind === 'vlan' && graph.devices.some((d) => d.vlan === sel.id && t.devices.has(d.ip)));
-    const relatedVlan = (v) => !sel
-      || (sel.kind === 'vlan' && sel.id === v.id)
-      || (sel.kind === 'device' && sel.vlan === v.id)
-      || (sel.kind === 'target' && graph.devices.some((d) => d.vlan === v.id && graph.targetMap.get(sel.key)?.devices.has(d.ip)));
+      const top = 34;
+      const bottom = H - 22;
+      const X = inet
+        ? { dev: W * 0.198, vlan: W * 0.407, wan: W * 0.581, site: W * 0.767 }
+        : { dev: W * 0.22, vlan: W * 0.47, site: W * 0.72 };
 
-    const curve = (a, b) => [a.x, a.y, (a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y, b.x, b.y];
-    const point = (c, t) => {
-      const u = 1 - t;
-      return [u * u * u * c[0] + 3 * u * u * t * c[2] + 3 * u * t * t * c[4] + t * t * t * c[6], u * u * u * c[1] + 3 * u * u * t * c[3] + 3 * u * t * t * c[5] + t * t * t * c[7]];
-    };
-    const edge = (a, b, value, color, on, scale) => {
-      const c = curve(a, b);
-      ctx.beginPath();
-      ctx.moveTo(c[0], c[1]);
-      ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
-      ctx.strokeStyle = rgba(color, on ? 0.38 : 0.06);
-      ctx.lineWidth = Math.max(1, Math.min(18, value / scale));
-      ctx.stroke();
-      if (on && value > 0.2 && !paused) {
-        const n = Math.min(5, 1 + Math.floor(value / 10));
-        for (let k = 0; k < n; k += 1) {
-          let t = (phase * (0.12 + Math.min(value, 60) / 200) + k / n) % 1;
-          if (dir === 'down') t = 1 - t;
-          const p = point(c, t);
-          ctx.beginPath();
-          ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
-          ctx.fillStyle = rgba(color, 0.9);
-          ctx.fill();
+      // posições
+      m.devices.forEach((d, i) => {
+        d.x = X.dev;
+        d.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.devices.length);
+        d.r = 3 + Math.sqrt(d.val) * 1.6;
+      });
+      m.vlans.forEach((v, i) => {
+        v.x = X.vlan;
+        v.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.vlans.length);
+        v.r = 8 + Math.sqrt(v.val) * 1.3;
+      });
+      const wan = inet ? { x: X.wan, y: (top + bottom) / 2, r: 40 } : null;
+      m.sites.forEach((t, i) => {
+        t.x = X.site;
+        t.y = top + (i + 0.5) * (bottom - top) / Math.max(1, m.sites.length);
+        t.r = 3 + Math.sqrt(t.val) * 1.5;
+      });
+      nodesRef.current = { devices: m.devices, vlans: m.vlans, sites: m.sites, wan };
+
+      // cabeçalhos
+      ctx.font = `600 10.5px ${MONO}`;
+      ctx.fillStyle = alpha(C.ink, 0.5);
+      ctx.textAlign = 'center';
+      ctx.fillText('DISPOSITIVOS', X.dev, 18);
+      ctx.fillText('VLANs', X.vlan, 18);
+      if (inet) ctx.fillText('LINK', X.wan, 18);
+      ctx.fillText(inet ? 'SITES' : 'REDE INTERNA', X.site, 18);
+
+      const devOn = (d) => !s || (s.t === 'dev' && s.ip === d.ip) || (s.t === 'vlan' && s.id === d.vlan) || (s.t === 'site' && d.links.some((l) => l.site === s.i));
+      const vlanOn = (v) => !s || (s.t === 'vlan' && s.id === v.id) || (s.t === 'dev' && s.vlan === v.id) || (s.t === 'site' && m.devices.some((d) => d.vlan === v.id && d.links.some((l) => l.site === s.i)));
+      const siteOn = (t) => !s || (s.t === 'site' && s.i === t.i) || (s.t === 'dev' && m.devices.find((d) => d.ip === s.ip)?.links.some((l) => l.site === t.i)) || (s.t === 'vlan' && m.devices.some((d) => d.vlan === s.id && d.links.some((l) => l.site === t.i)));
+
+      const curve = (a, b) => [a.x, a.y, (a.x + b.x) / 2, a.y, (a.x + b.x) / 2, b.y, b.x, b.y];
+      const bez = (c, t) => {
+        const u = 1 - t;
+        return [u * u * u * c[0] + 3 * u * u * t * c[2] + 3 * u * t * t * c[4] + t * t * t * c[6], u * u * u * c[1] + 3 * u * u * t * c[3] + 3 * u * t * t * c[5] + t * t * t * c[7]];
+      };
+      const edge = (a, b, w, col, on, div) => {
+        const c = curve(a, b);
+        ctx.beginPath();
+        ctx.moveTo(c[0], c[1]);
+        ctx.bezierCurveTo(c[2], c[3], c[4], c[5], c[6], c[7]);
+        ctx.strokeStyle = alpha(col, on ? 0.42 : 0.07);
+        ctx.lineWidth = Math.max(1, Math.min(18, w / div));
+        ctx.stroke();
+        if (!reduce && on && w > 0.3) {
+          const n = Math.min(6, 1 + Math.floor(w / 12));
+          for (let k = 0; k < n; k += 1) {
+            let t = ((phase * (0.15 + Math.min(w, 60) / 160)) + k / n) % 1;
+            if (md === 'd') t = 1 - t;
+            const p = bez(c, t);
+            ctx.beginPath();
+            ctx.arc(p[0], p[1], 1.8, 0, Math.PI * 2);
+            ctx.fillStyle = alpha(col, 0.95);
+            ctx.fill();
+          }
+        }
+      };
+
+      m.devices.forEach((d) => {
+        const v = m.vlans.find((x) => x.id === d.vlan);
+        if (v) edge(d, v, d.val, C.vlan(d.vlan), devOn(d), 2.2);
+      });
+      if (inet) {
+        m.vlans.forEach((v) => edge(v, wan, v.val, C.vlan(v.id), vlanOn(v), 5));
+        m.sites.forEach((t) => edge(wan, t, t.val, C.accent, siteOn(t), 5));
+      } else {
+        m.vlans.forEach((v) => {
+          m.sites.forEach((t) => {
+            const w = m.devices.filter((d) => d.vlan === v.id).reduce((acc, d) => acc + d.links.filter((l) => l.site === t.i).reduce((a2, l) => a2 + l.val, 0), 0);
+            if (w > 0.01) edge(v, t, w, C.vlan(v.id), vlanOn(v) && siteOn(t), 4);
+          });
+        });
+      }
+
+      if (s && s.t === 'dev') {
+        const d = m.devices.find((x) => x.ip === s.ip);
+        if (d) {
+          d.links.forEach((l) => {
+            const t = m.sites[l.site];
+            if (!t) return;
+            ctx.beginPath();
+            ctx.moveTo(d.x, d.y);
+            ctx.bezierCurveTo(d.x + 220, d.y - 60, t.x - 200, t.y + 60, t.x, t.y);
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = C.vlan(d.vlan);
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          });
         }
       }
-    };
 
-    // cabeçalhos das colunas
-    ctx.font = '600 10.5px Inter, system-ui, sans-serif';
-    ctx.fillStyle = rgba(C.text, 0.45);
-    ctx.textAlign = 'center';
-    ctx.fillText('DISPOSITIVOS', X.dev, 20);
-    ctx.fillText('VLANs', X.vlan, 20);
-    if (isInternet) ctx.fillText('LINK', X.link, 20);
-    ctx.fillText(isInternet ? 'SITES E SERVIÇOS' : 'DESTINO NA REDE INTERNA', X.target, 20);
-
-    const vlanColor = (id) => C.vlan[(graph.vlans.find((v) => v.id === id)?.colorIndex) ?? 0] || C.primary;
-    devN.forEach((d) => {
-      const v = vlanN.find((n) => n.id === d.vlan);
-      if (v) edge(d, v, d.value, vlanColor(d.vlan), relatedDevice(d), 2.2);
-    });
-    if (isInternet) {
-      vlanN.forEach((v) => edge(v, linkN, v.value, vlanColor(v.id), relatedVlan(v), 5));
-      tgtN.forEach((t) => edge(linkN, t, t.value, C.primary, relatedTarget(t), 4));
-    } else {
-      vlanN.forEach((v) => {
-        tgtN.forEach((t) => {
-          const value = graph.devices.filter((d) => d.vlan === v.id).reduce((s, d) => s + d.flows.filter((f) => t.devices.has(d.ip) && (t.key === `vlan:${f.remoteVlan}` || (t.key === 'server' && f.label.startsWith('Servidor')))).reduce((a, f) => a + (dir === 'down' ? f.down : f.up), 0), 0);
-          if (value > 0.01) edge(v, t, value, C.internal, relatedVlan(v) && relatedTarget(t), 3);
-        });
-      });
-    }
-
-    // conexões diretas do dispositivo selecionado com seus destinos
-    if (sel?.kind === 'device') {
-      const dev = devN.find((d) => d.ip === sel.ip);
-      if (dev) {
-        tgtN.filter((t) => t.devices.has(dev.ip)).forEach((t) => {
-          ctx.beginPath();
-          ctx.moveTo(dev.x, dev.y);
-          ctx.bezierCurveTo(dev.x + 260, dev.y - 50, t.x - 240, t.y + 50, t.x, t.y);
-          ctx.setLineDash([5, 5]);
-          ctx.strokeStyle = vlanColor(dev.vlan);
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-          ctx.setLineDash([]);
-        });
-      }
-    }
-
-    const circle = (n, color, on) => {
-      ctx.beginPath();
-      ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
-      ctx.fillStyle = on ? color : rgba(color, 0.2);
-      ctx.fill();
-      if (hoverRef.current === n.kind + (n.ip || n.id || n.key)) {
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = C.text;
-        ctx.stroke();
-      }
-    };
-
-    devN.forEach((d) => {
-      const on = relatedDevice(d);
-      circle(d, vlanColor(d.vlan), on);
-      ctx.textAlign = 'right';
-      ctx.font = '600 11.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? C.text : rgba(C.text, 0.35);
-      const name = d.hostname ? d.hostname.split(' · ')[0] : d.ip;
-      ctx.fillText(name.length > 26 ? `${name.slice(0, 25)}…` : name, d.x - d.r - 8, d.y - 1);
-      ctx.font = '10.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? rgba(C.text, 0.55) : rgba(C.text, 0.25);
-      ctx.fillText(`${d.hostname ? `${d.ip} · ` : ''}${fmt(d.value)} Mbps${d.qosVip ? ' · banda total' : ''}`, d.x - d.r - 8, d.y + 12);
-    });
-
-    vlanN.forEach((v) => {
-      const on = relatedVlan(v);
-      circle(v, vlanColor(v.id), on);
-      if (v.limit) {
-        const use = v.value / v.limit;
+      const circle = (n, col, on, key) => {
         ctx.beginPath();
-        ctx.arc(v.x, v.y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
-        ctx.strokeStyle = use > 0.9 ? C.danger : use > 0.7 ? C.warning : C.success;
-        ctx.lineWidth = 2.5;
+        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.fillStyle = on ? col : alpha(col, 0.2);
+        ctx.fill();
+        if (hoverRef.current === key) {
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = C.ink;
+          ctx.stroke();
+        }
+      };
+
+      m.devices.forEach((d) => {
+        const on = devOn(d);
+        circle(d, C.vlan(d.vlan), on, `dev:${d.ip}`);
+        ctx.textAlign = 'right';
+        ctx.font = `500 11px ${MONO}`;
+        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
+        ctx.fillText(d.ip, d.x - d.r - 8, d.y - 1);
+        ctx.font = `10px ${SANS}`;
+        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        const kind = shortName(d);
+        ctx.fillText(`${kind.length > 22 ? `${kind.slice(0, 21)}…` : kind} · ${fmt(d.val)} Mbps${d.qosVip ? ' · prioridade' : ''}`, d.x - d.r - 8, d.y + 11);
+      });
+
+      m.vlans.forEach((v) => {
+        const on = vlanOn(v);
+        const use = v.limit ? v.val / v.limit : 0;
+        circle(v, C.vlan(v.id), on, `vlan:${v.id}`);
+        if (v.limit) {
+          ctx.beginPath();
+          ctx.arc(v.x, v.y, v.r + 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
+          ctx.strokeStyle = use > 0.9 ? C.crit : use > 0.7 ? C.warn : C.ok;
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+        }
+        ctx.textAlign = 'center';
+        ctx.font = `700 11px ${SANS}`;
+        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
+        ctx.fillText(`${v.id} · ${v.name}`, v.x, v.y + v.r + 17);
+        ctx.font = `10px ${MONO}`;
+        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        ctx.fillText(v.val > 0.01 ? `${fmt(v.val)}${v.limit ? `/${v.limit}` : ''}` : `sem tráfego · ${v.neighbors} disp.`, v.x, v.y + v.r + 29);
+      });
+
+      if (wan) {
+        const u = m.wan / L;
+        ctx.beginPath();
+        ctx.arc(wan.x, wan.y, wan.r, 0, Math.PI * 2);
+        ctx.fillStyle = C.surface;
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = C.line;
         ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(wan.x, wan.y, wan.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, u));
+        ctx.strokeStyle = u > 0.85 ? C.crit : u > 0.65 ? C.warn : C.accent;
+        ctx.lineWidth = 7;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = C.ink;
+        ctx.font = `800 17px ${SANS}`;
+        ctx.fillText(`${Math.round(u * 100)}%`, wan.x, wan.y + 2);
+        ctx.font = `10px ${MONO}`;
+        ctx.fillStyle = alpha(C.ink, 0.6);
+        ctx.fillText(`de ${L} Mbps`, wan.x, wan.y + 16);
+        ctx.font = `700 11px ${SANS}`;
+        ctx.fillStyle = C.ink;
+        ctx.fillText('Link WAN', wan.x, wan.y + wan.r + 18);
       }
-      ctx.textAlign = 'center';
-      ctx.font = '600 11.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? C.text : rgba(C.text, 0.35);
-      ctx.fillText(`${v.id} · ${v.name}`, v.x, v.y + v.r + 17);
-      ctx.font = '10.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? rgba(C.text, 0.55) : rgba(C.text, 0.25);
-      ctx.fillText(`${fmt(v.value)}${v.limit ? ` / ${v.limit}` : ''} Mbps`, v.x, v.y + v.r + 30);
-    });
 
-    if (linkN) {
-      const use = (dir === 'down' ? data.wan.down : data.wan.up) / capacity;
-      ctx.beginPath();
-      ctx.arc(linkN.x, linkN.y, linkN.r, 0, Math.PI * 2);
-      ctx.fillStyle = C.surface;
-      ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = C.outline;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(linkN.x, linkN.y, linkN.r - 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, use));
-      ctx.strokeStyle = use > 0.85 ? C.danger : use > 0.65 ? C.warning : C.primary;
-      ctx.lineWidth = 7;
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      ctx.lineCap = 'butt';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = C.text;
-      ctx.font = '700 17px Inter, system-ui, sans-serif';
-      ctx.fillText(`${Math.round(use * 100)}%`, linkN.x, linkN.y + 2);
-      ctx.font = '10.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = rgba(C.text, 0.55);
-      ctx.fillText(`de ${capacity} Mbps`, linkN.x, linkN.y + 16);
-      ctx.font = '600 11.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = C.text;
-      ctx.fillText('Link WAN', linkN.x, linkN.y + linkN.r + 18);
-    }
+      m.sites.forEach((t) => {
+        const on = siteOn(t);
+        circle(t, inet ? C.accent : C.warn, on, `site:${t.i}`);
+        ctx.textAlign = 'left';
+        ctx.font = `600 11.5px ${SANS}`;
+        ctx.fillStyle = on ? C.ink : alpha(C.ink, 0.35);
+        ctx.fillText(t.name.length > 28 ? `${t.name.slice(0, 27)}…` : t.name, t.x + t.r + 8, t.y - 1);
+        ctx.font = `10px ${MONO}`;
+        ctx.fillStyle = on ? alpha(C.ink, 0.6) : alpha(C.ink, 0.28);
+        ctx.fillText(`${fmt(t.val)} Mbps${inet ? ` · ${Math.round((t.val / L) * 100)}%` : ''}`, t.x + t.r + 8, t.y + 11);
+      });
 
-    tgtN.forEach((t) => {
-      const on = relatedTarget(t);
-      circle(t, isInternet ? C.primary : C.internal, on);
-      ctx.textAlign = 'left';
-      ctx.font = '600 11.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? C.text : rgba(C.text, 0.35);
-      ctx.fillText(t.label.length > 30 ? `${t.label.slice(0, 29)}…` : t.label, t.x + t.r + 8, t.y - 1);
-      ctx.font = '10.5px Inter, system-ui, sans-serif';
-      ctx.fillStyle = on ? rgba(C.text, 0.55) : rgba(C.text, 0.25);
-      ctx.fillText(`${fmt(t.value)} Mbps${isInternet ? ` · ${Math.round((t.value / capacity) * 100)}% do link` : ''} · ${t.devices.size} disp.`, t.x + t.r + 8, t.y + 12);
-    });
-  }, [graph, width, height, selected, mode, dir, paused, data, capacity]);
-
-  useEffect(() => {
-    let frame;
-    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    const loop = (ts) => {
-      draw(reduce ? 0 : ts / 1000);
-      if (!reduce) frame = requestAnimationFrame(loop);
+      if (!reduce) frame = requestAnimationFrame(draw);
     };
-    frame = requestAnimationFrame(loop);
+    frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [draw]);
+  }, [model, theme, sel, mode, width, height, view]);
 
-  const hit = (event) => {
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) * width) / rect.width;
-    const y = ((event.clientY - rect.top) * height) / rect.height;
-    return layoutRef.current.nodes.find((n) => n.kind !== 'link' && (x - n.x) ** 2 + (y - n.y) ** 2 <= (n.r + 7) ** 2) || null;
+  const hit = (ev) => {
+    const r = canvasRef.current.getBoundingClientRect();
+    const mx = ((ev.clientX - r.left) * width) / r.width;
+    const my = ((ev.clientY - r.top) * height) / r.height;
+    const { devices, vlans, sites } = nodesRef.current;
+    const near = (n) => (mx - n.x) ** 2 + (my - n.y) ** 2 <= (n.r + 7) ** 2;
+    const d = devices.find(near);
+    if (d) return { t: 'dev', ip: d.ip, vlan: d.vlan, key: `dev:${d.ip}` };
+    const v = vlans.find(near);
+    if (v) return { t: 'vlan', id: v.id, key: `vlan:${v.id}` };
+    const s = sites.find(near);
+    if (s) return { t: 'site', i: s.i, key: `site:${s.i}` };
+    return null;
   };
+  const select = (next) => setSel((cur) => (cur && next && cur.key === next.key ? null : next));
 
-  const selectNode = (node) => {
-    if (!node) { setSelected(null); return; }
-    const same = selected && selected.kind === node.kind && (selected.ip || selected.id || selected.key) === (node.ip || node.id || node.key);
-    setSelected(same ? null : { kind: node.kind, ip: node.ip, id: node.id, key: node.key, vlan: node.vlan });
-  };
+  const devAll = (data?.devices || []);
+  const topIps = model ? [...model.devices].sort((a, b) => b.val - a.val).slice(0, 5) : [];
+  const topSites = model ? model.sites.slice(0, 5) : [];
+  const vlanLegend = data?.vlans || [];
+  const updated = data?.updated_at ? new Date(data.updated_at).toLocaleTimeString('pt-BR') : null;
 
-  const selectedDevice = selected?.kind === 'device' ? (data?.devices || []).find((d) => d.ip === selected.ip) : null;
-  const selectedTarget = selected?.kind === 'target' ? graph?.targetMap.get(selected.key) : null;
-  const selectedVlan = selected?.kind === 'vlan' ? (data?.vlans || []).find((v) => v.id === selected.id) : null;
+  const selDev = sel?.t === 'dev' ? model?.devices.find((d) => d.ip === sel.ip) : null;
+  const selSite = sel?.t === 'site' ? model?.sites[sel.i] : null;
+  const selVlan = sel?.t === 'vlan' ? (data?.vlans || []).find((v) => v.id === sel.id) : null;
 
-  const internalTotal = (data?.vlans || []).reduce((s, v) => s + (dir === 'down' ? v.internal_down : v.internal_up), 0);
+  const segBtn = (on) => `px-3 py-1.5 text-[13px] font-semibold ${on ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`;
+  const chip = 'inline-flex items-center rounded-md border border-dashed border-outline px-2 py-1 text-[12px] text-on-surface/70 hover:border-primary/50 hover:text-primary';
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-on-surface">Mapa de Tráfego</h1>
-          <p className="text-sm text-on-surface/55">Quem está usando a banda agora e para onde. Atualiza a cada 5 segundos.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex rounded-lg border border-outline p-0.5" role="group" aria-label="Tipo de tráfego">
-            {[['internet', 'Internet'], ['internal', 'Rede interna']].map(([key, label]) => (
-              <button key={key} type="button" aria-pressed={mode === key} onClick={() => { setMode(key); setSelected(null); }} className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${mode === key ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}>{label}</button>
-            ))}
-          </div>
-          <div className="inline-flex rounded-lg border border-outline p-0.5" role="group" aria-label="Sentido">
-            {[['down', 'Download'], ['up', 'Upload']].map(([key, label]) => (
-              <button key={key} type="button" aria-pressed={dir === key} onClick={() => setDir(key)} className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${dir === key ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}>{label}</button>
-            ))}
-          </div>
-          <button type="button" onClick={() => setPaused((p) => !p)} className="inline-flex items-center gap-1.5 rounded-lg border border-outline px-3 py-1.5 text-[12.5px] font-semibold text-on-surface/75 hover:text-on-surface">
-            {paused ? <Play size={14} /> : <Pause size={14} />}{paused ? 'Retomar' : 'Pausar'}
-          </button>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-on-surface">Mapa de Tráfego</h1>
+        <p className="max-w-3xl text-sm text-on-surface/60">Dispositivos à esquerda, VLANs, o link de {LINK} Mbps no centro e os sites à direita. A espessura de cada ligação é a banda em uso. Clique num IP para ver os sites dele, ou num site para ver quem está puxando.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {[
-          ['Internet ↓', data ? `${fmt(data.wan.down)} Mbps` : '—', data ? `${Math.round((data.wan.down / capacity) * 100)}% do link` : ''],
-          ['Internet ↑', data ? `${fmt(data.wan.up)} Mbps` : '—', data ? `${Math.round((data.wan.up / capacity) * 100)}% do link` : ''],
-          ['Dispositivos ativos', data ? data.devices.length : '—', 'com tráfego agora'],
-          [`Tráfego interno ${dir === 'down' ? '↓' : '↑'}`, data ? `${fmt(internalTotal)} Mbps` : '—', 'entre VLANs, fora do link'],
-        ].map(([label, value, sub]) => (
-          <div key={label} className="sgcg-card p-3">
-            <div className="text-[11.5px] font-medium text-on-surface/55">{label}</div>
-            <div className="tabular text-xl font-bold text-on-surface">{value}</div>
-            <div className="text-[11.5px] text-on-surface/45">{sub}</div>
+      <section className="overflow-hidden rounded-xl border border-outline bg-container">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5 border-b border-outline px-4 py-3">
+          <span className="text-base font-bold text-on-surface">Mapa de Tráfego</span>
+          <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${paused ? 'border-warning text-warning' : 'border-success/40 text-success'}`} style={{ fontFamily: MONO }}>
+            <span className={`h-1.5 w-1.5 rounded-full ${paused ? 'bg-warning' : 'bg-success'}`} />{paused ? 'pausado' : 'ao vivo'}
+          </span>
+          {updated ? <span className="rounded-full border border-outline px-2 py-0.5 text-[11px] text-on-surface/55" style={{ fontFamily: MONO }}>{updated}</span> : null}
+          <div className="inline-flex overflow-hidden rounded-lg border border-outline sm:ml-auto" role="group" aria-label="Tipo de tráfego">
+            <button type="button" aria-pressed={internet} onClick={() => { setView('internet'); setSel(null); }} className={segBtn(internet)}>Internet</button>
+            <button type="button" aria-pressed={!internet} onClick={() => { setView('internal'); setSel(null); }} className={segBtn(!internet)}>Rede interna</button>
           </div>
-        ))}
-      </div>
+          <div className="inline-flex overflow-hidden rounded-lg border border-outline" role="group" aria-label="Sentido do tráfego">
+            <button type="button" aria-pressed={mode === 'd'} onClick={() => setMode('d')} className={segBtn(mode === 'd')}>Download</button>
+            <button type="button" aria-pressed={mode === 'u'} onClick={() => setMode('u')} className={segBtn(mode === 'u')}>Upload</button>
+          </div>
+          <button type="button" onClick={() => setPaused((p) => !p)} className="rounded-lg border border-outline px-3 py-1.5 text-[13px] font-semibold text-on-surface/65 hover:text-on-surface">{paused ? 'Retomar' : 'Pausar'}</button>
+        </div>
 
-      {error && !data ? <div className="sgcg-card p-4 text-sm text-danger">Não foi possível ler o tráfego. Verifique se o backend está no ar.</div> : null}
-
-      <div className="grid grid-cols-1 gap-4 2xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div ref={wrapRef} className="sgcg-card min-w-0 overflow-x-auto">
-          {graph && graph.devices.length ? (
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px]">
+          <div ref={scrollRef} className="min-w-0 overflow-x-auto border-b border-outline lg:border-b-0 lg:border-r" style={{ background: 'var(--map-bg)' }}>
+            {error && !data ? <div className="p-8 text-sm text-danger">Não foi possível ler o tráfego. Verifique se o backend está no ar.</div> : null}
             <canvas
               ref={canvasRef}
-              style={{ width, height, display: 'block', cursor: 'pointer' }}
-              onMouseMove={(e) => { const n = hit(e); hoverRef.current = n ? n.kind + (n.ip || n.id || n.key) : null; }}
+              style={{ width, height, display: 'block', cursor: 'crosshair' }}
+              onMouseMove={(e) => { const n = hit(e); hoverRef.current = n?.key || null; e.currentTarget.style.cursor = n ? 'pointer' : 'crosshair'; }}
               onMouseLeave={() => { hoverRef.current = null; }}
-              onClick={(e) => selectNode(hit(e))}
-              aria-label="Grafo de tráfego por dispositivo, VLAN e destino"
+              onClick={(e) => select(hit(e))}
+              aria-label="Grafo de tráfego: dispositivos, VLANs, link e sites"
             />
-          ) : (
-            <div className="p-8 text-center text-sm text-on-surface/55">{data ? (mode === 'internal' ? 'Nenhum tráfego entre VLANs agora.' : 'Nenhum tráfego de internet medido agora.') : 'Coletando tráfego...'}</div>
-          )}
-          {graph?.othersCount ? <div className="border-t border-outline px-4 py-2 text-[12px] text-on-surface/55">Mais {graph.othersCount} dispositivos com {fmt(graph.othersValue)} Mbps somados não aparecem no mapa.</div> : null}
+            {model && !model.devices.length ? <div className="px-4 pb-4 text-sm text-on-surface/55">{internet ? 'Nenhum tráfego de internet medido agora.' : 'Nenhum tráfego entre VLANs agora.'}</div> : null}
+            {model?.hidden ? <div className="px-4 pb-3 text-[12px] text-on-surface/55">Mais {model.hidden} dispositivos com pouco tráfego não aparecem no mapa.</div> : null}
+          </div>
+
+          <aside className="flex min-w-0 flex-col gap-4 p-4">
+            <div className="grid grid-cols-2 gap-2.5">
+              {[['Download', data?.wan.down], ['Upload', data?.wan.up]].map(([label, v]) => (
+                <div key={label} className="rounded-lg bg-on-surface/[0.05] px-3 py-2.5">
+                  <div className="text-[11px] uppercase tracking-wide text-on-surface/55" style={{ fontFamily: MONO }}>{label}</div>
+                  <div className="tabular text-[22px] font-extrabold leading-tight text-on-surface">{data ? `${fmt(v)} Mbps` : '—'}</div>
+                  <div className="tabular text-[12px] text-on-surface/55">{data ? `${Math.round(((v || 0) / LINK) * 100)}% de ${LINK} Mbps` : ''}</div>
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-on-surface/55" style={{ fontFamily: MONO }}>Quem mais consome</h3>
+              <ol className="flex flex-col gap-1.5">
+                {topIps.map((d) => {
+                  const p = (d.val / LINK) * 100;
+                  return (
+                    <li key={d.ip}>
+                      <button type="button" onClick={() => select({ t: 'dev', ip: d.ip, vlan: d.vlan, key: `dev:${d.ip}` })} className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-0.5 rounded-md px-1 py-0.5 text-left text-[13px] hover:bg-primary/8 ${sel?.key === `dev:${d.ip}` ? 'bg-primary/10' : ''}`}>
+                        <span className="truncate" style={{ fontFamily: MONO }} title={shortName(d)}>{d.ip}</span>
+                        <span className="tabular text-[12px]" style={{ fontFamily: MONO }}>{fmt(d.val)} Mbps</span>
+                        <span className="col-span-2 h-1 overflow-hidden rounded bg-on-surface/[0.07]"><i className="block h-full rounded" style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: `var(--vlan-${d.vlan}, var(--vlan-99))` }} /></span>
+                      </button>
+                    </li>
+                  );
+                })}
+                {!topIps.length ? <li className="text-[12.5px] text-on-surface/55">Coletando...</li> : null}
+              </ol>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-on-surface/55" style={{ fontFamily: MONO }}>{internet ? 'Sites mais pesados' : 'Destinos internos'}</h3>
+              <ol className="flex flex-col gap-1.5">
+                {topSites.map((t) => {
+                  const p = (t.val / LINK) * 100;
+                  return (
+                    <li key={t.name}>
+                      <button type="button" onClick={() => select({ t: 'site', i: t.i, key: `site:${t.i}` })} className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-0.5 rounded-md px-1 py-0.5 text-left text-[13px] hover:bg-primary/8 ${sel?.key === `site:${t.i}` ? 'bg-primary/10' : ''}`}>
+                        <span className="truncate">{t.name}</span>
+                        <span className="tabular text-[12px]" style={{ fontFamily: MONO }}>{internet ? `${Math.round(p)}%` : `${fmt(t.val)} Mbps`}</span>
+                        <span className="col-span-2 h-1 overflow-hidden rounded bg-on-surface/[0.07]"><i className="block h-full rounded" style={{ width: `${Math.min(100, p * 3).toFixed(1)}%`, background: internet ? 'var(--chart-2)' : 'var(--md-warning)' }} /></span>
+                      </button>
+                    </li>
+                  );
+                })}
+                {!topSites.length ? <li className="text-[12.5px] text-on-surface/55">Coletando...</li> : null}
+              </ol>
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-outline pt-3.5 text-[13px]">
+              {selDev ? (
+                <>
+                  <h3 className="text-[15px] font-bold text-on-surface" style={{ fontFamily: MONO }}>{selDev.ip}</h3>
+                  <span className="text-on-surface/60">{shortName(selDev)} · VLAN {selDev.vlan} {(data?.vlans || []).find((v) => v.id === selDev.vlan)?.name || ''}{selDev.qosVip ? ' · com prioridade' : ''}</span>
+                  <div className="space-y-0.5">
+                    {selDev.links.map((l) => (
+                      <div key={l.site}>{model.sites[l.site]?.name} <span className="text-on-surface/55" style={{ fontFamily: MONO }}>↓{fmt(l.down)} ↑{fmt(l.up)}</span></div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Link className={chip} to={`/acoes-rapidas?acao=banda&ip=${selDev.ip}`}>Prioridade de banda</Link>
+                    <Link className={chip} to={`/acoes-rapidas?acao=temporaria&ip=${selDev.ip}`}>Liberar sites</Link>
+                    <Link className={chip} to={`/radar-dns?ip=${selDev.ip}`}>Ver no Radar DNS</Link>
+                  </div>
+                </>
+              ) : selSite ? (
+                <>
+                  <h3 className="text-[15px] font-bold text-on-surface">{selSite.name}</h3>
+                  {selSite.dom.length ? <span className="text-on-surface/55" style={{ fontFamily: MONO }}>{selSite.dom.slice(0, 3).join(', ')}</span> : null}
+                  <div className="space-y-0.5">
+                    {Array.from(selSite.users.entries()).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([ip, v]) => {
+                      const d = devAll.find((x) => x.ip === ip);
+                      return <div key={ip}><span style={{ fontFamily: MONO }}>{ip}</span> <span className="text-on-surface/55">{d ? shortName(d) : ''} · {fmt(v)} Mbps</span></div>;
+                    })}
+                  </div>
+                  {internet && selSite.dom.length ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      <Link className={chip} to={`/acoes-rapidas?acao=bloquear&dominio=${selSite.dom[0]}`}>Bloquear site</Link>
+                      <Link className={chip} to={`/acoes-rapidas?acao=liberar&dominio=${selSite.dom[0]}`}>Liberar site</Link>
+                    </div>
+                  ) : null}
+                </>
+              ) : selVlan ? (
+                <>
+                  <h3 className="text-[15px] font-bold text-on-surface">VLAN {selVlan.id} · {selVlan.name}</h3>
+                  <span className="text-on-surface/60">Usando {fmt(mode === 'd' ? selVlan.down : selVlan.up)} de {(mode === 'd' ? selVlan.limit_down : selVlan.limit_up) ?? '—'} Mbps do limite de QoS{(mode === 'd' ? selVlan.limit_down : selVlan.limit_up) ? ` (${Math.round(((mode === 'd' ? selVlan.down : selVlan.up) / (mode === 'd' ? selVlan.limit_down : selVlan.limit_up)) * 100)}%)` : ''}. {selVlan.neighbors} dispositivos conectados.</span>
+                  {selVlan.internal_down > 0.5 ? <span className="text-on-surface/60">Tráfego interno: {fmt(selVlan.internal_down)} Mbps{selVlan.internal_exempt ? ', fora do limite.' : ', contando no limite.'}</span> : null}
+                  <div className="flex flex-wrap gap-1.5">
+                    <Link className={chip} to="/rede?tab=qos">Ajustar QoS</Link>
+                    <Link className={chip} to="/rede?tab=scheduler">Horários</Link>
+                    <Link className={chip} to="/operacoes">Bloqueio total</Link>
+                  </div>
+                </>
+              ) : (
+                <span className="text-on-surface/55">Clique num nó do mapa ou num item da lista para ver detalhes.</span>
+              )}
+            </div>
+          </aside>
         </div>
 
-        <aside className="sgcg-card space-y-3 p-4">
-          {selectedDevice ? (
-            <>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-on-surface/45">Dispositivo · VLAN {selectedDevice.vlan}</div>
-                <div className="text-base font-bold text-on-surface">{selectedDevice.hostname ? selectedDevice.hostname.split(' · ')[0] : selectedDevice.ip}</div>
-                <div className="tabular text-[12.5px] text-on-surface/60">{selectedDevice.ip}{selectedDevice.hostname?.includes(' · ') ? ` · ${selectedDevice.hostname.split(' · ')[1]}` : ''}</div>
-                <div className="tabular mt-1 text-[12.5px] text-on-surface/70">↓ {fmt(selectedDevice.down)} Mbps · ↑ {fmt(selectedDevice.up)} Mbps{selectedDevice.qosVip ? ' · com banda total' : ''}</div>
-              </div>
-              <ul className="divide-y divide-outline text-[12.5px]">
-                {selectedDevice.flows.slice(0, 10).map((f) => (
-                  <li key={f.remote} className="flex items-center justify-between gap-2 py-1.5">
-                    <span className="min-w-0 truncate" title={`${f.label} (${f.remote})`}>{f.label}{f.kind === 'internal' ? <span className="ml-1 text-on-surface/45">interno</span> : null}</span>
-                    <span className="tabular shrink-0 text-on-surface/60">↓{fmt(f.down)} ↑{fmt(f.up)}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="grid grid-cols-2 gap-2">
-                <Link to={`/acoes-rapidas?acao=banda&ip=${selectedDevice.ip}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-outline px-2 py-2 text-[12.5px] font-semibold hover:border-primary/40 hover:text-primary"><Gauge size={14} />Banda total</Link>
-                <Link to={`/acoes-rapidas?acao=temporaria&ip=${selectedDevice.ip}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-outline px-2 py-2 text-[12.5px] font-semibold hover:border-primary/40 hover:text-primary"><Unlock size={14} />Liberar sites</Link>
-                <Link to={`/radar-dns?ip=${selectedDevice.ip}`} className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-outline px-2 py-2 text-[12.5px] font-semibold hover:border-primary/40 hover:text-primary"><Radar size={14} />Ver consultas no Radar DNS</Link>
-              </div>
-            </>
-          ) : selectedTarget ? (
-            <>
-              <div>
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-on-surface/45">{mode === 'internet' ? 'Site ou serviço' : 'Destino interno'}</div>
-                <div className="text-base font-bold text-on-surface">{selectedTarget.label}</div>
-                {selectedTarget.domains.size ? <div className="text-[12.5px] text-on-surface/60">{Array.from(selectedTarget.domains).slice(0, 4).join(', ')}</div> : null}
-                <div className="tabular mt-1 text-[12.5px] text-on-surface/70">{fmt(selectedTarget.value)} Mbps de {selectedTarget.devices.size} dispositivo(s)</div>
-              </div>
-              <ul className="divide-y divide-outline text-[12.5px]">
-                {Array.from(selectedTarget.devices).slice(0, 12).map((ip) => {
-                  const d = (data?.devices || []).find((x) => x.ip === ip);
-                  return <li key={ip} className="flex justify-between gap-2 py-1.5"><span className="truncate">{d?.hostname ? d.hostname.split(' · ')[0] : ip}</span><span className="tabular text-on-surface/55">{ip}</span></li>;
-                })}
-              </ul>
-              {mode === 'internet' && selectedTarget.domains.size ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <Link to={`/acoes-rapidas?acao=bloquear&dominio=${Array.from(selectedTarget.domains)[0]}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-outline px-2 py-2 text-[12.5px] font-semibold hover:border-danger/40 hover:text-danger"><Ban size={14} />Bloquear</Link>
-                  <Link to={`/acoes-rapidas?acao=liberar&dominio=${Array.from(selectedTarget.domains)[0]}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-outline px-2 py-2 text-[12.5px] font-semibold hover:border-primary/40 hover:text-primary"><Unlock size={14} />Liberar</Link>
-                </div>
-              ) : null}
-            </>
-          ) : selectedVlan ? (
-            <>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-on-surface/45">VLAN</div>
-              <div className="text-base font-bold text-on-surface">{selectedVlan.id} · {selectedVlan.name}</div>
-              <dl className="tabular grid grid-cols-2 gap-2 text-[12.5px]">
-                <div><dt className="text-on-surface/50">Download</dt><dd className="font-semibold">{fmt(selectedVlan.down)} / {selectedVlan.limit_down ?? '—'} Mbps</dd></div>
-                <div><dt className="text-on-surface/50">Upload</dt><dd className="font-semibold">{fmt(selectedVlan.up)} / {selectedVlan.limit_up ?? '—'} Mbps</dd></div>
-                <div><dt className="text-on-surface/50">Interno ↓</dt><dd className="font-semibold">{fmt(selectedVlan.internal_down)} Mbps</dd></div>
-                <div><dt className="text-on-surface/50">Dispositivos</dt><dd className="font-semibold">{selectedVlan.neighbors}</dd></div>
-              </dl>
-              {selectedVlan.internal_down > 5 && selectedVlan.limit_down ? (
-                <p className="rounded-lg bg-warning/8 p-2.5 text-[12.5px] text-warning">{fmt(selectedVlan.internal_down)} Mbps de tráfego interno contam no limite de {selectedVlan.limit_down} Mbps desta VLAN.</p>
-              ) : null}
-              <Link to="/rede?tab=qos" className="inline-flex text-[12.5px] font-semibold text-primary">Ajustar limites (QoS)</Link>
-            </>
-          ) : (
-            <>
-              <div className="text-sm font-semibold text-on-surface">Como ler</div>
-              <ul className="list-disc space-y-1.5 pl-4 text-[12.5px] leading-5 text-on-surface/65">
-                <li>A espessura da linha é a banda em uso.</li>
-                <li>O anel da VLAN mostra quanto do limite de QoS está sendo usado.</li>
-                <li>Clique num dispositivo para ver os sites dele e dar banda total ou liberar sites.</li>
-                <li>Clique num site para ver quem está usando e bloquear ou liberar.</li>
-                <li>Em <b>Rede interna</b> aparece o tráfego entre VLANs, como as câmeras.</li>
-              </ul>
-            </>
-          )}
-        </aside>
-      </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 border-t border-outline px-4 py-2.5 text-[12px] text-on-surface/60">
+          {vlanLegend.map((v) => (
+            <span key={v.id} className="inline-flex items-center gap-1.5">
+              <i className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: `var(--vlan-${v.id}, var(--vlan-99))` }} />
+              VLAN {v.id} {v.name}{v.limit_down ? ` · QoS ${v.limit_down} Mbps` : ''}
+            </span>
+          ))}
+          <span>Anel da VLAN: uso do limite (verde, âmbar acima de 70%, vermelho acima de 90%)</span>
+        </div>
+      </section>
     </div>
   );
 }

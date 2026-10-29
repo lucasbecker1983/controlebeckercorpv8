@@ -8404,3 +8404,14 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - Dependência nova: `echarts@5.5.1` (importação modular).
 - Validação: `tsc --noEmit` do backend sem erros; `npm run build` do frontend sem erros (como root, por causa do certificado lido no `vite.config.js`); `bcc-backend` e `bcc-frontend` reiniciados e `online`; rotas `/api/monitor/*`, `/api/qos` e `sporadic-exceptions` com HTTP 200 autenticado e 401 sem token; coletor medindo 7 VLANs, 20+ dispositivos e sites nomeados. O reinício do backend reaplica as filas de QoS (comportamento existente).
 - Pendente, aguardando decisão: tirar o tráfego interno (192.168.0.0/16) da fila de internet do QoS; prioridade real da VLAN 10 com filas na WAN; consertar o ingester do Squid para `access_events`.
+
+
+## VLAN 10 em 100 Mbps com faixa prioritária e tráfego interno fora do QoS - 2026-10-29
+
+- Pedido: estações da VLAN 10 limitadas a 100 Mbps e prioridade de banda para o secretário Leandro, Lucas (TI), Jhoelber (TI) e Tiago (subchefe).
+- `qos-routes.ts`: nova fila `1:30` (1 Gbit) por VLAN para tráfego com origem (download) ou destino (upload) em `QOS_INTERNAL_NETWORK` (padrão `192.168.0.0/16`). Fica atrás de `QOS_INTERNAL_BYPASS=true` no `.env` do backend; sem a opção, o comportamento antigo é mantido. A contagem de filtros VIP (`flowid 1:20`) não muda.
+- Aplicado em 29/10 às 11:46: backup em `backups/qos-20261029-114412` (tc, `net_qos_policies`, `net_qos_vips`, `.env`); `net_qos_policies` da `enp6s0.10` de 135/135 para 100/100; faixa prioritária com 10 IPs (servidor `.1`, TV Corporativa `.127`, Leandro `.169`/`.42`/reserva `.135`, Lucas `.45`/reserva `.131`, Jhoelber `.49`, Tiago `.37`/reserva `.113`); `QOS_INTERNAL_BYPASS=true` incluído no `.env`; `bcc-backend` reiniciado (reconciliação aplica as filas no boot).
+- Validação: `1:10` a 100 Mbit, `1:20` com 10 filtros e `1:30` com o filtro interno em todas as VLANs com QoS; medição de 10 s na VLAN 10 com 33,5 Mbps de vídeo das câmeras na fila interna e 3,1 Mbps na fila das estações; regras do Hotspot e Colaboradores presentes.
+- Aparelhos: Leandro, Lucas e Tiago usam IPs digitados no aparelho, dentro da faixa automática (`.28`-`.100`), diferentes das reservas por MAC (`.135`, `.131`, `.113`). Os IPs reservados já estão na faixa prioritária para a migração para DHCP. Reservas duplicadas em `static_hosts.conf`: `.24`, `.103`, `.168`, `.183`, `.189`.
+- Monitor: `internal_exempt` por VLAN (detecta a classe `1:30`) e alerta de tráfego interno só quando ele ainda conta no limite.
+- Mapa de Tráfego refeito no formato do protótipo da auditoria: cores fixas por VLAN (`--vlan-<id>` nos dois temas), todas as VLANs na coluna mesmo sem tráfego, medidor do link, painel com download/upload, rankings e detalhes, legenda com o QoS de cada VLAN e aba de rede interna.

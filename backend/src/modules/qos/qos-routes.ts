@@ -247,6 +247,13 @@ const inspectRuntime = async (iface: string): Promise<RuntimeState> => {
     };
 };
 
+// Desligado por padrão: ligar com QOS_INTERNAL_BYPASS=true no .env e reconciliar o QoS.
+const INTERNAL_BYPASS = process.env.QOS_INTERNAL_BYPASS === 'true';
+const INTERNAL_NETWORK = process.env.QOS_INTERNAL_NETWORK || '192.168.0.0/16';
+if (!/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(INTERNAL_NETWORK)) {
+    throw new Error(`QOS_INTERNAL_NETWORK inválida: ${INTERNAL_NETWORK}`);
+}
+
 const applyPolicyToKernel = async (iface: string, downLim: number, upLim: number, vips: Array<{ ip: string; label: string }>) => {
     const ifb = getIfbName(iface);
 
@@ -259,6 +266,12 @@ const applyPolicyToKernel = async (iface: string, downLim: number, upLim: number
         await execCmdStrict(`sudo tc class add dev ${iface} parent 1: classid 1:1 htb rate 1000mbit`);
         await execCmdStrict(`sudo tc class add dev ${iface} parent 1:1 classid 1:10 htb rate ${downLim}mbit ceil ${downLim}mbit`);
         await execCmdStrict(`sudo tc class add dev ${iface} parent 1:1 classid 1:20 htb rate 1000mbit ceil 1000mbit`);
+        // Tráfego vindo da rede interna (outras VLANs, câmeras, servidor) não é internet:
+        // vai para uma fila própria de 1 Gbit e não consome o limite da VLAN.
+        if (INTERNAL_BYPASS) {
+            await execCmdStrict(`sudo tc class add dev ${iface} parent 1:1 classid 1:30 htb rate 1000mbit ceil 1000mbit`);
+            await execCmdStrict(`sudo tc filter add dev ${iface} protocol ip parent 1:0 prio 2 u32 match ip src ${INTERNAL_NETWORK} flowid 1:30`);
+        }
 
         for (const vip of vips) {
             await execCmdStrict(`sudo tc filter add dev ${iface} protocol ip parent 1:0 prio 1 u32 match ip dst ${vip.ip}/32 flowid 1:20`);
@@ -273,6 +286,10 @@ const applyPolicyToKernel = async (iface: string, downLim: number, upLim: number
         await execCmdStrict(`sudo tc class add dev ${ifb} parent 1: classid 1:1 htb rate 1000mbit`);
         await execCmdStrict(`sudo tc class add dev ${ifb} parent 1:1 classid 1:10 htb rate ${upLim}mbit ceil ${upLim}mbit`);
         await execCmdStrict(`sudo tc class add dev ${ifb} parent 1:1 classid 1:20 htb rate 1000mbit ceil 1000mbit`);
+        if (INTERNAL_BYPASS) {
+            await execCmdStrict(`sudo tc class add dev ${ifb} parent 1:1 classid 1:30 htb rate 1000mbit ceil 1000mbit`);
+            await execCmdStrict(`sudo tc filter add dev ${ifb} protocol ip parent 1:0 prio 2 u32 match ip dst ${INTERNAL_NETWORK} flowid 1:30`);
+        }
 
         for (const vip of vips) {
             await execCmdStrict(`sudo tc filter add dev ${ifb} protocol ip parent 1:0 prio 1 u32 match ip src ${vip.ip}/32 flowid 1:20`);

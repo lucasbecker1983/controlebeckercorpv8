@@ -89,6 +89,14 @@
   --chart-5: #c62828;
   --chart-6: #475569;
   --chart-grid: rgba(15, 23, 42, 0.07);
+  --vlan-10: #2c66a8;
+  --vlan-30: #8152c2;
+  --vlan-40: #a8690f;
+  --vlan-50: #1d7f47;
+  --vlan-70: #bf3226;
+  --vlan-80: #0a737c;
+  --vlan-99: #5a6b74;
+  --map-bg: #f7fafb;
   --viewport-density: 'stacked';
 }
 
@@ -132,6 +140,14 @@
   --chart-5: #f07272;
   --chart-6: #94a3b8;
   --chart-grid: rgba(226, 232, 240, 0.08);
+  --vlan-10: #6ea7e8;
+  --vlan-30: #b28cf0;
+  --vlan-40: #e2a53f;
+  --vlan-50: #4cc488;
+  --vlan-70: #f06b5d;
+  --vlan-80: #3cc3cc;
+  --vlan-99: #8ea2aa;
+  --map-bg: #0c171b;
 }
 
 [data-ui-style='minimal'] {

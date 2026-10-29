@@ -39,6 +39,7 @@ type VlanRuntime = {
     overlimits: number;
     neighbors: number;
     exempt: boolean;
+    internalExempt: boolean;
 };
 type Sample = {
     t: number;
@@ -276,6 +277,7 @@ class MonitorService {
             overlimits: 0,
             neighbors: 0,
             exempt: meta?.exempt || false,
+            internalExempt: false,
         };
     }
 
@@ -357,6 +359,7 @@ class MonitorService {
             vlan.limitUp = upClass?.ceil ?? null;
             vlan.drops = (downClass?.dropped || 0) + (upClass?.dropped || 0);
             vlan.overlimits = (downClass?.overlimits || 0) + (upClass?.overlimits || 0);
+            vlan.internalExempt = Boolean(this.parseTcClass(down, '1:30'));
             this.vlans.set(id, vlan);
             const history = this.dropsHistory.get(id) || [];
             history.push({ t: now, drops: vlan.drops });
@@ -567,6 +570,7 @@ class MonitorService {
                 exempt: vlan.exempt,
                 internal_down: round(internal.down),
                 internal_up: round(internal.up),
+                internal_exempt: vlan.internalExempt,
             };
         });
     }
@@ -732,7 +736,7 @@ class MonitorService {
             if (vlan.drops_5m > 200) {
                 alerts.push({ severity: 'warning', title: `VLAN ${vlan.id} (${vlan.name}) batendo no limite de banda`, detail: `${vlan.drops_5m.toLocaleString('pt-BR')} pacotes descartados pelo QoS nos últimos 5 minutos. Limite: ${vlan.limit_down ?? '—'} Mbps de download.`, link: '/rede?tab=qos' });
             }
-            if (vlan.internal_down > 5 && vlan.limit_down && vlan.limit_down < 1000) {
+            if (!vlan.internal_exempt && vlan.internal_down > 5 && vlan.limit_down && vlan.limit_down < 1000) {
                 alerts.push({ severity: 'info', title: `Tráfego interno contando no limite da VLAN ${vlan.id}`, detail: `${round(vlan.internal_down, 1)} Mbps entre VLANs (ex.: câmeras) passam pela fila de internet de ${vlan.limit_down} Mbps.`, link: '/mapa-trafego' });
             }
             if (businessHours && vlan.neighbors === 0 && !vlan.exempt && vlan.id !== 99) {
