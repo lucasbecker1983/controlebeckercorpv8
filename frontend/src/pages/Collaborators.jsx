@@ -5,7 +5,7 @@ import {
   UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { askConfirm, toast } from '../components/ui/kit';
+import { askConfirm, toast, useUrlTab } from '../components/ui/kit';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 function formatDuration(seconds) {
@@ -686,7 +686,7 @@ ${rows.map((r, i) => `<tr>
 }
 
 export default function Collaborators() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useUrlTab([{ key: 'overview' }, { key: 'metrics' }, { key: 'report' }], 'overview');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
   const [sessions, setSessions] = useState([]);

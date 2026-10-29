@@ -22,6 +22,7 @@ import {
   SegmentedTabs,
   StateBadge,
 } from '../components/blocking/BlockingUi';
+import { useUrlTab } from '../components/ui/kit';
 
 const API = '';
 
@@ -52,7 +53,7 @@ async function fetchJson(path) {
 }
 
 export default function ApprovalsExceptions() {
-  const [activeTab, setActiveTab] = useState('decisions');
+  const [activeTab, setActiveTab] = useUrlTab([{ key: 'decisions' }, { key: 'exceptions' }, { key: 'contingency' }], 'decisions');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [status, setStatus] = useState(null);

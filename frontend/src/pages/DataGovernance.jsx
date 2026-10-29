@@ -27,6 +27,7 @@ import {
   SegmentedTabs,
   StateBadge,
 } from '../components/blocking/BlockingUi';
+import { useUrlTab } from '../components/ui/kit';
 
 const API = '';
 
@@ -71,7 +72,7 @@ async function fetchJson(path) {
 }
 
 export default function DataGovernance() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useUrlTab([{ key: 'overview' }, { key: 'audit' }, { key: 'metrics' }], 'overview');
   const [period, setPeriod] = useState('24h');
   const [search, setSearch] = useState('');
   const [auditSource, setAuditSource] = useState('all');

@@ -6,7 +6,7 @@ import {
   ShieldAlert, UserRoundSearch, XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { toast } from '../components/ui/kit';
+import { toast, useUrlTab } from '../components/ui/kit';
 import {
   ActionButton, DialogShell, EmptyState, ModuleHeader,
   SegmentedTabs, StatusChip, Surface,
@@ -371,7 +371,7 @@ const Spinner = () => (
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function Lgpd() {
-  const [activeTab, setActiveTab] = useState('painel');
+  const [activeTab, setActiveTab] = useUrlTab([{ key: 'painel' }, { key: 'inventario' }, { key: 'titulares' }, { key: 'incidentes' }, { key: 'auditoria' }], 'painel');
   const [audSubTab, setAudSubTab]  = useState('lgpd');
 
   // Filters (client-side, applied on local data)

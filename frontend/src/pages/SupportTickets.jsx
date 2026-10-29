@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Archive, CheckCircle2, Clock3, FileText, Inbox, Loader2, MessageSquare, RotateCcw, Send, ShieldCheck, UserRound } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../services/api';
+import { Kpi, PageHeader } from '../components/ui/kit';
 
 const statuses = [
   ['active', 'Abertos'],
@@ -176,29 +177,24 @@ export default function SupportTickets() {
   };
 
   return (
-    <main className="space-y-5">
-      <section className="rounded-lg border border-outline/12 bg-surface-high/80 p-5 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className="text-xs font-bold uppercase text-primary">Governança Operacional de Rede</p>
-            <h1 className="mt-1 text-3xl font-bold tracking-tight text-on-surface">Central de Chamados</h1>
-            <p className="mt-2 max-w-3xl text-sm font-medium leading-6 text-on-surface/62">
-              Receba solicitações dos colaboradores, classifique o atendimento e conduza liberações, lentidão e falhas com protocolo institucional.
-            </p>
-          </div>
-          <div className="flex rounded-lg border border-outline/12 bg-surface-low p-1">
+    <main className="space-y-4">
+      <PageHeader
+        title="Chamados"
+        description="Pedidos dos colaboradores: liberações, lentidão e falhas, com protocolo e histórico."
+        actions={(
+          <div className="flex rounded-lg border border-outline p-0.5" role="group" aria-label="Situação">
             {statuses.slice(0, 4).map(([id, label]) => (
-              <button key={id} type="button" onClick={() => setStatusFilter(id)} className={`h-9 rounded-md px-3 text-xs font-bold ${statusFilter === id ? 'bg-primary text-white' : 'text-on-surface/62 hover:text-on-surface'}`}>{label}</button>
+              <button key={id} type="button" aria-pressed={statusFilter === id} onClick={() => setStatusFilter(id)} className={`rounded-md px-3 py-1.5 text-[12.5px] font-semibold ${statusFilter === id ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}>{label}</button>
             ))}
           </div>
-        </div>
-      </section>
+        )}
+      />
 
-      <section className="grid gap-3 md:grid-cols-3">
-        <Stat icon={Inbox} label="Chamados ativos" value={stats.active} />
-        <Stat icon={AlertCircle} label="Novos avisos" value={stats.unread} tone="amber" />
-        <Stat icon={Clock3} label="Alta prioridade" value={stats.urgent} tone="red" />
-      </section>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Kpi icon={Inbox} label="Chamados ativos" value={stats.active} />
+        <Kpi icon={AlertCircle} label="Novos avisos" value={stats.unread} tone={stats.unread ? 'warning' : 'neutral'} />
+        <Kpi icon={Clock3} label="Alta prioridade" value={stats.urgent} tone={stats.urgent ? 'danger' : 'neutral'} />
+      </div>
 
       {notice ? <div className="rounded-lg border border-info/20 bg-info/10 px-4 py-3 text-sm font-bold text-info">{notice}</div> : null}
 

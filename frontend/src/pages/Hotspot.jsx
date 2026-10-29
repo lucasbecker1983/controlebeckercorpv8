@@ -4,7 +4,7 @@ import {
   Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { askConfirm, toast } from '../components/ui/kit';
+import { askConfirm, toast, useUrlTab } from '../components/ui/kit';
 import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -811,7 +811,7 @@ ${rows.map((r, i) => `<tr>
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function Hotspot() {
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useUrlTab([{ key: 'overview' }, { key: 'metrics' }, { key: 'report' }], 'overview');
   const [overview, setOverview] = useState({ totals: { visitors: 0, devices: 0, active_sessions: 0 }, enforcement: null, recent_sessions: [] });
   const [visitors, setVisitors] = useState([]);
   const [sessions, setSessions] = useState([]);

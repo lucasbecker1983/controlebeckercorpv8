@@ -21,7 +21,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { toast } from '../components/ui/kit';
+import { PageHeader, toast, useUrlTab } from '../components/ui/kit';
 
 const API_BASE = '';
 
@@ -206,7 +206,7 @@ export default function Reports() {
     date_from: searchParams.get('date_from') || '',
     date_to: searchParams.get('date_to') || '',
   });
-  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'navigation');
+  const [activeTab, setActiveTab] = useUrlTab([{ key: 'navigation' }, { key: 'audit' }], 'navigation');
 
   // Navigation tab state
   const [navFilters, setNavFilters] = useState(initialNavFilters);
@@ -318,14 +318,8 @@ export default function Reports() {
   };
 
   return (
-    <div className="flex flex-col gap-6 p-6 pb-12">
-      {/* Header */}
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-bold text-on-surface">Relatórios Forenses</h1>
-        <p className="text-sm text-on-surface/60">
-          Navegação de rede, auditoria de sistema e evidências institucionais para tomada de decisão.
-        </p>
-      </div>
+    <div className="flex flex-col gap-4">
+      <PageHeader title="Relatórios" description="Relatórios de navegação e de auditoria do sistema, com exportação em PDF para evidência institucional." />
 
       {/* LGPD Legal Bar */}
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline/20 bg-surface-high px-4 py-3 shadow-sm">
