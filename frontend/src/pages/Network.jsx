@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Server, Lock, Activity, Wifi, Globe, Trash2, Gauge, Plus, Smartphone, RefreshCw, Folder, User, CheckCircle, XCircle, Download, ArrowUp, ArrowDown, Zap, BarChart3, Database, Search, ShieldAlert, Monitor, Ban, Check, CornerDownRight, Target, ExternalLink } from 'lucide-react';
@@ -897,7 +898,15 @@ const DnsTab = () => {
 };
 // --- TAB MAIN ---
 export default function NetworkPage() {
-    const [activeTab, setActiveTab] = useState('connect');
+    const [searchParams, setSearchParams] = useSearchParams();
+    const NETWORK_TABS = ['connect', 'link', 'vlans', 'qos', 'dns', 'scheduler', 'access'];
+    const [activeTab, setActiveTabState] = useState(() => (NETWORK_TABS.includes(searchParams.get('tab')) ? searchParams.get('tab') : 'vlans'));
+    const setActiveTab = (tab) => {
+        setActiveTabState(tab);
+        const next = new URLSearchParams(searchParams);
+        next.set('tab', tab);
+        setSearchParams(next, { replace: true });
+    };
     const tabs = [
         { id: 'connect', label: 'Conectividade', icon: Globe, color: 'text-purple-500' },
         { id: 'link', label: 'Link Nicknetwork', icon: ShieldAlert, color: 'text-red-500' },

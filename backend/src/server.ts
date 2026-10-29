@@ -30,6 +30,8 @@ import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-r
 import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/collaborators/collaborators-routes';
 import supportRoutes, { supportSchemaService } from './modules/support/support-routes';
 import centralAuditRoutes, { centralAuditService } from './modules/central-audit/central-audit-routes';
+import monitorRoutes from './modules/monitor/monitor-routes';
+import { monitorService } from './modules/monitor/monitor-service';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
 import { institutionalAuditService } from './modules/institutional/institutional-audit-service';
@@ -122,6 +124,7 @@ app.use('/api/hotspot', hotspotRoutes);
 app.use('/api/collaborators', collaboratorsRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/central-audit', centralAuditRoutes);
+app.use('/api/monitor', monitorRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -194,6 +197,7 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     // Iniciando Sentinelas
     try { startMonitor(); } catch(e) {}
+    try { monitorService.start(); } catch (e) { console.error('[MONITOR] Falha ao iniciar coletor:', e); }
     try { startBackupScanner(); } catch(e) {}
     startLinkMonitor().catch((error) => {
         console.error('[LINK-SENTINEL] Falha ao iniciar sentinela de link:', error);

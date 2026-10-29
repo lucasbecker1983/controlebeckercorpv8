@@ -37,7 +37,7 @@
   --app-shell-gutter-x: 1rem;
   --app-shell-gutter-y: 1.25rem;
   --app-shell-content-max: 1680px;
-  --sidebar-width: 296px;
+  --sidebar-width: 256px;
   --sidebar-padding: 1.25rem;
   --sidebar-section-padding: 1rem;
   --control-height: 2.5rem;
@@ -45,8 +45,8 @@
   --control-padding-x: 1rem;
   --chip-height: 1.75rem;
   --chip-padding-x: 0.75rem;
-  --surface-radius: 1.5rem;
-  --dialog-radius: 1.75rem;
+  --surface-radius: 0.875rem;
+  --dialog-radius: 1rem;
   --spacing-section: clamp(1.25rem, 1.05rem + 0.9vw, 2rem);
   --spacing-card: clamp(1rem, 0.9rem + 0.55vw, 1.5rem);
   --text-display: clamp(1.7rem, 1.45rem + 1vw, 2.4rem);
@@ -59,46 +59,79 @@
 :root,
 [data-ui-style='glass'] {
   color-scheme: light;
-  --md-primary: #0e6b62;
+  --md-primary: #1f5fbf;
   --md-on-primary: #ffffff;
-  --md-primary-container: #d6f3ec;
-  --md-on-primary-container: #03231d;
-  --md-secondary: #365d82;
+  --md-primary-container: #e3ecfa;
+  --md-on-primary-container: #0b2552;
+  --md-secondary: #475569;
   --md-on-secondary: #ffffff;
-  --md-secondary-container: #dce9f7;
-  --md-tertiary: #8f6f28;
-  --md-tertiary-container: #f6ebcb;
-  --md-surface: #f7f8f5;
-  --md-surface-low: rgba(255, 255, 255, 0.88);
-  --md-container: rgba(255, 255, 255, 0.95);
-  --md-surface-high: rgba(252, 252, 249, 0.98);
+  --md-secondary-container: #e8edf3;
+  --md-tertiary: #8a6a1f;
+  --md-tertiary-container: #f5ecd4;
+  --md-surface: #f4f6f8;
+  --md-surface-low: #ffffff;
+  --md-container: #ffffff;
+  --md-surface-high: #ffffff;
   --md-surface-highest: #ffffff;
-  --md-on-surface: #183029;
-  --md-outline: rgba(82, 101, 89, 0.18);
-  --md-outline-variant: rgba(148, 163, 184, 0.24);
-  --md-danger: #d14343;
-  --md-success: #2f6fdd;
-  --md-warning: #c65a00;
-  --md-info: #2f6fdd;
-  --md-scrim: rgba(9, 14, 22, 0.44);
-  --app-bg: radial-gradient(circle at top, rgba(29, 135, 114, 0.11), transparent 34%), linear-gradient(180deg, #fbfcf8 0%, #f0f4ef 100%);
+  --md-on-surface: #0f172a;
+  --md-outline: rgba(15, 23, 42, 0.12);
+  --md-outline-variant: rgba(15, 23, 42, 0.08);
+  --md-danger: #c62828;
+  --md-success: #1b7f4b;
+  --md-warning: #b45309;
+  --md-info: #1f5fbf;
+  --md-scrim: rgba(15, 23, 42, 0.42);
+  --app-bg: #f4f6f8;
+  --chart-1: #1f5fbf;
+  --chart-2: #0e9384;
+  --chart-3: #b45309;
+  --chart-4: #7c3aed;
+  --chart-5: #c62828;
+  --chart-6: #475569;
+  --chart-grid: rgba(15, 23, 42, 0.07);
   --viewport-density: 'stacked';
 }
 
 [data-ui-style='solid'] {
-  --md-surface-low: rgba(255, 255, 255, 0.96);
-  --md-container: rgba(255, 255, 255, 0.99);
-  --md-surface-high: rgba(247, 249, 246, 0.99);
-  --shadow-soft: 0 8px 22px rgba(2, 8, 23, 0.08);
-  --shadow-medium: 0 16px 30px rgba(2, 8, 23, 0.12);
+  --md-surface-low: #ffffff;
+  --md-container: #ffffff;
+  --md-surface-high: #ffffff;
+  --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-medium: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
-[data-theme='dark'][data-ui-style='solid'] {
-  --md-surface-low: rgba(13, 23, 20, 0.96);
-  --md-container: rgba(17, 29, 25, 0.98);
-  --md-surface-high: rgba(21, 35, 30, 0.99);
-  --shadow-soft: 0 10px 26px rgba(0, 0, 0, 0.22);
-  --shadow-medium: 0 18px 38px rgba(0, 0, 0, 0.3);
+[data-theme='dark'] {
+  color-scheme: dark;
+  --md-primary: #7aa7f0;
+  --md-on-primary: #0b1d3d;
+  --md-primary-container: rgba(31, 95, 191, 0.28);
+  --md-on-primary-container: #dbe7fb;
+  --md-secondary: #a5b4c8;
+  --md-on-secondary: #111a26;
+  --md-secondary-container: rgba(71, 85, 105, 0.35);
+  --md-tertiary: #e2c36f;
+  --md-tertiary-container: rgba(138, 106, 31, 0.3);
+  --md-surface: #0c121a;
+  --md-surface-low: #131a24;
+  --md-container: #131a24;
+  --md-surface-high: #18212d;
+  --md-surface-highest: #1d2735;
+  --md-on-surface: #e6ebf2;
+  --md-outline: rgba(226, 232, 240, 0.12);
+  --md-outline-variant: rgba(226, 232, 240, 0.07);
+  --md-danger: #f07272;
+  --md-success: #4cc38a;
+  --md-warning: #f0a54a;
+  --md-info: #7aa7f0;
+  --md-scrim: rgba(0, 0, 0, 0.6);
+  --app-bg: #0c121a;
+  --chart-1: #7aa7f0;
+  --chart-2: #3ccbb6;
+  --chart-3: #f0a54a;
+  --chart-4: #b49af5;
+  --chart-5: #f07272;
+  --chart-6: #94a3b8;
+  --chart-grid: rgba(226, 232, 240, 0.08);
 }
 
 [data-ui-style='minimal'] {
@@ -107,8 +140,8 @@
   --md-surface-high: rgba(250, 251, 248, 0.95);
   --shadow-soft: 0 3px 12px rgba(2, 8, 23, 0.05);
   --shadow-medium: 0 8px 20px rgba(2, 8, 23, 0.07);
-  --surface-radius: 1.15rem;
-  --dialog-radius: 1.35rem;
+  --surface-radius: 0.875rem;
+  --dialog-radius: 1rem;
 }
 
 [data-theme='dark'][data-ui-style='minimal'] {
@@ -120,8 +153,8 @@
 }
 
 [data-ui-style='executive'] {
-  --surface-radius: 1.85rem;
-  --dialog-radius: 2rem;
+  --surface-radius: 0.875rem;
+  --dialog-radius: 1rem;
   --spacing-section: clamp(1.4rem, 1.15rem + 1vw, 2.2rem);
   --spacing-card: clamp(1.1rem, 0.95rem + 0.6vw, 1.7rem);
   --control-height: 2.7rem;
@@ -159,7 +192,7 @@
   --md-warning: #ff9b52;
   --md-info: #78b4ff;
   --md-scrim: rgba(1, 5, 10, 0.62);
-  --app-bg: radial-gradient(circle at top, rgba(31, 142, 119, 0.2), transparent 30%), linear-gradient(180deg, #091512 0%, #0d1916 100%);
+  --app-bg: var(--md-surface);
 }
 
 [data-accent='navy'] {
@@ -170,7 +203,7 @@
   --md-secondary-container: #d6e6f4;
   --md-tertiary: #876a3a;
   --md-tertiary-container: #f0e0c5;
-  --app-bg: radial-gradient(circle at top, rgba(55, 118, 189, 0.14), transparent 32%), linear-gradient(180deg, #f4f6f8 0%, #ebeff4 100%);
+  --app-bg: var(--md-surface);
 }
 
 [data-theme='dark'][data-accent='navy'] {
@@ -188,7 +221,7 @@
   --md-container: rgba(17, 27, 39, 0.88);
   --md-surface-high: rgba(24, 35, 49, 0.94);
   --md-surface-highest: #1a2533;
-  --app-bg: radial-gradient(circle at top, rgba(52, 116, 188, 0.18), transparent 30%), linear-gradient(180deg, #0b131d 0%, #101a27 100%);
+  --app-bg: var(--md-surface);
 }
 
 [data-accent='copper'] {
@@ -199,7 +232,7 @@
   --md-secondary-container: #efe0d1;
   --md-tertiary: #1f6a61;
   --md-tertiary-container: #c7f2e9;
-  --app-bg: radial-gradient(circle at top, rgba(184, 127, 63, 0.16), transparent 34%), linear-gradient(180deg, #f8f4ef 0%, #efe8df 100%);
+  --app-bg: var(--md-surface);
 }
 
 [data-theme='dark'][data-accent='copper'] {
@@ -217,7 +250,7 @@
   --md-container: rgba(31, 24, 19, 0.88);
   --md-surface-high: rgba(42, 31, 24, 0.94);
   --md-surface-highest: #34271e;
-  --app-bg: radial-gradient(circle at top, rgba(182, 124, 60, 0.18), transparent 32%), linear-gradient(180deg, #15100c 0%, #1c1510 100%);
+  --app-bg: var(--md-surface);
 }
 
 html {
@@ -238,8 +271,9 @@ body {
   color: var(--md-on-surface);
   margin: 0;
   min-height: 100vh;
-  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-family: "Inter", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   font-size: var(--text-body);
+  font-feature-settings: "cv11", "ss01";
   line-height: 1.5;
   letter-spacing: -0.005em;
   text-rendering: optimizeLegibility;
@@ -280,15 +314,15 @@ textarea {
     --app-shell-gutter-x: 1.125rem;
     --app-shell-gutter-y: 1rem;
     --app-shell-content-max: 1460px;
-    --sidebar-width: 248px;
+    --sidebar-width: 244px;
     --sidebar-padding: 1rem;
     --sidebar-section-padding: 0.875rem;
     --control-height: 2.25rem;
     --control-padding-x: 0.875rem;
     --chip-height: 1.625rem;
     --chip-padding-x: 0.625rem;
-    --surface-radius: 1.25rem;
-    --dialog-radius: 1.5rem;
+    --surface-radius: 0.875rem;
+    --dialog-radius: 1rem;
     --spacing-section: 1.1rem;
     --spacing-card: 0.9rem;
     --text-display: clamp(1.85rem, 1.55rem + 0.85vw, 2.25rem);
@@ -304,15 +338,15 @@ textarea {
     --app-shell-gutter-x: 1.5rem;
     --app-shell-gutter-y: 1.35rem;
     --app-shell-content-max: 1720px;
-    --sidebar-width: 272px;
+    --sidebar-width: 256px;
     --sidebar-padding: 1.125rem;
     --sidebar-section-padding: 1rem;
     --control-height: 2.5rem;
     --control-padding-x: 1rem;
     --chip-height: 1.75rem;
     --chip-padding-x: 0.75rem;
-    --surface-radius: 1.5rem;
-    --dialog-radius: 1.75rem;
+    --surface-radius: 0.875rem;
+    --dialog-radius: 1rem;
     --spacing-section: 1.35rem;
     --spacing-card: 1rem;
     --text-display: clamp(2rem, 1.55rem + 0.9vw, 2.6rem);
@@ -328,15 +362,15 @@ textarea {
     --app-shell-gutter-x: 1.75rem;
     --app-shell-gutter-y: 1.5rem;
     --app-shell-content-max: 1980px;
-    --sidebar-width: 288px;
+    --sidebar-width: 264px;
     --sidebar-padding: 1.25rem;
     --sidebar-section-padding: 1.125rem;
     --control-height: 2.625rem;
     --control-padding-x: 1.05rem;
     --chip-height: 1.875rem;
     --chip-padding-x: 0.8rem;
-    --surface-radius: 1.625rem;
-    --dialog-radius: 1.875rem;
+    --surface-radius: 0.875rem;
+    --dialog-radius: 1rem;
     --spacing-section: 1.55rem;
     --spacing-card: 1.15rem;
     --text-display: clamp(2.15rem, 1.7rem + 0.8vw, 2.85rem);
@@ -424,4 +458,13 @@ a {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Tema limpo 2026-10: números alinhados e superfícies planas */
+.tabular { font-variant-numeric: tabular-nums; }
+.sgcg-card {
+  background: var(--md-container);
+  border: 1px solid var(--md-outline);
+  border-radius: var(--surface-radius);
+  box-shadow: var(--shadow-soft);
 }

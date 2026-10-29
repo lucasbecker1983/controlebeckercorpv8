@@ -6,32 +6,32 @@ import { twMerge } from 'tailwind-merge';
 export const cx = (...values) => twMerge(clsx(values));
 
 export const toneMap = {
-  neutral: 'border-outline/12 bg-surface-high/72 text-on-surface/70',
-  primary: 'border-primary/16 bg-primary/12 text-primary',
-  success: 'border-info/18 bg-info/10 text-info',
-  warning: 'border-orange-500/22 bg-orange-500/12 text-orange-700 dark:text-orange-300',
-  danger: 'border-danger/20 bg-danger/10 text-danger',
-  info: 'border-info/18 bg-info/10 text-info',
+  neutral: 'border-outline bg-container text-on-surface/72',
+  primary: 'border-primary/20 bg-primary/8 text-primary',
+  success: 'border-success/25 bg-success/8 text-success',
+  warning: 'border-warning/25 bg-warning/8 text-warning',
+  danger: 'border-danger/25 bg-danger/8 text-danger',
+  info: 'border-info/20 bg-info/8 text-info',
 };
 
 const stripeMap = {
   neutral: 'bg-primary',
   primary: 'bg-primary',
-  success: 'bg-info',
-  warning: 'bg-orange-500',
+  success: 'bg-success',
+  warning: 'bg-warning',
   danger: 'bg-danger',
   info: 'bg-info',
 };
 
-export function Surface({ className = '', tone = 'neutral', stripe = true, children }) {
+export function Surface({ className = '', tone = 'neutral', stripe = false, children }) {
   return (
     <div className={cx(
-      'relative min-w-0 overflow-hidden rounded-[24px] border shadow-sm backdrop-blur-[var(--blur-soft)] transition-all duration-200 hover:shadow-md',
+      'relative min-w-0 overflow-hidden rounded-[var(--surface-radius)] border shadow-[var(--shadow-soft)]',
       toneMap[tone] || toneMap.neutral,
       className,
     )}
     >
-      {stripe ? <div className={cx('absolute left-0 top-0 h-1.5 w-full', stripeMap[tone] || stripeMap.neutral)} /> : null}
+      {stripe ? <div className={cx('absolute left-0 top-0 h-0.5 w-full', stripeMap[tone] || stripeMap.neutral)} /> : null}
       {children}
     </div>
   );
@@ -55,7 +55,7 @@ export function StatusChip({ label, tone = 'neutral', className = '', title }) {
     <span
       title={title || ''}
       className={cx(
-        'inline-flex min-h-[var(--chip-height)] items-center justify-center rounded-full border px-[var(--chip-padding-x)] py-1 text-center text-[11px] font-semibold tracking-tight',
+        'inline-flex min-h-[1.5rem] items-center justify-center rounded-md border px-2 py-0.5 text-center text-[11px] font-semibold',
         toneMap[tone] || toneMap.neutral,
         className,
       )}
@@ -67,25 +67,25 @@ export function StatusChip({ label, tone = 'neutral', className = '', title }) {
 
 export function ActionButton({ children, icon: Icon, tone = 'neutral', className = '', type = 'button', ...props }) {
   const buttonTone = tone === 'primary'
-    ? 'border-primary/18 bg-primary text-on-primary hover:brightness-105'
+    ? 'border-primary bg-primary text-on-primary hover:brightness-110'
     : tone === 'success'
-      ? 'border-info/18 bg-info/10 text-info hover:bg-info hover:text-white'
+      ? 'border-success/25 bg-success/8 text-success hover:bg-success hover:text-white'
       : tone === 'danger'
         ? 'border-danger/18 bg-danger/10 text-danger hover:bg-danger hover:text-white'
         : tone === 'ghost'
           ? 'border-outline/12 bg-transparent text-on-surface/70 hover:border-primary/16 hover:bg-primary/8 hover:text-primary'
           : tone === 'warning'
-            ? 'border-orange-500/20 bg-orange-500/12 text-orange-700 hover:bg-orange-500 hover:text-white dark:text-orange-300'
+            ? 'border-warning/25 bg-warning/8 text-warning hover:bg-warning hover:text-white'
             : tone === 'info'
               ? 'border-info/18 bg-info/10 text-info hover:bg-info hover:text-white'
-              : 'border-outline/14 bg-surface-high/72 text-on-surface/78 hover:border-primary/16 hover:text-primary';
+              : 'border-outline bg-container text-on-surface/80 hover:border-primary/30 hover:text-primary';
 
   return (
     <button
       type={type}
       {...props}
       className={cx(
-        'inline-flex min-h-[var(--control-height)] items-center justify-center gap-2 rounded-full border px-[var(--control-padding-x)] py-2 text-center text-[12px] font-semibold tracking-tight shadow-[var(--shadow-soft)] transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container disabled:cursor-not-allowed disabled:opacity-50 xl:text-sm',
+        'inline-flex min-h-[var(--control-height)] items-center justify-center gap-2 rounded-lg border px-[var(--control-padding-x)] py-2 text-center text-[13px] font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container disabled:cursor-not-allowed disabled:opacity-50 xl:text-sm',
         buttonTone,
         className,
       )}
@@ -101,7 +101,7 @@ export function Section({ title, subtitle, actions, children, className = '' }) 
     <Surface className={cx('p-[var(--spacing-card)]', className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="max-w-3xl">
-          <h2 className="text-[var(--text-headline)] font-black tracking-tight text-on-surface">{title}</h2>
+          <h2 className="text-base font-semibold text-on-surface">{title}</h2>
           {subtitle ? <p className="mt-1.5 text-sm leading-6 text-on-surface/60 xl:leading-6">{subtitle}</p> : null}
         </div>
         {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
@@ -230,7 +230,7 @@ export function DialogShell({ open, title, subtitle, onClose, children, footer, 
 
 export function SegmentedTabs({ tabs = [], value, onChange, className = '' }) {
   return (
-    <div className={cx('flex gap-2 overflow-x-auto rounded-[var(--surface-radius)] border border-outline/12 bg-surface-high/72 p-2 shadow-[var(--shadow-soft)] lg:flex-wrap', className)}>
+    <div className={cx('flex gap-1 overflow-x-auto border-b border-outline', className)} role="tablist">
       {tabs.map((tab) => {
         const active = tab.key === value;
         const Icon = tab.icon;
@@ -239,11 +239,13 @@ export function SegmentedTabs({ tabs = [], value, onChange, className = '' }) {
             key={tab.key}
             type="button"
             onClick={() => onChange(tab.key)}
+            role="tab"
+            aria-selected={active}
             aria-pressed={active}
-            className={`inline-flex min-h-[var(--control-height)] shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-[12px] font-semibold tracking-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-container xl:px-3.5 xl:text-sm ${
+            className={`-mb-px inline-flex min-h-[var(--control-height)] shrink-0 items-center gap-2 border-b-2 px-3 py-2 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
               active
-                ? 'border-primary/16 bg-primary text-on-primary shadow-[var(--shadow-soft)]'
-                : 'border-transparent text-on-surface/64 hover:border-outline/12 hover:bg-surface-highest/40 hover:text-on-surface'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-on-surface/60 hover:border-outline hover:text-on-surface'
             }`}
           >
             {Icon ? <Icon size={14} /> : null}
@@ -257,7 +259,7 @@ export function SegmentedTabs({ tabs = [], value, onChange, className = '' }) {
 
 export function DataToolbar({ children, className = '' }) {
   return (
-    <div className={cx('rounded-[var(--surface-radius)] border border-outline/12 bg-surface-high/66 p-3 shadow-[var(--shadow-soft)]', className)}>
+    <div className={cx('rounded-[var(--surface-radius)] border border-outline bg-container p-3', className)}>
       <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center">{children}</div>
     </div>
   );
@@ -265,22 +267,22 @@ export function DataToolbar({ children, className = '' }) {
 
 export function ModuleHeader({ eyebrow, title, description, badges, actions, aside, className = '' }) {
   return (
-    <Surface stripe={false} className={cx('overflow-hidden bg-gradient-to-br from-primary/12 via-surface-high/82 to-surface-high/92 p-[var(--spacing-section)]', className)}>
-      <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)] 2xl:items-start">
-        <div className="min-w-0">
-          {eyebrow ? (
-            <div className="inline-flex items-center rounded-full border border-primary/16 bg-primary/10 px-[var(--chip-padding-x)] py-1 text-[11px] font-semibold tracking-tight text-primary xl:text-[12px]">
-              {eyebrow}
-            </div>
-          ) : null}
-          <h1 className="mt-4 text-[var(--text-display)] font-black tracking-tight text-on-surface">{title}</h1>
-          {description ? <p className="mt-3 max-w-3xl text-sm leading-6 text-on-surface/64 xl:leading-7">{description}</p> : null}
-          {badges ? <div className="mt-4 flex flex-wrap gap-2">{badges}</div> : null}
-          {actions ? <div className="mt-4 flex flex-wrap gap-2">{actions}</div> : null}
-        </div>
-        {aside ? <div className="min-w-0">{aside}</div> : null}
+    <header className={cx('flex flex-col gap-3 pb-1 lg:flex-row lg:items-end lg:justify-between', className)}>
+      <div className="min-w-0">
+        {eyebrow ? (
+          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-on-surface/50">{eyebrow}</div>
+        ) : null}
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-on-surface">{title}</h1>
+        {description ? <p className="mt-1.5 max-w-3xl text-sm leading-6 text-on-surface/60">{description}</p> : null}
+        {badges ? <div className="mt-3 flex flex-wrap gap-2">{badges}</div> : null}
       </div>
-    </Surface>
+      {actions || aside ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {actions}
+          {aside}
+        </div>
+      ) : null}
+    </header>
   );
 }
 

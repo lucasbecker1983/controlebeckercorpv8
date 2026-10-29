@@ -8385,3 +8385,22 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - `npm run build` em `backend/` concluiu sem erros em 2026-09-12.
   - `npm run build` em `frontend/` concluiu sem erros em 2026-09-12.
   - nenhum comando de energia foi disparado durante a validação.
+
+
+## Reorganização da interface e monitoramento unificado - 2026-10-29
+
+- Auditoria UI/UX: 15 de 29 telas fora do menu, três telas só de atalhos, funções repetidas (VLAN em 4 lugares, auditoria em 6), nenhum gráfico com histórico e o card “Ameaças” lendo `access_events`, parada desde 21/10 06:52 (ingester do Squid em loop com `access.log` inacessível).
+- Verificação das VLANs no gateway: 10 Secretaria (28 dispositivos, QoS 135/135, ~87% do download é vídeo interno das câmeras para 192.168.10.50 e .143), 30 Celulares, 40 Câmeras/CFTV (precisa de internet; NAT ativo para a nuvem Intelbras), 50 SINE sem tráfego nem dispositivos desde o boot, 70 Visitantes, 80 VoIP (isenta, DNS público via DHCP), 99 Infra sem uso.
+- Backend core: novo módulo `src/modules/monitor/` com coletor único a cada 5 s (WAN e VLANs por `/sys/class/net`, CPU `/proc/stat`, RAM `/proc/meminfo`, disco `statfs`, `tc -s` por VLAN, vizinhos ARP, serviços, sentinela do link), banda por IP e destino via `iftop -t` por VLAN a cada 10 s, nome dos destinos cruzando `dns_policy_events` (15 min) com o Unbound local e PTR, histórico 24h/7d/30d pelo `vnstat --json` e alertas consolidados.
+  - Rotas: `GET /api/monitor/live`, `/recent`, `/history?range=1h|24h|7d|30d&scope=wan|vlan:<id>`, `/traffic`, `/dns-summary`, `/alerts` (todas com JWT).
+  - Allowlist de shell: `monitor-iftop` e `monitor-vnstat` com padrões fixos.
+  - Capacidade do link em `WAN_CAPACITY_MBPS` (padrão 300).
+- Frontend:
+  - Tema limpo: superfícies planas sem degradê nem translucidez, azul institucional único, verde para sucesso (antes era azul), raio de 14 px, tokens `--chart-*` para gráficos nos temas claro e escuro. Componentes base (`Surface`, `ModuleHeader`, `SegmentedTabs`, `ActionButton`, `StatusChip`) simplificados.
+  - Menu por tarefa: Monitorar (Visão Geral, Mapa de Tráfego, Radar DNS, Servidor), Controlar (Ações Rápidas, Rede & VLANs, Políticas de Acesso, DNS & Proxy, Segurança), Atender (Chamados, Hotspot, Colaboradores), Governar (Auditoria, Relatórios, Indicadores, Aprovações, LGPD, Governança de Dados), Sistema (Operações, Backups, Assistente IA, Usuários, Configurações). Topo com título da tela, estado da internet, banda atual, sino e tema.
+  - Novas telas: `Overview.jsx` (alertas, KPIs, gráfico do link com faixas 1h/24h/7d/30d e marca de 300 Mbps, consumo por dispositivo e site, VLANs contra o limite de QoS, DNS por hora, serviços), `TrafficMap.jsx` (grafo em camadas dispositivos → VLANs → link → sites, aba de rede interna, ações por dispositivo e site) e `QuickActions.jsx` (banda total por IP via `/api/qos/apply`, liberação temporária via `sporadic-exceptions`, liberar e bloquear site via `allowlist`/`blocklist`, com justificativa mínima de 10 caracteres).
+  - `BlockingReleases.jsx` aceita `context` e `showQuickPanels` e virou duas telas: Políticas de Acesso (`overview`, `policies`, `vlans`, `vips`, `sporadic`) e DNS & Proxy (`observability`, `engine`, `contingency`, `metrics`, `ignored`). `Network.jsx` lê `?tab=`.
+  - Rotas em português; os endereços antigos redirecionam preservando a query. Removidas `Dashboard`, `GovernancePolicies`, `GovernanceCompliance`, `GovernanceAudit`, `Traffic`, `Auditoria` e `InstitutionalTrail`.
+  - Dependência nova: `echarts@5.5.1` (importação modular).
+- Validação: `tsc --noEmit` do backend sem erros; `npm run build` do frontend sem erros (como root, por causa do certificado lido no `vite.config.js`); `bcc-backend` e `bcc-frontend` reiniciados e `online`; rotas `/api/monitor/*`, `/api/qos` e `sporadic-exceptions` com HTTP 200 autenticado e 401 sem token; coletor medindo 7 VLANs, 20+ dispositivos e sites nomeados. O reinício do backend reaplica as filas de QoS (comportamento existente).
+- Pendente, aguardando decisão: tirar o tráfego interno (192.168.0.0/16) da fila de internet do QoS; prioridade real da VLAN 10 com filas na WAN; consertar o ingester do Squid para `access_events`.

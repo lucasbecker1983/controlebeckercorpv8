@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import VlanManagerMD3 from "./pages/VlanManagerMD3";
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import AppShell from './components/ui/AppShell';
 import Topbar from './components/ui/Topbar';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
+import Overview from './pages/Overview';
+import TrafficMap from './pages/TrafficMap';
+import QuickActions from './pages/QuickActions';
 import Network from './pages/Network';
 import Server from './pages/Server';
 import Users from './pages/Users';
@@ -18,9 +19,6 @@ import Security from './pages/Security';
 import Settings from './pages/Settings';
 import DataGovernance from './pages/DataGovernance';
 import GovernanceVisual from './pages/GovernanceVisual';
-import GovernancePolicies from './pages/GovernancePolicies';
-import GovernanceCompliance from './pages/GovernanceCompliance';
-import GovernanceAudit from './pages/GovernanceAudit';
 import CentralAudit from './pages/CentralAudit';
 import ApprovalsExceptions from './pages/ApprovalsExceptions';
 import Lgpd from './pages/Lgpd';
@@ -97,6 +95,42 @@ function readStoredUser() {
   }
 }
 
+const POLICY_CONTEXT = {
+  eyebrow: 'Controlar',
+  title: 'Políticas de Acesso',
+  description: 'Bloqueios e liberações por VLAN, exceções VIP e liberações temporárias. Para uma ação simples, use Ações Rápidas.',
+};
+
+const DNS_PROXY_CONTEXT = {
+  eyebrow: 'Controlar',
+  title: 'DNS & Proxy',
+  description: 'Motor de filtragem, contingência de DNS, domínios ignorados e telemetria do proxy.',
+};
+
+const POLICY_TABS = ['overview', 'policies', 'vlans', 'vips', 'sporadic'];
+const DNS_PROXY_TABS = ['observability', 'engine', 'contingency', 'metrics', 'ignored'];
+
+function PolicyPage() {
+  return <BlockingReleases allowedTabs={POLICY_TABS} initialTab="policies" context={POLICY_CONTEXT} />;
+}
+
+function DnsProxyPage() {
+  return <BlockingReleases allowedTabs={DNS_PROXY_TABS} initialTab="engine" context={DNS_PROXY_CONTEXT} showQuickPanels={false} />;
+}
+
+// Endereços antigos continuam funcionando e levam para a tela nova.
+function LegacyRedirect({ to }) {
+  const location = useLocation();
+  return <Navigate to={`${to}${location.search}`} replace />;
+}
+
+function LegacyBlockingRedirect() {
+  const location = useLocation();
+  const tab = new URLSearchParams(location.search).get('tab');
+  const target = DNS_PROXY_TABS.includes(tab) ? '/dns-proxy' : '/politicas';
+  return <Navigate to={`${target}${location.search}`} replace />;
+}
+
 export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState(() => readStoredUser());
@@ -164,7 +198,7 @@ export default function App() {
   };
 
   if (!authReady) {
-    return <div className="flex min-h-screen items-center justify-center bg-surface text-on-surface">Carregando sessão institucional...</div>;
+    return <div className="flex min-h-screen items-center justify-center bg-surface text-sm text-on-surface/60">Carregando...</div>;
   }
 
   if (isHotspotPortalRequest()) {
@@ -216,46 +250,36 @@ export default function App() {
           />
         )}
         footer={(
-          <a
-            href="https://jmbtecnologia.com.br"
-            target="_blank"
-            rel="noreferrer"
-            className="group inline-flex items-center gap-2 rounded-full border border-outline/12 bg-surface-high/64 px-3 py-1.5 text-[11px] font-medium tracking-tight text-on-surface/60 transition-all duration-200 hover:border-primary/18 hover:text-on-surface/82"
-            title="JMB Tecnologia"
-          >
-            <span>Plataforma mantida por</span>
-            <span className="inline-flex h-6 items-center rounded-md border border-primary/12 bg-primary/10 px-1.5 transition-colors duration-200 group-hover:border-primary/22">
-              <img src="/jmb-logo-clean.png" alt="JMB Tecnologia" className="h-[18px] w-auto object-contain" />
-            </span>
+          <a href="https://jmbtecnologia.com.br" target="_blank" rel="noreferrer" className="text-[11.5px] text-on-surface/45 hover:text-on-surface/70">
+            Mantido por JMB Tecnologia
           </a>
         )}
       >
         <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/network" element={<Network />} />
-          <Route path="/server" element={<Server />} />
-          <Route path="/users" element={<Users />} />
-          <Route path="/proxy" element={<Proxy />} />
-          <Route path="/governanca-politicas" element={<GovernancePolicies />} />
-          <Route path="/governanca-conformidade" element={<GovernanceCompliance />} />
-          <Route path="/governanca-auditoria" element={<GovernanceAudit />} />
-          <Route path="/auditoria-central" element={<CentralAudit />} />
-          <Route path="/bloqueios-liberacoes" element={<BlockingReleases />} />
-          <Route path="/governanca-visual" element={<GovernanceVisual />} />
-          <Route path="/governanca-dados" element={<DataGovernance />} />
-          <Route path="/lgpd" element={<Lgpd />} />
-          <Route path="/aprovacoes-excecoes" element={<ApprovalsExceptions />} />
-          <Route path="/trilha-institucional" element={<Navigate to="/relatorios" />} />
-          <Route path="/relatorios" element={<Reports />} />
+          <Route path="/" element={<Overview />} />
+          <Route path="/mapa-trafego" element={<TrafficMap />} />
+          <Route path="/radar-dns" element={<Proxy />} />
+          <Route path="/servidor" element={<Server />} />
+          <Route path="/acoes-rapidas" element={<QuickActions />} />
+          <Route path="/rede" element={<Network />} />
+          <Route path="/politicas" element={<PolicyPage />} />
+          <Route path="/dns-proxy" element={<DnsProxyPage />} />
+          <Route path="/seguranca" element={<Security />} />
           <Route path="/chamados" element={<SupportTickets />} />
-          <Route path="/control" element={<Control user={user} />} />
-          <Route path="/assistente-ia" element={<AiAssistant />} />
-          <Route path="/backups" element={<Backups />} />
-          <Route path="/security" element={<Security />} />
           <Route path="/hotspot" element={<Hotspot />} />
-          <Route path="/colaboradores-mobile" element={<Collaborators />} />
+          <Route path="/colaboradores" element={<Collaborators />} />
+          <Route path="/auditoria" element={<CentralAudit />} />
+          <Route path="/relatorios" element={<Reports />} />
+          <Route path="/indicadores" element={<GovernanceVisual />} />
+          <Route path="/aprovacoes" element={<ApprovalsExceptions />} />
+          <Route path="/lgpd" element={<Lgpd />} />
+          <Route path="/dados" element={<DataGovernance />} />
+          <Route path="/operacoes" element={<Control user={user} />} />
+          <Route path="/backups" element={<Backups />} />
+          <Route path="/assistente-ia" element={<AiAssistant />} />
+          <Route path="/usuarios" element={<Users />} />
           <Route
-            path="/settings"
+            path="/configuracoes"
             element={(
               <Settings
                 theme={theme}
@@ -268,8 +292,26 @@ export default function App() {
               />
             )}
           />
-          <Route path="*" element={<Navigate to="/" />} />
-          <Route path="/redes/agendamento" element={<VlanManagerMD3 />} />
+
+          <Route path="/network" element={<LegacyRedirect to="/rede" />} />
+          <Route path="/redes/agendamento" element={<Navigate to="/rede?tab=scheduler" replace />} />
+          <Route path="/server" element={<LegacyRedirect to="/servidor" />} />
+          <Route path="/users" element={<LegacyRedirect to="/usuarios" />} />
+          <Route path="/proxy" element={<LegacyRedirect to="/radar-dns" />} />
+          <Route path="/bloqueios-liberacoes" element={<LegacyBlockingRedirect />} />
+          <Route path="/governanca-politicas" element={<LegacyRedirect to="/politicas" />} />
+          <Route path="/governanca-conformidade" element={<LegacyRedirect to="/lgpd" />} />
+          <Route path="/governanca-auditoria" element={<LegacyRedirect to="/auditoria" />} />
+          <Route path="/auditoria-central" element={<LegacyRedirect to="/auditoria" />} />
+          <Route path="/trilha-institucional" element={<LegacyRedirect to="/auditoria" />} />
+          <Route path="/governanca-visual" element={<LegacyRedirect to="/indicadores" />} />
+          <Route path="/governanca-dados" element={<LegacyRedirect to="/dados" />} />
+          <Route path="/aprovacoes-excecoes" element={<LegacyRedirect to="/aprovacoes" />} />
+          <Route path="/control" element={<LegacyRedirect to="/operacoes" />} />
+          <Route path="/security" element={<LegacyRedirect to="/seguranca" />} />
+          <Route path="/colaboradores-mobile" element={<LegacyRedirect to="/colaboradores" />} />
+          <Route path="/settings" element={<LegacyRedirect to="/configuracoes" />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AppShell>
     </BrowserRouter>

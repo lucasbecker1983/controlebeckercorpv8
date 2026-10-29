@@ -1,125 +1,103 @@
 import { useEffect, useState } from 'react';
-import { Activity, Clock3, Globe2, Menu, Moon, Network as NetworkIcon, ShieldAlert, ShieldCheck, Sun } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
+import { ArrowDown, ArrowUp, Menu, Moon, Sun } from 'lucide-react';
 import { api } from '../../services/api';
 import SupportBell from '../SupportBell';
+import { MENU } from '../Sidebar';
 
-function HeaderChip({ icon: Icon, label, value, tone = 'default' }) {
-  const toneClass = tone === 'success'
-    ? 'border-info/18 bg-info/10 text-info'
-    : tone === 'danger'
-      ? 'border-danger/18 bg-danger/10 text-danger'
-      : 'border-outline/15 bg-surface-high/88 text-on-surface/88';
+const fmt = (value = 0) => (value >= 100 ? value.toFixed(0) : value.toFixed(1)).replace('.', ',');
 
-  return (
-    <div className={`flex h-11 min-w-0 items-center gap-2 rounded-2xl border px-3 text-[11px] ${toneClass}`}>
-      <div className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/55 text-current dark:bg-white/8">
-        <Icon size={15} className="shrink-0" />
-      </div>
-      <div className="min-w-0 leading-tight">
-        <div className="truncate text-[10px] font-semibold tracking-tight opacity-72">{label}</div>
-        <div className="truncate text-[12px] font-semibold tracking-tight text-current 2xl:text-sm">{value}</div>
-      </div>
-    </div>
-  );
+function currentTitle(pathname) {
+  for (const group of MENU) {
+    for (const item of group.items) {
+      if (item.path === '/' ? pathname === '/' : pathname === item.path || pathname.startsWith(`${item.path}/`)) {
+        return { section: group.section, label: item.label };
+      }
+    }
+  }
+  return { section: '', label: '' };
 }
 
-export default function Topbar({
-  theme,
-  onToggleTheme,
-  onOpenMenu,
-}) {
-  const [gatewayOnline, setGatewayOnline] = useState(true);
-  const [externalOnline, setExternalOnline] = useState(true);
-  const [linkAlert, setLinkAlert] = useState(false);
-  const [currentTime, setCurrentTime] = useState(() => new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
-  const [uptimeStr, setUptimeStr] = useState('0 dias, 0 horas');
+export default function Topbar({ theme, onToggleTheme, onOpenMenu }) {
+  const location = useLocation();
+  const [live, setLive] = useState(null);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const updateClock = () => {
-      setCurrentTime(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
-    };
-
-    const updateStatus = async () => {
-      updateClock();
+    let alive = true;
+    const load = async () => {
       try {
-        const res = await api.get('/api/dashboard/metrics');
-        if (!res.data) return;
-        setGatewayOnline(Boolean(res.data.internet?.provider_gateway_online ?? res.data.internet?.online));
-        setExternalOnline(Boolean(res.data.internet?.external_online ?? res.data.internet?.online));
-        setLinkAlert(Boolean(res.data.internet?.alert));
-        const uptimeSeconds = Number(res.data.system?.uptime || 0);
-        const days = Math.floor(uptimeSeconds / 86400);
-        const hours = Math.floor((uptimeSeconds % 86400) / 3600);
-        const minutes = Math.floor((uptimeSeconds % 3600) / 60);
-        setUptimeStr(`${days} dias, ${hours} horas e ${minutes} min`);
+        const res = await api.get('/api/monitor/live');
+        if (!alive) return;
+        setLive(res.data);
+        setFailed(false);
       } catch {
-        setGatewayOnline(false);
-        setExternalOnline(false);
-        setLinkAlert(true);
+        if (alive) setFailed(true);
       }
     };
-
-    updateStatus();
-    const statusInterval = window.setInterval(updateStatus, 5000);
-    const clockInterval = window.setInterval(updateClock, 1000);
+    load();
+    const timer = window.setInterval(load, 10000);
     return () => {
-      window.clearInterval(statusInterval);
-      window.clearInterval(clockInterval);
+      alive = false;
+      window.clearInterval(timer);
     };
   }, []);
 
-  const headerTone = gatewayOnline ? 'success' : 'danger';
-  const internetTone = externalOnline ? 'success' : 'danger';
+  const title = currentTitle(location.pathname);
+  const internet = live?.internet;
+  const online = !failed && (internet ? internet.external : true);
+  const statusLabel = failed
+    ? 'Servidor sem resposta'
+    : !internet || internet.external
+      ? 'Internet OK'
+      : internet.gateway
+        ? 'Sem internet externa'
+        : 'Provedor fora do ar';
 
   return (
-    <header className="sticky top-0 z-30 border-b border-outline/10 bg-surface-low/78 px-[var(--app-shell-gutter-x)] py-2.5 backdrop-blur-[18px]">
-      <div className="mx-auto flex max-w-[var(--app-shell-content-max)] items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-2 md:gap-3">
-          <button
-            type="button"
-            onClick={onOpenMenu}
-            className="inline-flex h-[var(--control-height)] w-[var(--control-height)] items-center justify-center rounded-full border border-outline/15 bg-surface-high/70 text-on-surface/78 transition-colors hover:border-primary/22 hover:text-primary lg:hidden"
-            aria-label="Abrir menu"
-          >
-            <Menu size={20} />
-          </button>
-          <div className="hidden w-64 shrink-0 min-w-0 xl:block 2xl:w-80">
-            <div className="text-[11px] font-semibold tracking-tight text-primary">SGCG</div>
-            <div className="mt-1 truncate text-sm font-semibold text-on-surface">Sistema de governança e controle governamental</div>
-          </div>
-          <div className="hidden min-w-0 flex-1 grid-cols-5 items-stretch gap-2 lg:grid">
-            <HeaderChip icon={NetworkIcon} label="Nicknetwork" value={gatewayOnline ? 'Gateway OK' : 'Gateway OFF'} tone={headerTone} />
-            <HeaderChip
-              icon={linkAlert ? ShieldAlert : Globe2}
-              label={(
-                <span className="inline-flex max-w-full items-baseline gap-1">
-                  <span>Internet</span>
-                  <span className="truncate text-[8px] font-medium tracking-normal opacity-65">Google DNS</span>
-                </span>
-              )}
-              value={externalOnline ? 'OK' : 'OFF'}
-              tone={internetTone}
-            />
-            <HeaderChip icon={ShieldCheck} label="Status" value={externalOnline ? 'Online' : 'Offline'} tone={internetTone} />
-            <HeaderChip icon={Clock3} label="Hora" value={currentTime} />
-            <HeaderChip icon={Activity} label="Uptime" value={uptimeStr} />
-          </div>
+    <header className="sticky top-0 z-30 border-b border-outline bg-container px-[var(--app-shell-gutter-x)]">
+      <div className="mx-auto flex h-14 max-w-[var(--app-shell-content-max)] items-center gap-3">
+        <button
+          type="button"
+          onClick={onOpenMenu}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-on-surface/70 hover:bg-on-surface/5 lg:hidden"
+          aria-label="Abrir menu"
+        >
+          <Menu size={20} />
+        </button>
+
+        <div className="min-w-0 flex-1 leading-tight">
+          {title.section ? <div className="text-[11px] font-medium text-on-surface/50">{title.section}</div> : null}
+          <div className="truncate text-sm font-semibold text-on-surface">{title.label || 'SGCG'}</div>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
-          <SupportBell
-            onClick={() => { window.location.href = '/chamados'; }}
-            onTicketClick={(ticket) => { window.location.href = `/chamados?ticket=${ticket.id}`; }}
-          />
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            className="inline-flex h-[calc(var(--control-height)+0.25rem)] w-[calc(var(--control-height)+0.25rem)] items-center justify-center rounded-full border border-outline/18 bg-surface-high/72 text-on-surface/72 shadow-[var(--shadow-soft)] transition-all hover:border-primary/22 hover:text-primary"
-            aria-label={theme === 'dark' ? 'Alternar para tema claro' : 'Alternar para tema escuro'}
-          >
-            {theme === 'dark' ? <Sun size={18} className="text-yellow-500" /> : <Moon size={18} className="text-primary" />}
-          </button>
+        <div
+          className={`hidden items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[12.5px] font-semibold sm:inline-flex ${online ? 'border-success/25 text-success' : 'border-danger/30 bg-danger/8 text-danger'}`}
+          title={internet ? `Provedor ${internet.provider}: gateway ${internet.gateway ? 'responde' : 'não responde'}; internet externa ${internet.external ? 'responde' : 'não responde'}` : ''}
+        >
+          <span className={`h-2 w-2 rounded-full ${online ? 'bg-success' : 'bg-danger'}`} />
+          {statusLabel}
         </div>
+
+        {live ? (
+          <div className="tabular hidden items-center gap-3 rounded-lg border border-outline px-2.5 py-1.5 text-[12.5px] text-on-surface/75 md:inline-flex" title={`Uso atual do link de ${live.link_mbps} Mbps`}>
+            <span className="inline-flex items-center gap-1"><ArrowDown size={13} style={{ color: 'var(--chart-1)' }} />{fmt(live.wan.down)} Mbps</span>
+            <span className="inline-flex items-center gap-1"><ArrowUp size={13} style={{ color: 'var(--chart-2)' }} />{fmt(live.wan.up)} Mbps</span>
+          </div>
+        ) : null}
+
+        <SupportBell
+          onClick={() => { window.location.href = '/chamados'; }}
+          onTicketClick={(ticket) => { window.location.href = `/chamados?ticket=${ticket.id}`; }}
+        />
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-on-surface/65 hover:bg-on-surface/5 hover:text-on-surface"
+          aria-label={theme === 'dark' ? 'Usar tema claro' : 'Usar tema escuro'}
+        >
+          {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
       </div>
     </header>
   );

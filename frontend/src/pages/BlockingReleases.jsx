@@ -2289,7 +2289,7 @@ const MODULE_CONTEXT = {
   description: 'Este módulo passa a organizar decisão administrativa, escopo de rede, conformidade e execução técnica na mesma linguagem visual. A leitura privilegia clareza para governança sem perder profundidade operacional.',
 };
 
-export default function BlockingReleases({ initialTab = 'overview', allowedTabs = null }) {
+export default function BlockingReleases({ initialTab = 'overview', allowedTabs = null, context = null, showQuickPanels = true }) {
   const { data, setData, loadAll, loading, loadingState, banner, flash } = useModuleData();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromQuery = searchParams.get('tab');
@@ -2341,7 +2341,7 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
   const deferredVipSearch = useDeferredValue(vipSearch);
   const deferredAuditSearch = useDeferredValue(auditSearch);
   const deferredRadarSearch = useDeferredValue(radarSearch);
-  const currentContext = MODULE_CONTEXT;
+  const currentContext = context || MODULE_CONTEXT;
   const visibleTabs = Array.isArray(allowedTabs) && allowedTabs.length
     ? TABS.filter((tab) => allowedTabs.includes(tab.key))
     : TABS;
@@ -4109,8 +4109,8 @@ export default function BlockingReleases({ initialTab = 'overview', allowedTabs 
         badges={headerBadges}
       />
 
-      {quickActionsPanel}
-      {quickVlanRulePanel}
+      {showQuickPanels ? quickActionsPanel : null}
+      {showQuickPanels ? quickVlanRulePanel : null}
 
       {banner ? (
         <ListRow className={banner.tone === 'danger'
