@@ -6,6 +6,7 @@ import { runCommand } from '../utils/process';
 import { filterOperationalVlans, isManagedBlockingIp, isManagedBlockingVlan } from './blocking-release-scope';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
 import { policyCompilerService } from './policy-compiler-service';
+import { cachedUnboundCheckconf } from './unbound-checkconf-cache';
 
 type ContingencyStatus = 'normal' | 'active' | 'expired' | 'error';
 type ContingencyScopeType = 'global' | 'vlan';
@@ -983,7 +984,7 @@ class DnsContingencyService {
     async verifyRuntime() {
         const compiler = policyCompilerService.inspectManifest();
         const [unboundCheck, unboundActive, realResolution] = await Promise.all([
-            runCommand('unbound-checkconf', [], { elevated: true, allowFailure: true }),
+            cachedUnboundCheckconf(),
             runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true }),
             runCommand('dig', ['+short', '@127.0.0.1', this.healthDomain], { elevated: true, allowFailure: true }),
         ]);

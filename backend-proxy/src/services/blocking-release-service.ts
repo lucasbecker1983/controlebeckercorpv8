@@ -21,6 +21,7 @@ import { dnsContingencyService } from './dns-contingency-service';
 import { dnsRadarService } from './dns-radar-service';
 import { identityEnrichmentService } from './identity-enrichment-service';
 import { EnforcementMode, policyCompilerService } from './policy-compiler-service';
+import { cachedUnboundCheckconf, invalidateUnboundCheckconf } from './unbound-checkconf-cache';
 
 type ScopeType = 'global' | 'vlan';
 type PolicyKind = 'block' | 'allow';
@@ -1162,9 +1163,12 @@ class BlockingReleaseService {
         return files;
     }
 
-    async validateCurrentRuntime() {
+    // `cached: true` só nas telas de status: o checkconf leva 3-4 s. Quem aplica regras usa a validação nova.
+    async validateCurrentRuntime(options: { cached?: boolean } = {}) {
         const [unboundValidation, squidValidation, unboundService, squidService] = await Promise.all([
-            this.validateUnbound().catch((error: any) => ({ code: 1, stdout: '', stderr: error.message || String(error) })),
+            options.cached
+                ? cachedUnboundCheckconf().catch((error: any) => ({ code: 1, stdout: '', stderr: error.message || String(error) }))
+                : this.validateUnbound().catch((error: any) => ({ code: 1, stdout: '', stderr: error.message || String(error) })),
             runCommand('squid', ['-k', 'parse'], { elevated: true, allowFailure: true }),
             runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true }),
             runCommand('systemctl', ['is-active', env.squidServiceName], { elevated: true, allowFailure: true }),
@@ -2586,7 +2590,7 @@ class BlockingReleaseService {
         const lastReport = await pool.query(`SELECT * FROM report_index ORDER BY updated_at DESC LIMIT 1`).catch(() => ({ rows: [] as any[] }));
         const compilerInspection = policyCompilerService.inspectManifest();
         const compilerManifest = compilerInspection.manifest;
-        const runtimeValidation = await this.validateCurrentRuntime();
+        const runtimeValidation = await this.validateCurrentRuntime({ cached: true });
         const squidWarnings = String(runtimeValidation.squid_validation?.stderr || '')
             .split('\n')
             .map((line) => line.trim())
@@ -2915,10 +2919,13 @@ class BlockingReleaseService {
     }
 
     async validateUnbound() {
+        // Validação nova depois de mexer na configuração: o resultado guardado deixa de valer.
+        invalidateUnboundCheckconf();
         return runCommand('unbound-checkconf', [], { elevated: true });
     }
 
     async reloadUnbound() {
+        invalidateUnboundCheckconf();
         await runCommand('systemctl', ['reload', 'unbound'], { elevated: true });
         const status = await runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true });
         if ((status.stdout || '').trim() !== 'active') {
