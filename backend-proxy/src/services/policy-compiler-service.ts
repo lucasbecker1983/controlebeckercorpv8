@@ -160,6 +160,29 @@ type ManifestInspection = {
     missingTaggedVpcTags: string[];
 };
 
+
+// Zona de segurança (malware, phishing, golpes, adulto e DNS criptografado) para a rede inteira,
+// VIPs inclusive. Vem antes de qualquer outra zona RPZ: a primeira que casar decide. Sem "tags",
+// vale para todos os clientes. Só entra se os arquivos existirem (gerados por scripts/sgcg-security-lists.sh).
+const securityRpzLines = (): string[] => {
+    if (!fs.existsSync(env.securityRpzFile)) return [];
+    return [
+        ...(fs.existsSync(env.securityAllowRpzFile) ? [
+            'rpz:',
+            '    name: "rpz.security-allow.becker.local."',
+            `    zonefile: "${env.securityAllowRpzFile}"`,
+            '',
+        ] : []),
+        'rpz:',
+        '    name: "rpz.security.becker.local."',
+        `    zonefile: "${env.securityRpzFile}"`,
+        '    rpz-log: yes',
+        '    rpz-log-name: "sgcg-seguranca"',
+        '    rpz-action-override: nxdomain',
+        '',
+    ];
+};
+
 export class PolicyCompilerService {
     readonly squidAclDir = env.squidAclDir;
     readonly legacyGeneratedDir = path.join(env.rulesDir, 'generated');
@@ -581,6 +604,7 @@ export class PolicyCompilerService {
                 '# VIP bypass por rpz-client-ip e RPZ por VLAN permanecem gerados em disco,',
                 '# mas nao sao anexados ao Unbound ate a causa do SERVFAIL global ser isolada.',
                 '',
+                ...securityRpzLines(),
                 'rpz:',
                 '    name: "rpz.allow.becker.local."',
                 `    zonefile: "${env.whitelistFile}"`,
@@ -610,6 +634,7 @@ export class PolicyCompilerService {
             }
 
             unboundPolicyLines.push(
+                ...securityRpzLines(),
                 'rpz:',
                 '    name: "rpz.vippass.becker.local."',
                 `    zonefile: "${env.vipConf}"`,

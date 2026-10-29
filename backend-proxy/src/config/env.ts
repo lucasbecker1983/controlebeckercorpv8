@@ -36,6 +36,8 @@ export const env = {
     squidServiceName: process.env.SQUID_SERVICE_NAME || 'squid',
     ufwBeforeRulesFile: process.env.UFW_BEFORE_RULES_FILE || '/etc/ufw/before.rules',
     whitelistFile: process.env.UNBOUND_ALLOWED_RPZ || '/etc/unbound/becker/allowed.rpz',
+    securityRpzFile: process.env.UNBOUND_SECURITY_RPZ || '/etc/unbound/becker/security.rpz',
+    securityAllowRpzFile: process.env.UNBOUND_SECURITY_ALLOW_RPZ || '/etc/unbound/becker/security-allow.rpz',
     vipConf: process.env.UNBOUND_VIP_CONF || '/etc/unbound/becker/vip-bypass.conf',
     blockedRpzFile: process.env.UNBOUND_BLOCKED_RPZ || '/etc/unbound/becker/blocked.rpz',
     unboundLocalConf: process.env.UNBOUND_LOCAL_CONF || '/etc/unbound/unbound.conf.d/becker_blocks.conf',

@@ -1,0 +1,9 @@
+[Unit]
+Description=SGCG - atualiza listas de segurança do DNS (malware, phishing, adulto, DNS criptografado)
+Wants=network-online.target
+After=network-online.target unbound.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/controlebeckercorp-v8/scripts/sgcg-security-lists.sh
+Nice=10

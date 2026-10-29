@@ -1,0 +1,10 @@
+[Unit]
+Description=SGCG - atualização diária das listas de segurança do DNS
+
+[Timer]
+OnCalendar=*-*-* 05:15
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
