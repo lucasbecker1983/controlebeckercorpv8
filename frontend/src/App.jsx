@@ -12,7 +12,7 @@ import Server from './pages/Server';
 import Users from './pages/Users';
 import Proxy from './pages/Proxy';
 import BlockingReleases from './pages/BlockingReleases';
-import Control from './pages/Control';
+import Operations from './pages/Operations';
 import AiAssistant from './pages/AiAssistant';
 import Backups from './pages/Backups';
 import Security from './pages/Security';
@@ -274,7 +274,7 @@ export default function App() {
           <Route path="/aprovacoes" element={<ApprovalsExceptions />} />
           <Route path="/lgpd" element={<Lgpd />} />
           <Route path="/dados" element={<DataGovernance />} />
-          <Route path="/operacoes" element={<Control user={user} />} />
+          <Route path="/operacoes" element={<Operations user={user} />} />
           <Route path="/backups" element={<Backups />} />
           <Route path="/assistente-ia" element={<AiAssistant />} />
           <Route path="/usuarios" element={<Users />} />

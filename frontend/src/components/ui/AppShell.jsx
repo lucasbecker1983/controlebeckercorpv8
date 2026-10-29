@@ -1,3 +1,5 @@
+import { ToastHost } from './kit';
+
 export default function AppShell({ sidebar, topbar, footer, children }) {
   return (
     <div className="flex h-screen w-full overflow-hidden bg-surface text-on-surface transition-colors duration-300">
@@ -17,6 +19,7 @@ export default function AppShell({ sidebar, topbar, footer, children }) {
           </footer>
         ) : null}
       </main>
+      <ToastHost />
     </div>
   );
 }

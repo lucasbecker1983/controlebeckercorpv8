@@ -3,6 +3,7 @@ import { Bot, FileSearch, RefreshCw, Send, Sparkles, UserRound } from 'lucide-re
 import { api } from '../services/api';
 import { storageGet, storageSet } from '../services/browserStorage';
 import { ActionButton, ModuleHeader, StatusChip, Surface } from '../components/ui/primitives';
+import { Badge, Button, Panel } from '../components/ui/kit';
 
 const STORAGE_KEY = 'sgcg_ai_assistant_thread_v1';
 
@@ -37,6 +38,52 @@ const formatDateTime = (value) => {
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('pt-BR');
 };
+
+// Diagnóstico automático do ambiente (antes ficava em Operações).
+function InsightsPanel() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.get('/api/control/ai-insights');
+      setData(res.data || null);
+    } catch (err) {
+      setError(err?.response?.data?.error || 'Não foi possível gerar o diagnóstico agora.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  const toneFor = (s) => (s === 'critical' ? 'danger' : s === 'warning' ? 'warning' : s === 'success' ? 'success' : 'primary');
+  const labelFor = (s) => (s === 'critical' ? 'Crítico' : s === 'warning' ? 'Atenção' : s === 'success' ? 'OK' : 'Informação');
+  return (
+    <Panel
+      title="Diagnóstico automático"
+      description={data?.generated_at ? `Gerado em ${new Date(data.generated_at).toLocaleString('pt-BR')}${data?.model ? ` · ${data.model}` : ''}` : 'Leitura dos sinais do servidor, VLANs e antivírus.'}
+      actions={<Button icon={RefreshCw} onClick={load} disabled={loading}>{loading ? 'Analisando...' : 'Analisar de novo'}</Button>}
+    >
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {data?.summary ? <p className="mb-3 text-[13px] leading-6 text-on-surface/70">{data.summary}</p> : null}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {(data?.insights || []).map((item) => (
+          <div key={item.id} className="rounded-lg border border-outline p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[13.5px] font-semibold text-on-surface">{item.title}</div>
+              <Badge tone={toneFor(item.severity)}>{labelFor(item.severity)}</Badge>
+            </div>
+            {item.impact ? <p className="mt-1 text-[12.5px] leading-5 text-on-surface/65">{item.impact}</p> : null}
+            {item.probable_cause ? <p className="mt-1 text-[12.5px] leading-5 text-on-surface/65"><b>Causa provável:</b> {item.probable_cause}</p> : null}
+            {item.recommendation ? <p className="mt-1 text-[12.5px] leading-5 text-on-surface/80"><b>O que fazer:</b> {item.recommendation}</p> : null}
+          </div>
+        ))}
+        {data && !(data.insights || []).length ? <p className="text-sm text-on-surface/55">Nenhum ponto de atenção encontrado.</p> : null}
+      </div>
+    </Panel>
+  );
+}
 
 export default function AiAssistant() {
   const [messages, setMessages] = useState(readStoredMessages);
@@ -308,6 +355,7 @@ export default function AiAssistant() {
           </Surface>
         </div>
       </div>
+      <InsightsPanel />
     </div>
   );
 }
