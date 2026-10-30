@@ -1,5 +1,6 @@
 import { execCmd } from '../../utils/sys';
 import { sendAlert } from '../../utils/mailer';
+import { sendTelegram } from '../../utils/telegram';
 import { pool } from '../../config/db';
 
 const CRITICAL_SERVICES = [
@@ -72,8 +73,7 @@ async function checkServices() {
             // CASO C: Serviço voltou (Recuperação)
             else if (currentStatus === 'running' && lastStatus === 'stopped') {
                 console.log(`[IA SENTINEL] ✅ RECUPERADO: ${svc}`);
-                // Opcional: Mandar email de "Voltou ao normal"
-                // await sendAlert(`Serviço Recuperado: ${svc}`, `O serviço voltou a operar normalmente.`);
+                await sendTelegram(`✅ RECUPERADO: ${svc}\n\nO serviço ${svc} voltou a operar normalmente.`);
                 await updateStatus(svc, 'running', false);
             }
             

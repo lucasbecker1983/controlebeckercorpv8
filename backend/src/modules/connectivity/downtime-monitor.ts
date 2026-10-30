@@ -1,6 +1,7 @@
 import { execCmd } from '../../utils/sys';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
+import { sendTelegram } from '../../utils/telegram';
 
 const GATEWAY_IP = env.gatewayIp;
 const EXTERNAL_IP = env.externalPingIp;
@@ -151,6 +152,7 @@ export const startLinkMonitor = async () => {
                         );
                         target.currentIncidentId = res.rows[0].id;
                         console.error(`[LINK-SENTINEL] ALERTA: ${target.label} caiu via ${WAN_IFACE} (${target.path})`);
+                        void sendTelegram(`🔌 LINK FORA: ${target.label}\n\nCaminho: ${target.path}. Se a internet inteira caiu, este aviso só chega quando ela voltar.`);
                     }
 
                     if (target.currentIncidentId) {
@@ -165,7 +167,9 @@ export const startLinkMonitor = async () => {
                             "UPDATE net_link_downtime SET end_at = NOW(), duration = EXTRACT(EPOCH FROM (NOW() - start_at)), last_checked_at = NOW() WHERE id = $1",
                             [target.currentIncidentId]
                         );
+                        const lostSeconds = Math.max(0, Math.round(target.consecutiveFailures * INTERVAL_MS / 1000));
                         console.warn(`[LINK-SENTINEL] RESTABELECIDO: ${target.label} via ${WAN_IFACE}`);
+                        void sendTelegram(`✅ LINK RESTABELECIDO: ${target.label}\n\nCaminho: ${target.path}. Ficou sem resposta por cerca de ${lostSeconds >= 120 ? `${Math.round(lostSeconds / 60)} min` : `${lostSeconds} s`}.`);
                         target.currentIncidentId = null;
                     }
                     target.consecutiveFailures = 0;

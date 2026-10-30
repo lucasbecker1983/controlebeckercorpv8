@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { sendTelegram } from './telegram';
 import { pool } from '../config/db';
 
 export type SmtpConfig = {
@@ -212,6 +213,7 @@ const sendInternal = async (conf: SmtpConfig, subject: string, text: string, typ
 };
 
 export const sendAlert = async (subject: string, message: string, isReminder = false) => {
+    await sendTelegram(`${isReminder ? '⏳' : '🚨'} ${subject}\n\n${message}`);
     try {
         const conf = await getStoredSmtpConfig();
         if (!conf.username || !conf.password || !conf.is_active) {
