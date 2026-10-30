@@ -35,7 +35,7 @@ export const env = {
     appDomain: process.env.APP_DOMAIN || 'console.beckercorp.cloud',
     appBaseUrl: process.env.APP_BASE_URL || 'https://console.beckercorp.cloud',
     publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://console.beckercorp.cloud',
-    proxyRuntimeBaseUrl: process.env.PROXY_RUNTIME_BASE_URL || 'https://console.jacarezinho.cloud:6779',
+    proxyRuntimeBaseUrl: process.env.PROXY_RUNTIME_BASE_URL || 'https://console.jacarezinho.app.br:6779',
     gatewayIp: process.env.GATEWAY_IP || '186.251.14.25',
     externalPingIp: process.env.EXTERNAL_PING_IP || '8.8.8.8',
     externalPingLabel: process.env.EXTERNAL_PING_LABEL || 'Google DNS',

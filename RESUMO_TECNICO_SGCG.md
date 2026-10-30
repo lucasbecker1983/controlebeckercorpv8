@@ -133,7 +133,7 @@ O `backend-proxy` costuma rodar no PM2 como `backend-proxy` e responder internam
 
 O Nginx publica o console, APIs e portais internos/publicos. Pontos importantes:
 
-- `console.jacarezinho.cloud` e `console.interno.jacarezinho` devem espelhar a mesma superficie SGCG.
+- `console.jacarezinho.app.br` e `console.interno.jacarezinho` devem espelhar a mesma superficie SGCG.
 - O console interno precisa funcionar em contingencia de link externo.
 - Rotas novas no console publico devem existir tambem no console interno quando fizerem parte da superficie SGCG.
 - Antes de mexer em `proxy_pass`, validar o upstream real. Neste ambiente, frontend/backend/backend-proxy nao devem ser presumidos como `127.0.0.1:3000`.
@@ -443,7 +443,7 @@ Componentes conhecidos:
 
 - SMSGate server em `127.0.0.1:3010`
 - SMSGate worker em `127.0.0.1:3011`
-- publicacao por `https://console.jacarezinho.cloud/smsgate/...`
+- publicacao por `https://console.jacarezinho.app.br/smsgate/...`
 - integracao do backend por JWT Bearer local ou fallback Basic
 - `HOTSPOT_SMS_*` no `.env` local, sem publicar segredos no repositorio
 - script `backend/341_autobind_smsgate_sender.sh`
@@ -465,7 +465,7 @@ O console interno e parte obrigatoria da continuidade operacional.
 
 Contrato:
 
-- `console.interno.jacarezinho` espelha `console.jacarezinho.cloud`
+- `console.interno.jacarezinho` espelha `console.jacarezinho.app.br`
 - o acesso LAN deve continuar em contingencia externa
 - rotas, paginas, APIs e backend-proxy precisam bater no mesmo upstream
 - diferencas aceitaveis: DNS, certificado TLS, CA interna e excecoes de identidade interna

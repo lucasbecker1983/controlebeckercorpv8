@@ -42,7 +42,7 @@ A arquitetura é orientada a serviços locais executando no mesmo host, com fort
 - porta de desenvolvimento/preview: `6777`
 - base visual: Tailwind CSS v4, `framer-motion`, `lucide-react`
 - PWA habilitada via `vite-plugin-pwa`
-- endpoint base configurado no código: `https://console.jacarezinho.cloud`
+- endpoint base configurado no código: `https://console.jacarezinho.app.br`
 
 Responsabilidades:
 
@@ -93,8 +93,8 @@ Além das rotas, o backend inicializa monitores em background:
 - porta: `6779`
 - protocolo: HTTPS direto
 - certificado lido de:
-  - `/etc/letsencrypt/live/console.jacarezinho.cloud/privkey.pem`
-  - `/etc/letsencrypt/live/console.jacarezinho.cloud/fullchain.pem`
+  - `/etc/letsencrypt/live/console.jacarezinho.app.br/privkey.pem`
+  - `/etc/letsencrypt/live/console.jacarezinho.app.br/fullchain.pem`
 
 Responsabilidades:
 
@@ -156,10 +156,10 @@ Gera um PDF técnico lendo arquivos do projeto diretamente do disco.
 Arquivo: `frontend/.env`
 
 ```env
-VITE_API_URL=https://console.jacarezinho.cloud
+VITE_API_BASE_URL=
 ```
 
-Observação importante: apesar do `.env`, o serviço `frontend/src/services/api.js` usa `baseURL` hardcoded para `https://console.jacarezinho.cloud`.
+O `frontend/src/services/api.js` usa `VITE_API_BASE_URL` quando definido; com o valor vazio, usa a origem da página, mantendo o console público e o interno na mesma origem de suas APIs.
 
 ### Rotas de tela
 
@@ -181,7 +181,7 @@ Arquivo: `frontend/src/services/api.js`
 
 - usa `axios`
 - envia `Authorization: Bearer <becker_token>` automaticamente
-- base URL fixa: `https://console.jacarezinho.cloud`
+- base URL: `VITE_API_BASE_URL` ou origem da página
 
 #### API do proxy
 
@@ -732,7 +732,7 @@ O sistema depende de vários componentes externos ao Node.js:
 - `htpasswd`
 - `sarg`
 - PM2
-- certificados válidos em `/etc/letsencrypt/live/console.jacarezinho.cloud/`
+- certificados válidos em `/etc/letsencrypt/live/console.jacarezinho.app.br/`
 
 Também há forte dependência dos nomes de interfaces:
 

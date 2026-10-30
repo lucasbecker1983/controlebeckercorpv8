@@ -4,9 +4,9 @@ import tailwindcss from '@tailwindcss/vite'
 import fs from 'fs'
 import path from 'path'
 
-const sslKeyPath = process.env.VITE_SSL_KEY_PATH || '/etc/letsencrypt/live/console.jacarezinho.cloud/privkey.pem'
-const sslCertPath = process.env.VITE_SSL_CERT_PATH || '/etc/letsencrypt/live/console.jacarezinho.cloud/fullchain.pem'
-const hmrHost = process.env.VITE_HMR_HOST || 'console.jacarezinho.cloud'
+const sslKeyPath = process.env.VITE_SSL_KEY_PATH || '/etc/letsencrypt/live/console.jacarezinho.app.br/privkey.pem'
+const sslCertPath = process.env.VITE_SSL_CERT_PATH || '/etc/letsencrypt/live/console.jacarezinho.app.br/fullchain.pem'
+const hmrHost = process.env.VITE_HMR_HOST || 'console.jacarezinho.app.br'
 const allowedHosts = [hmrHost, 'all']
 const sslOptions = (
   fs.existsSync(path.resolve(sslKeyPath)) && fs.existsSync(path.resolve(sslCertPath))

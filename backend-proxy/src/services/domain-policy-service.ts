@@ -44,7 +44,7 @@ const BUILTIN_CATEGORIES: Record<string, string[]> = {
     ],
     'Hospedagem / Institucional': [
         'jmbtecnologia.com.br', 'astrolabia.jmbtecnologia.com.br',
-        'jacarezinho.cloud',
+        'jacarezinho.app.br', 'jacarezinho.cloud',
     ],
 };
 
