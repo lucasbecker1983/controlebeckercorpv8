@@ -372,8 +372,8 @@ export default function Reports() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Período</label>
-                <select
+                <label htmlFor="rep-f1" className="text-[11px] font-medium text-on-surface/50">Período</label>
+                <select id="rep-f1"
                   value={navFilters.period}
                   onChange={(e) => setNavFilters((f) => ({ ...f, period: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -387,14 +387,14 @@ export default function Reports() {
               {navFilters.period === 'custom' && (
                 <>
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-medium text-on-surface/50">De</label>
-                    <input type="datetime-local" value={navFilters.date_from}
+                    <label htmlFor="rep-f2" className="text-[11px] font-medium text-on-surface/50">De</label>
+                    <input id="rep-f2" type="datetime-local" value={navFilters.date_from}
                       onChange={(e) => setNavFilters((f) => ({ ...f, date_from: e.target.value }))}
                       className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface" />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-medium text-on-surface/50">Até</label>
-                    <input type="datetime-local" value={navFilters.date_to}
+                    <label htmlFor="rep-f3" className="text-[11px] font-medium text-on-surface/50">Até</label>
+                    <input id="rep-f3" type="datetime-local" value={navFilters.date_to}
                       onChange={(e) => setNavFilters((f) => ({ ...f, date_to: e.target.value }))}
                       className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface" />
                   </div>
@@ -402,8 +402,8 @@ export default function Reports() {
               )}
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">IP de Origem</label>
-                <input
+                <label htmlFor="rep-f4" className="text-[11px] font-medium text-on-surface/50">IP de Origem</label>
+                <input id="rep-f4"
                   type="text" placeholder="ex: 192.168.10.5"
                   value={navFilters.ip}
                   onChange={(e) => setNavFilters((f) => ({ ...f, ip: e.target.value }))}
@@ -412,8 +412,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">VLAN</label>
-                <select
+                <label htmlFor="rep-f5" className="text-[11px] font-medium text-on-surface/50">VLAN</label>
+                <select id="rep-f5"
                   value={navFilters.vlan}
                   onChange={(e) => setNavFilters((f) => ({ ...f, vlan: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -423,8 +423,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Domínio consultado</label>
-                <input
+                <label htmlFor="rep-f6" className="text-[11px] font-medium text-on-surface/50">Domínio consultado</label>
+                <input id="rep-f6"
                   type="text" placeholder="ex: instagram.com"
                   value={navFilters.domain}
                   onChange={(e) => setNavFilters((f) => ({ ...f, domain: e.target.value }))}
@@ -433,8 +433,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Fonte</label>
-                <select
+                <label htmlFor="rep-f7" className="text-[11px] font-medium text-on-surface/50">Fonte</label>
+                <select id="rep-f7"
                   value={navFilters.source}
                   onChange={(e) => setNavFilters((f) => ({ ...f, source: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -444,8 +444,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Ação</label>
-                <select
+                <label htmlFor="rep-f8" className="text-[11px] font-medium text-on-surface/50">Ação</label>
+                <select id="rep-f8"
                   value={navFilters.action}
                   onChange={(e) => setNavFilters((f) => ({ ...f, action: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -780,8 +780,8 @@ export default function Reports() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Período</label>
-                <select
+                <label htmlFor="rep-f9" className="text-[11px] font-medium text-on-surface/50">Período</label>
+                <select id="rep-f9"
                   value={auditFilters.period}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, period: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -793,14 +793,14 @@ export default function Reports() {
               {auditFilters.period === 'custom' && (
                 <>
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-medium text-on-surface/50">De</label>
-                    <input type="datetime-local" value={auditFilters.date_from}
+                    <label htmlFor="rep-f10" className="text-[11px] font-medium text-on-surface/50">De</label>
+                    <input id="rep-f10" type="datetime-local" value={auditFilters.date_from}
                       onChange={(e) => setAuditFilters((f) => ({ ...f, date_from: e.target.value }))}
                       className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface" />
                   </div>
                   <div className="flex flex-col gap-1">
-                    <label className="text-[11px] font-medium text-on-surface/50">Até</label>
-                    <input type="datetime-local" value={auditFilters.date_to}
+                    <label htmlFor="rep-f11" className="text-[11px] font-medium text-on-surface/50">Até</label>
+                    <input id="rep-f11" type="datetime-local" value={auditFilters.date_to}
                       onChange={(e) => setAuditFilters((f) => ({ ...f, date_to: e.target.value }))}
                       className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface" />
                   </div>
@@ -808,8 +808,8 @@ export default function Reports() {
               )}
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Operador</label>
-                <input
+                <label htmlFor="rep-f12" className="text-[11px] font-medium text-on-surface/50">Operador</label>
+                <input id="rep-f12"
                   type="text" placeholder="nome ou usuário"
                   value={auditFilters.actor}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, actor: e.target.value }))}
@@ -818,8 +818,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">IP</label>
-                <input
+                <label htmlFor="rep-f13" className="text-[11px] font-medium text-on-surface/50">IP</label>
+                <input id="rep-f13"
                   type="text" placeholder="ex: 192.168.10.1"
                   value={auditFilters.ip}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, ip: e.target.value }))}
@@ -828,8 +828,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Fonte</label>
-                <select
+                <label htmlFor="rep-f14" className="text-[11px] font-medium text-on-surface/50">Fonte</label>
+                <select id="rep-f14"
                   value={auditFilters.source}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, source: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"
@@ -839,8 +839,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Ação / módulo</label>
-                <input
+                <label htmlFor="rep-f15" className="text-[11px] font-medium text-on-surface/50">Ação / módulo</label>
+                <input id="rep-f15"
                   type="text" placeholder="ex: login, POST /api/users"
                   value={auditFilters.action}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, action: e.target.value }))}
@@ -849,8 +849,8 @@ export default function Reports() {
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-on-surface/50">Resultado</label>
-                <select
+                <label htmlFor="rep-f16" className="text-[11px] font-medium text-on-surface/50">Resultado</label>
+                <select id="rep-f16"
                   value={auditFilters.success}
                   onChange={(e) => setAuditFilters((f) => ({ ...f, success: e.target.value }))}
                   className="rounded-lg border border-outline/20 bg-surface px-2 py-1.5 text-sm text-on-surface"

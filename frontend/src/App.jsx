@@ -253,7 +253,7 @@ export default function App() {
           />
         )}
         footer={(
-          <a href="https://jmbtecnologia.com.br" target="_blank" rel="noreferrer" className="text-[11.5px] text-on-surface/45 hover:text-on-surface/70">
+          <a href="https://jmbtecnologia.com.br" target="_blank" rel="noreferrer" className="inline-flex min-h-6 items-center text-[11.5px] text-on-surface/65 hover:text-on-surface">
             Mantido por JMB Tecnologia
           </a>
         )}
