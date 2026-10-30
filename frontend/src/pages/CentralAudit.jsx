@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, DatabaseZap, FileSearch, RefreshCcw, Search, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, DatabaseZap, RefreshCw, Search, ShieldAlert } from 'lucide-react';
 import { api } from '../services/api';
-import { ActionButton, EmptyState, ModuleHeader, StatusChip, Surface, cx } from '../components/ui/primitives';
+import { Badge, Button, DataTable, Field, Kpi, KpiRow, Notice, PageHeader, Panel, errorMessage, fmtDateTime, inputCls } from '../components/ui/kit';
+
+/*
+ * Centro de Auditoria: uma linha do tempo única com os eventos de autenticação, rede, LGPD, chamados,
+ * hotspot, colaboradores e ações administrativas. Cada fonte continua guardando o seu registro original.
+ */
 
 const PERIOD_OPTIONS = [
-  { value: '30m', label: '30 min' },
+  { value: '30m', label: '30 minutos' },
   { value: '1h', label: '1 hora' },
   { value: '6h', label: '6 horas' },
   { value: '24h', label: '24 horas' },
@@ -13,57 +18,45 @@ const PERIOD_OPTIONS = [
   { value: '90d', label: '90 dias' },
 ];
 
-const SEVERITY_LABELS = {
-  info: 'Info',
-  success: 'Sucesso',
-  warning: 'Atenção',
-  critical: 'Crítico',
-};
+const SEVERITY_OPTIONS = [
+  { value: 'all', label: 'Todas as severidades' },
+  { value: 'info', label: 'Informativo' },
+  { value: 'success', label: 'Sucesso' },
+  { value: 'warning', label: 'Atenção' },
+  { value: 'critical', label: 'Crítico' },
+];
+
+const SEVERITY_LABELS = { info: 'Informativo', success: 'Sucesso', warning: 'Atenção', critical: 'Crítico' };
 
 const CATEGORY_TONES = {
   seguranca: 'danger',
   rede: 'primary',
   sistema: 'neutral',
-  usuarios: 'info',
+  usuarios: 'primary',
   chamados: 'warning',
   lgpd: 'success',
   automacao: 'primary',
   infraestrutura: 'neutral',
 };
 
-function formatDate(value) {
-  if (!value) return '-';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString('pt-BR');
-}
+const INITIAL_FILTERS = { period: '24h', category: 'all', source: 'all', severity: 'all', success: 'all', search: '', actor: '', ip: '', limit: '240' };
 
-function statusTone(item) {
+const statusTone = (item) => {
   if (item.severity === 'critical') return 'danger';
   if (item.severity === 'warning') return 'warning';
-  if (item.success) return 'success';
-  return 'danger';
-}
+  return item.success ? 'success' : 'danger';
+};
 
-function buildParams(filters) {
+const buildParams = (filters) => {
   const params = new URLSearchParams();
   Object.entries(filters).forEach(([key, value]) => {
     if (value && value !== 'all') params.set(key, value);
   });
   return params.toString();
-}
+};
 
 export default function CentralAudit() {
-  const [filters, setFilters] = useState({
-    period: '24h',
-    category: 'all',
-    source: 'all',
-    severity: 'all',
-    success: 'all',
-    search: '',
-    actor: '',
-    ip: '',
-    limit: '240',
-  });
+  const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [categories, setCategories] = useState([]);
   const [sources, setSources] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -88,205 +81,115 @@ export default function CentralAudit() {
       setSummary(summaryRes.data || {});
       setEvents(Array.isArray(eventsRes.data) ? eventsRes.data : []);
     } catch (e) {
-      setError(e?.response?.data?.error || e.message || 'Falha ao carregar centro de auditoria.');
+      setError(errorMessage(e, 'Não foi possível carregar o Centro de Auditoria.'));
     } finally {
       setLoading(false);
     }
   }, [query]);
 
-  useEffect(() => {
-    load().catch(() => null);
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  const updateFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+  const setFilter = (key, value) => setFilters((current) => ({ ...current, [key]: value }));
+  const hasFilters = JSON.stringify(filters) !== JSON.stringify(INITIAL_FILTERS);
 
-  const activeCategories = useMemo(() => {
-    const counts = summary?.by_category || {};
-    return categories.map((item) => ({ ...item, total: counts[item.key] || 0 }));
-  }, [categories, summary]);
+  const categoryCounts = summary?.by_category || {};
+  const categoryLabel = (key) => summary?.category_labels?.[key] || categories.find((c) => c.key === key)?.label || key;
+  const count = (value) => (summary ? Number(value || 0).toLocaleString('pt-BR') : '—');
+
+  const columns = [
+    { key: 'event_at', label: 'Quando', width: '150px', render: (item) => <span className="tabular text-on-surface/70">{fmtDateTime(item.event_at)}</span> },
+    { key: 'category', label: 'Categoria', render: (item) => <Badge tone={CATEGORY_TONES[item.category] || 'neutral'}>{categoryLabel(item.category)}</Badge> },
+    {
+      key: 'title',
+      label: 'Evento',
+      render: (item) => (
+        <div className="min-w-[240px]">
+          <div className="font-semibold text-on-surface">{item.title || item.action || 'Evento de auditoria'}</div>
+          <div className="mt-0.5 text-[12.5px] leading-5 text-on-surface/60">{item.message || item.target || 'Sem mensagem complementar.'}</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 text-[11.5px] text-on-surface/50">
+            <span>Fonte: {item.source || '—'}</span>
+            {item.action ? <span>Ação: {item.action}</span> : null}
+            {item.target ? <span>Alvo: {item.target}</span> : null}
+          </div>
+        </div>
+      ),
+    },
+    { key: 'actor', label: 'Quem', render: (item) => <div><div>{item.actor || 'Sistema'}</div><div className="tabular text-[11.5px] text-on-surface/50">{item.ip || '—'}</div></div> },
+    { key: 'severity', label: 'Resultado', render: (item) => <Badge tone={statusTone(item)} dot>{SEVERITY_LABELS[item.severity] || (item.success ? 'Sucesso' : 'Falha')}</Badge> },
+  ];
 
   return (
-    <div className="space-y-7 pb-10 animate-in fade-in duration-500">
-      <ModuleHeader
-        eyebrow="Governança"
+    <div className="space-y-4">
+      <PageHeader
         title="Centro de Auditoria"
-        description="Auditorias de autenticação, rede, LGPD, chamados, navegação, hotspot, colaboradores e ações administrativas em uma visão única."
-        badges={(
-          <>
-            <StatusChip label="Categorias unificadas" tone="primary" />
-            <StatusChip label="Fontes preservadas" tone="success" />
-            <StatusChip label="Filtro operacional" tone="warning" />
-          </>
-        )}
-        actions={(
-          <ActionButton tone="ghost" icon={RefreshCcw} onClick={() => load().catch(() => null)} disabled={loading}>
-            Atualizar
-          </ActionButton>
-        )}
+        description="Linha do tempo única de autenticação, rede, LGPD, chamados, hotspot, colaboradores e ações administrativas. Cada fonte guarda o registro original."
+        actions={<Button icon={RefreshCw} onClick={load} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</Button>}
       />
 
-      {error ? (
-        <Surface className="p-5">
-          <div className="text-sm font-semibold text-danger">{error}</div>
-        </Surface>
-      ) : null}
+      {error ? <Notice tone="danger" title="Falha ao carregar">{error}</Notice> : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <Surface className="p-5">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/16 bg-primary/10 text-primary">
-            <DatabaseZap size={18} />
-          </div>
-          <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Eventos no recorte</div>
-          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.total || 0}</div>
-        </Surface>
-        <Surface className="p-5">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-info/18 bg-info/10 text-info">
-            <CheckCircle2 size={18} />
-          </div>
-          <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Sucessos</div>
-          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.success || 0}</div>
-        </Surface>
-        <Surface className="p-5">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-warning/20 bg-warning/10 text-warning">
-            <AlertTriangle size={18} />
-          </div>
-          <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Pontos de atenção</div>
-          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.attention || 0}</div>
-        </Surface>
-        <Surface className="p-5">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-danger/18 bg-danger/10 text-danger">
-            <ShieldCheck size={18} />
-          </div>
-          <div className="mt-4 text-[11px] font-semibold tracking-tight text-on-surface/62">Falhas</div>
-          <div className="mt-1 text-3xl font-bold tracking-tight text-on-surface">{summary?.failures || 0}</div>
-        </Surface>
-      </div>
+      <KpiRow>
+        <Kpi icon={DatabaseZap} label="Eventos no recorte" value={count(summary?.total)} sub={`Período: ${PERIOD_OPTIONS.find((p) => p.value === filters.period)?.label}`} />
+        <Kpi icon={CheckCircle2} label="Sucessos" value={count(summary?.success)} tone="success" />
+        <Kpi icon={AlertTriangle} label="Pontos de atenção" value={count(summary?.attention)} tone={summary?.attention ? 'warning' : 'neutral'} />
+        <Kpi icon={ShieldAlert} label="Falhas" value={count(summary?.failures)} tone={summary?.failures ? 'danger' : 'neutral'} />
+      </KpiRow>
 
-      <Surface className="p-5">
-        <div className="grid gap-3 lg:grid-cols-[1.1fr_0.75fr_0.75fr_0.75fr_0.75fr]">
-          <label className="min-w-0">
-            <span className="text-[11px] font-bold text-on-surface/58">Busca</span>
-            <div className="mt-1.5 flex min-h-[42px] items-center gap-2 rounded-2xl border border-outline/14 bg-surface-high/72 px-3">
-              <Search size={15} className="text-on-surface/45" />
-              <input
-                value={filters.search}
-                onChange={(event) => updateFilter('search', event.target.value)}
-                placeholder="ação, alvo, mensagem ou detalhe"
-                className="min-w-0 flex-1 bg-transparent text-sm font-medium text-on-surface outline-none placeholder:text-on-surface/42"
-              />
+      <Panel title="Filtros" actions={hasFilters ? <Button variant="ghost" onClick={() => setFilters(INITIAL_FILTERS)}>Limpar filtros</Button> : null}>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <Field id="audit-search" label="Busca">
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/40" />
+              <input id="audit-search" className={`${inputCls} pl-9`} value={filters.search} onChange={(e) => setFilter('search', e.target.value)} placeholder="ação, alvo, mensagem" />
             </div>
-          </label>
-
-          <label>
-            <span className="text-[11px] font-bold text-on-surface/58">Período</span>
-            <select value={filters.period} onChange={(event) => updateFilter('period', event.target.value)} className="mt-1.5 min-h-[42px] w-full rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-semibold text-on-surface outline-none">
-              {PERIOD_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </Field>
+          <Field id="audit-period" label="Período">
+            <select id="audit-period" className={inputCls} value={filters.period} onChange={(e) => setFilter('period', e.target.value)}>
+              {PERIOD_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-          </label>
-
-          <label>
-            <span className="text-[11px] font-bold text-on-surface/58">Categoria</span>
-            <select value={filters.category} onChange={(event) => updateFilter('category', event.target.value)} className="mt-1.5 min-h-[42px] w-full rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-semibold text-on-surface outline-none">
+          </Field>
+          <Field id="audit-category" label="Categoria">
+            <select id="audit-category" className={inputCls} value={filters.category} onChange={(e) => setFilter('category', e.target.value)}>
               <option value="all">Todas</option>
-              {categories.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
+              {categories.map((c) => <option key={c.key} value={c.key}>{c.label} ({categoryCounts[c.key] || 0})</option>)}
             </select>
-          </label>
-
-          <label>
-            <span className="text-[11px] font-bold text-on-surface/58">Fonte</span>
-            <select value={filters.source} onChange={(event) => updateFilter('source', event.target.value)} className="mt-1.5 min-h-[42px] w-full rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-semibold text-on-surface outline-none">
+          </Field>
+          <Field id="audit-source" label="Fonte">
+            <select id="audit-source" className={inputCls} value={filters.source} onChange={(e) => setFilter('source', e.target.value)}>
               <option value="all">Todas</option>
-              {sources.map((item) => <option key={`${item.category}-${item.source}`} value={item.source}>{item.source}</option>)}
+              {sources.map((s) => <option key={`${s.category}-${s.source}`} value={s.source}>{s.source}</option>)}
             </select>
-          </label>
-
-          <label>
-            <span className="text-[11px] font-bold text-on-surface/58">Resultado</span>
-            <select value={filters.success} onChange={(event) => updateFilter('success', event.target.value)} className="mt-1.5 min-h-[42px] w-full rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-semibold text-on-surface outline-none">
+          </Field>
+          <Field id="audit-result" label="Resultado">
+            <select id="audit-result" className={inputCls} value={filters.success} onChange={(e) => setFilter('success', e.target.value)}>
               <option value="all">Todos</option>
               <option value="true">Sucesso</option>
               <option value="false">Falha</option>
             </select>
-          </label>
+          </Field>
+          <Field id="audit-severity" label="Severidade">
+            <select id="audit-severity" className={inputCls} value={filters.severity} onChange={(e) => setFilter('severity', e.target.value)}>
+              {SEVERITY_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </Field>
+          <Field id="audit-actor" label="Operador ou usuário">
+            <input id="audit-actor" className={inputCls} value={filters.actor} onChange={(e) => setFilter('actor', e.target.value)} placeholder="nome ou identidade" />
+          </Field>
+          <Field id="audit-ip" label="Endereço IP">
+            <input id="audit-ip" className={inputCls} value={filters.ip} onChange={(e) => setFilter('ip', e.target.value)} placeholder="ex.: 192.168.10.45" />
+          </Field>
         </div>
+      </Panel>
 
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <input value={filters.actor} onChange={(event) => updateFilter('actor', event.target.value)} placeholder="Operador, usuário ou identidade" className="min-h-[40px] rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-medium text-on-surface outline-none placeholder:text-on-surface/42" />
-          <input value={filters.ip} onChange={(event) => updateFilter('ip', event.target.value)} placeholder="IP" className="min-h-[40px] rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-medium text-on-surface outline-none placeholder:text-on-surface/42" />
-          <select value={filters.severity} onChange={(event) => updateFilter('severity', event.target.value)} className="min-h-[40px] rounded-2xl border border-outline/14 bg-surface-high/72 px-3 text-sm font-semibold text-on-surface outline-none">
-            <option value="all">Todas as severidades</option>
-            <option value="info">Info</option>
-            <option value="success">Sucesso</option>
-            <option value="warning">Atenção</option>
-            <option value="critical">Crítico</option>
-          </select>
-        </div>
-      </Surface>
-
-      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <Surface className="p-5">
-          <div className="text-[11px] font-semibold tracking-tight text-primary">Categorias</div>
-          <div className="mt-4 grid gap-2">
-            {activeCategories.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                onClick={() => updateFilter('category', filters.category === item.key ? 'all' : item.key)}
-                className={cx(
-                  'flex items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm font-semibold transition-all',
-                  filters.category === item.key
-                    ? 'border-primary/24 bg-primary/12 text-primary'
-                    : 'border-outline/12 bg-surface-high/55 text-on-surface/72 hover:border-primary/18 hover:text-primary',
-                )}
-              >
-                <span>{item.label}</span>
-                <StatusChip label={String(item.total)} tone={CATEGORY_TONES[item.key] || 'neutral'} />
-              </button>
-            ))}
-          </div>
-        </Surface>
-
-        <Surface className="p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-semibold tracking-tight text-primary">Eventos</div>
-              <h2 className="mt-1 text-2xl font-bold tracking-tight text-on-surface">Linha única de auditoria</h2>
-            </div>
-            <StatusChip label={`${events.length} carregados`} tone="neutral" />
-          </div>
-
-          <div className="mt-5 grid gap-3">
-            {loading ? (
-              <div className="rounded-[var(--surface-radius)] border border-dashed border-outline/16 bg-surface-high/55 px-5 py-7 text-sm text-on-surface/62">
-                Carregando auditorias centralizadas...
-              </div>
-            ) : events.length ? events.map((item) => (
-              <div key={`${item.source}-${item.id}`} className="rounded-[var(--surface-radius)] border border-outline/12 bg-surface-high/60 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <StatusChip label={summary?.category_labels?.[item.category] || item.category} tone={CATEGORY_TONES[item.category] || 'neutral'} />
-                  <StatusChip label={item.source || 'fonte'} tone="primary" />
-                  <StatusChip label={SEVERITY_LABELS[item.severity] || item.severity || 'Info'} tone={statusTone(item)} />
-                  <span className="text-xs font-semibold text-on-surface/50">{formatDate(item.event_at)}</span>
-                </div>
-                <div className="mt-3 text-sm font-bold text-on-surface">{item.title || item.action || 'Evento de auditoria'}</div>
-                <div className="mt-1 text-sm leading-6 text-on-surface/65">{item.message || item.target || 'Sem mensagem complementar.'}</div>
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-on-surface/52">
-                  <span>Ator: {item.actor || 'sistema'}</span>
-                  <span>IP: {item.ip || '-'}</span>
-                  <span>Alvo: {item.target || '-'}</span>
-                  <span>Ação: {item.action || '-'}</span>
-                </div>
-              </div>
-            )) : (
-              <EmptyState
-                icon={FileSearch}
-                title="Nenhuma auditoria no filtro atual"
-                description="Ajuste período, categoria, fonte, IP ou busca textual para ampliar o recorte."
-              />
-            )}
-          </div>
-        </Surface>
-      </div>
+      <Panel
+        title="Eventos"
+        description={loading ? 'Carregando…' : `${events.length.toLocaleString('pt-BR')} carregados${summary?.total > events.length ? ` de ${Number(summary.total).toLocaleString('pt-BR')} no recorte` : ''}. Para ver outros, estreite o período ou use os filtros.`}
+        padded={false}
+      >
+        {loading && !events.length
+          ? <p className="px-4 py-6 text-center text-sm text-on-surface/55">Carregando auditorias…</p>
+          : <DataTable columns={columns} rows={events} rowKey={(item) => `${item.source}-${item.id}`} empty="Nenhum evento neste filtro. Amplie o período ou limpe os filtros." />}
+      </Panel>
     </div>
   );
 }
