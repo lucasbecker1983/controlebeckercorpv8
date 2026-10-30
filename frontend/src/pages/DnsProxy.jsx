@@ -1,5 +1,9 @@
 import { Activity, Cpu, EyeOff, FileBarChart2, Flame, Globe, Server, Wifi } from 'lucide-react';
 import { PageHeader, Tabs, useUrlTab } from '../components/ui/kit';
+import EnginePanel from '../components/dns/EnginePanel';
+import ContingencyPanel from '../components/dns/ContingencyPanel';
+import DnsIgnored from '../components/dns/DnsIgnored';
+import DnsMetrics from '../components/dns/DnsMetrics';
 import BlockingReleases from './BlockingReleases';
 import DnsInstitutional from '../components/network/DnsInstitutional';
 import { ProxyReports, SquidPanel } from '../components/proxy/ProxyPanels';
@@ -24,7 +28,11 @@ export default function DnsProxy() {
       {tab === 'dns' ? <DnsInstitutional /> : null}
       {tab === 'squid' ? <SquidPanel /> : null}
       {tab === 'proxy-reports' ? <ProxyReports /> : null}
-      {!['dns', 'squid', 'proxy-reports'].includes(tab) ? <BlockingReleases key={tab} allowedTabs={[tab]} initialTab={tab} hideHeader showQuickPanels={false} /> : null}
+      {tab === 'engine' ? <EnginePanel /> : null}
+      {tab === 'contingency' ? <ContingencyPanel /> : null}
+      {tab === 'ignored' ? <DnsIgnored /> : null}
+      {tab === 'metrics' ? <DnsMetrics /> : null}
+      {tab === 'observability' ? <BlockingReleases key={tab} allowedTabs={[tab]} initialTab={tab} hideHeader showQuickPanels={false} /> : null}
     </div>
   );
 }
