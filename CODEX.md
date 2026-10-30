@@ -8608,3 +8608,11 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Para desfazer: remover o bloco `rpz.vip-allow` de `/etc/unbound/sgcg-vip-clean.conf` (ou restaurar a cópia) e `systemctl restart sgcg-vip-dns`.
 
 - Em 30/10, a pedido do responsável, dois iPhones da VLAN 10 viraram VIP para usar a Retransmissão Privada (não se sabia qual era o do chefe, então foram os dois). Ambos vinculados ao aparelho (MAC privado), criados pelo serviço de exceções (auditado) e com revisão em 29/11/2026, para desativar o que não for do chefe. Conferido: regras de firewall e desvio de DNS para a porta 5355 presas ao MAC de cada um; 26 VIPs ativos, 182 regras no FORWARD e 182 no NAT. Os identificadores dos aparelhos ficam só no banco e na tela de VIPs, não neste arquivo.
+
+
+## Correção: "Data inválida" ao desativar ou vincular VIP - 2026-10-30
+
+- Sintoma: desativar um VIP (e qualquer alteração que não mande a data de revisão, como vincular ao aparelho) respondia 400 "Data inválida: Thu Apr 29 2027 00:00:00 GMT-0300 ...".
+- Causa: o driver do Postgres devolve colunas DATE como objeto `Date`; `normalizeOptionalDate` transformava esse objeto em texto ("Thu Apr 29 2027 ...") ao reaproveitar a data já gravada e depois recusava. Ficou visível depois que as datas de revisão dos VIPs foram preenchidas em 29/10 (antes estavam vazias). O mesmo defeito existia em `domain-policy-manager-service.ts` para regras com data de revisão.
+- Correção (`backend-proxy/src/services/blocking-release-service.ts` e `domain-policy-manager-service.ts`): aceita `Date` (componentes locais), 'AAAA-MM-DD' e data com hora (usa só o dia); continua recusando outros formatos.
+- Teste: alteração sem data no VIP de teste passou sem erro e sem mudar nada (antes e depois iguais); build; `backend-proxy` reiniciado com as regras VIP refeitas (182 no FORWARD e 182 no NAT).

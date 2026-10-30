@@ -130,11 +130,19 @@ const normalizeOptionalTimestamp = (value: unknown) => {
     return date.toISOString();
 };
 
+// Aceita 'AAAA-MM-DD', data com hora (usa só o dia) e o Date que o driver do Postgres devolve para colunas
+// DATE (meia-noite no fuso local). Sem isso, editar uma regra com data de revisão gravada dava "Data inválida".
 const normalizeOptionalDate = (value: unknown) => {
-    const normalized = String(value ?? '').trim();
-    if (!normalized) return null;
+    if (value instanceof Date) {
+        if (Number.isNaN(value.getTime())) throw new Error('Data inválida.');
+        const pad = (n: number) => String(n).padStart(2, '0');
+        return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+    }
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    const normalized = /^\d{4}-\d{2}-\d{2}/.test(raw) ? raw.slice(0, 10) : raw;
     const date = new Date(`${normalized}T00:00:00.000Z`);
-    if (Number.isNaN(date.getTime())) throw new Error(`Data inválida: ${normalized}`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(date.getTime())) throw new Error(`Data inválida: ${raw}`);
     return normalized;
 };
 
