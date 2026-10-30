@@ -9,11 +9,11 @@ const CRITICAL_SERVICES = [
     'clamav-daemon', 'clamav-freshclam', 'clamav-clamonacc'
 ];
 
-const CHECK_INTERVAL = 10 * 60 * 1000;    // 10 Minutos
+const CHECK_INTERVAL = 2 * 60 * 1000;     // 2 Minutos
 const REMINDER_INTERVAL = 3 * 60 * 60 * 1000; // 3 Horas
 
 export const startMonitor = async () => {
-    console.log(`>>> [IA SENTINEL] Vigilância Iniciada (Check: 10m | Reminder: 3h)`);
+    console.log(`>>> [IA SENTINEL] Vigilância Iniciada (Check: 2m | Reminder: 3h)`);
     
     // Executa a primeira checagem 30s após o boot para dar tempo dos serviços subirem
     setTimeout(checkServices, 30000);
