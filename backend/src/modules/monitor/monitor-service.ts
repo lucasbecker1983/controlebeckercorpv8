@@ -15,6 +15,7 @@ import { getLinkSentinelSnapshot } from '../connectivity/downtime-monitor';
 const SAMPLE_MS = 5000;
 const RING_SIZE = 720; // 1 hora de amostras de 5 s
 const TRAFFIC_MS = 10000;
+const MIN_ACTIVE_MBPS = 0.001;
 const LINK_MBPS = Number(process.env.WAN_CAPACITY_MBPS || 300);
 
 const DEFAULT_VLAN_NAMES: Record<number, string> = {
@@ -615,7 +616,8 @@ class MonitorService {
                     const remote = aLocal ? pair.b : pair.a;
                     const up = aLocal ? pair.ab : pair.ba;
                     const down = aLocal ? pair.ba : pair.ab;
-                    if (up + down <= 0) continue;
+                    // Abaixo de 1 kbps é ruído de fundo (celular parado, keepalive); não conta como aparelho trafegando.
+                    if (up + down < MIN_ACTIVE_MBPS) continue;
                     const device = devices.get(local) || {
                         ip: local,
                         vlan: id,

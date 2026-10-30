@@ -25,6 +25,9 @@ export const F_DISPLAY = '"Archivo", "Arial Narrow", system-ui, sans-serif';
 export const F_BODY = '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif';
 export const F_MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace';
 
+// Abaixo de 1 kbps é ruído de fundo (keepalive de celular parado) e não conta como "trafegando".
+export const MIN_ACTIVE = 0.001;
+
 export const fmt = (v) => {
   const n = Number(v || 0);
   if (n > 0 && n < 0.1) return '<0,1';
@@ -154,7 +157,7 @@ export function buildModel(data, mode) {
         rawFlows: (d.flows || []).filter((f) => (f.down || 0) + (f.up || 0) > 0),
       };
     })
-    .filter((d) => d.total > 0);
+    .filter((d) => d.total >= MIN_ACTIVE);
 
   // Destinos: soma por site; os maiores ficam, o resto vira "Outros".
   const siteMap = new Map();
