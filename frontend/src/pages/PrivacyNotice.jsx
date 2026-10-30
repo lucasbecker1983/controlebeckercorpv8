@@ -1,5 +1,5 @@
 import { ArrowLeft, Building2, FileText, LockKeyhole, Mail, ShieldCheck } from 'lucide-react';
-import { StatusChip, Surface } from '../components/ui/primitives';
+import { Badge } from '../components/ui/kit';
 
 const sections = [
   {
@@ -51,9 +51,9 @@ export default function PrivacyNotice() {
             Voltar
           </a>
           <div className="flex flex-wrap gap-2">
-            <StatusChip label="Documento público" tone="primary" />
-            <StatusChip label="LGPD" tone="success" />
-            <StatusChip label="Marco Civil" tone="warning" />
+            <Badge tone="primary">Documento público</Badge>
+            <Badge tone="success">LGPD</Badge>
+            <Badge tone="warning">Marco Civil</Badge>
           </div>
         </div>
 
@@ -102,10 +102,10 @@ export default function PrivacyNotice() {
 
         <div className="grid gap-4 md:grid-cols-2">
           {sections.map((section) => (
-            <Surface key={section.title} stripe={false} className="p-5 sm:p-6">
+            <section key={section.title} className="sgcg-card p-5 sm:p-6">
               <h2 className="text-lg font-black tracking-tight text-on-surface">{section.title}</h2>
               <p className="mt-3 text-sm leading-7 text-on-surface/66">{section.text}</p>
-            </Surface>
+            </section>
           ))}
         </div>
 
