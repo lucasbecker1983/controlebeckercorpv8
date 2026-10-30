@@ -12,7 +12,6 @@ import Network from './pages/Network';
 import Server from './pages/Server';
 import Users from './pages/Users';
 import RadarDns from './pages/RadarDns';
-import BlockingReleases from './pages/BlockingReleases';
 import Operations from './pages/Operations';
 import DnsProxy from './pages/DnsProxy';
 import AccessPolicies from './pages/AccessPolicies';

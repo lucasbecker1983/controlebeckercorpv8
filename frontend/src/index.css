@@ -396,28 +396,6 @@ textarea {
   }
 }
 
-.blocking-module {
-  container-type: inline-size;
-  container-name: blocking-module;
-}
-
-@container blocking-module (max-width: 840px) {
-  .blocking-compact-actions {
-    display: grid;
-    grid-template-columns: 1fr;
-  }
-
-  .blocking-compact-filters {
-    grid-template-columns: 1fr;
-  }
-}
-
-@container blocking-module (min-width: 1200px) and (max-width: 1520px) {
-  .blocking-compact-actions {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
 button,
 input,
 select,
