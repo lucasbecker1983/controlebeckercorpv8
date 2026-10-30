@@ -29,6 +29,30 @@ Se houver documentacao complementar em `docs/`, o resumo executivo e o estado at
 - tambem deve atuar como diretor, projetista, analista, desenvolvedor de frontend, UX, UI e backend senior
 - essa responsabilidade exige olhar o SGCG de ponta a ponta: produto, experiencia do operador, interface, acessibilidade, arquitetura, backend, banco de dados, runtime Linux, seguranca, auditoria, governanca publica, continuidade operacional e validacao real no ambiente
 
+## Correcao do portal cativo da VLAN 30 travando em "Entrar na Internet" - 2026-10-05
+
+- incidente: colaboradora (iPhone iOS 17.5, `192.168.30.70`, dispositivo ja reconhecido por MAC) clicou em `Entrar na Internet` no captive do iOS e a tela ficou rodando
+- evidencias:
+  - `POST /api/collaborators/public/continue` respondeu `200` no nginx as 12:56:45, sessao `300` (`mac_confirm`) criada e IP incluido em `sgcg_collab_v30_auth`
+  - o iPhone nunca resolveu `www.jacarezinho.pr.gov.br` (destino do `redirect_url`), ou seja, a resposta do `continue` nao chegou ao aparelho; depois disso o aparelho saiu da rede
+  - descartado DNS criptografado no aparelho (usuaria confirmou que nao usa app 1.1.1.1)
+- causa raiz em `backend/src/modules/collaborators/collaborators-routes.ts`:
+  - a pagina do captive roda sob o host interceptado (ex.: `captive.apple.com`) e a requisicao chega via DNAT `enp6s0.30:80 -> 192.168.30.1:80`
+  - `/public/continue` chamava `revokeIpRuntimeOnly(ip)` (com `conntrack -D -s/-d`) no meio da propria requisicao e em seguida adicionava o IP ao ipset
+  - com o conntrack apagado e o IP ja no ipset, o pacote seguinte do cliente nao e mais DNATado e a resposta do nginx sai com origem `192.168.30.1` sem NAT reverso; o aparelho descarta e o portal fica rodando
+  - `/public/context` fazia a mesma limpeza; funcionava por sorte porque o IP ainda nao estava no ipset e o proximo ACK do cliente recriava o DNAT
+  - o login por usuario/senha so era afetado quando ja havia sessao ativa no mesmo IP (via `revokeActiveSessionsByDeviceOrIp` dentro de `createSession`)
+- correcao:
+  - `/public/continue` deixou de chamar `revokeIpRuntimeOnly(ip)`; sessoes anteriores continuam sendo revogadas em banco por `createSession`
+  - `revokeActiveSessionsByDeviceOrIp` ganhou `keepRuntimeIp`; `createSession` passa o IP sendo autorizado, que nao perde conntrack (outros IPs antigos do mesmo dispositivo continuam com corte runtime completo)
+  - nova `revokeIpRuntimeAfterResponse(res, ip)` usada em `/public/context`: so age se o IP estiver no ipset, remove do ipset na hora e limpa o conntrack 1,5 s depois do `finish` da resposta, abortando se o IP tiver sido reautorizado nesse intervalo
+- validacao:
+  - `cd backend && npm run build` concluido sem erros
+  - `pm2 restart bcc-backend --update-env` (processo roda `ts-node src/server.ts`), processo online
+  - regras DNAT/REJECT da VLAN 30 presentes uma unica vez; sessao `300` preservada no ipset
+  - `GET /api/collaborators/public/context` retornou autenticado para `192.168.30.70` e `requires_login` para IP nao autenticado; `http://192.168.30.1/hotspot-detect.html` retornou `200`
+  - pendente: validar em aparelho real reconhecido por MAC (fluxo `Entrar na Internet`)
+
 ## Verificacao WhatsApp Web e dependencias Meta na VLAN 30 - 2026-07-02
 
 - pedido: verificar inconsistencia em `web.whatsapp.com`
@@ -8387,6 +8411,21 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
   - nenhum comando de energia foi disparado durante a validação.
 
 
+## Migração do domínio público do console - 2026-10-16
+
+- O domínio público principal do SGCG passou a ser `https://console.jacarezinho.app.br`; o DNS A aponta para `186.251.14.26` e o certificado Let's Encrypt válido foi emitido para o novo nome.
+- O Nginx do novo host usa o mesmo mapa de rotas do console interno. O domínio antigo redireciona páginas com `308` e mantém `/api/` e `/smsgate/` para clientes já configurados. O console interno segue espelhando a superfície pública.
+- URLs e caminhos de certificado foram atualizados nos ambientes ativos, defaults de backend/proxy, Vite, scripts de recuperação, SMSGate e headers do portal cativo. Os processos PM2 afetados e os contêineres SMSGate foram reiniciados.
+- A renovação do certificado novo usa webroot `/var/www/letsencrypt` e hook de deploy para recarregar Nginx e reiniciar os processos TLS diretos.
+- Validação: builds de frontend, backend e backend-proxy sem erro; HTTPS do novo domínio com certificado válido; `/`, `/aviso-de-privacidade` e `/smsgate/health` com HTTP 200; login fictício rejeitado com 401 tanto no domínio novo quanto na API legada; rota protegida do proxy com 401; domínio antigo com 308 para a nova URL; renovação simulada do certificado pelo Certbot concluída; console interno e portal Hotspot com HTTP 200.
+
+## CORS após a migração do console - 2026-10-16
+
+- O backend principal e o backend-proxy permitem explicitamente `https://console.jacarezinho.app.br`, `https://console.jacarezinho.cloud` (clientes legados), `https://console.interno.jacarezinho` e a origem BeckerCorp já existente. O proxy inclui as variantes diretas de `:6777` usadas na configuração anterior.
+- O backend-proxy tinha uma allowlist declarada, mas respondia `Access-Control-Allow-Origin` com qualquer `Origin` recebida. O middleware agora compara a origem completa com a allowlist e não envia o cabeçalho para origens não autorizadas.
+- Validação runtime: preflight de login e proxy para os três domínios do console retorna `Access-Control-Allow-Origin` correspondente; origem externa arbitrária e hostname parecido não recebem esse cabeçalho. O proxy exige JWT nas rotas protegidas e o console novo continua com HTTP 200.
+
+
 ## Reorganização da interface e monitoramento unificado - 2026-10-29
 
 - Auditoria UI/UX: 15 de 29 telas fora do menu, três telas só de atalhos, funções repetidas (VLAN em 4 lugares, auditoria em 6), nenhum gráfico com histórico e o card “Ameaças” lendo `access_events`, parada desde 21/10 06:52 (ingester do Squid em loop com `access.log` inacessível).
@@ -8649,3 +8688,5 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Prova: `scripts/sgcg-whatsapp-check.sh` (novo, só lê) consulta 38 endereços do WhatsApp e da Meta como se fosse um aparelho de cada VLAN (origem = endereço do servidor na VLAN, que o Unbound marca com a tag da VLAN): antes 5 bloqueios (todos na VLAN 30), depois 0 em VLANs 10, 30, 40, 50 e 70. Redes sociais, golpe, adulto e DNS criptografado seguem NXDOMAIN na VLAN 30. Aparelho real da VLAN 30 (192.168.30.81) depois da correção: WhatsApp passa, só Instagram segue bloqueado.
 - Aviso novo no painel (`backend/src/modules/monitor/monitor-service.ts`, `getAlerts`): "WhatsApp com N endereços bloqueados" (warning, link para as regras) quando, nos últimos 15 minutos, o DNS bloqueou algum endereço das regras de liberação cujo nome contém "whatsapp" (regras 9 e 18). Pega o mesmo tipo de falha caso uma regra de bloqueio nova passe a valer numa VLAN sem a liberação completa. Logo depois da correção ele acusou os bloqueios dos meus testes de antes (origem 192.168.30.1) e some sozinho em 15 minutos.
 - Validação: `tsc --noEmit` do backend sem erro; `bcc-backend` reiniciado; alerta testado com controle positivo (janela de 2 h achou os bloqueios de antes da correção).
+
+- Reverificação "não-VIP = ACL + DNS" (30/10, somente leitura): os 24 IPs com acesso total no firewall (UFW `ufw-before-forward`) são exatamente os 24 VIPs ativos do banco, nenhum IP fora do cadastro. Todo DNS (53 UDP/TCP) vindo de `enp6s0+` é redirecionado ao Unbound e nenhuma conexão ativa foi ao DNS externo; nenhum fluxo DoT (853) ativo; IPv6 não é encaminhado (`ip6tables` FORWARD em DROP). DoT, QUIC (UDP 443) e DoH por IP dos 8 resolvidores conhecidos estão bloqueados nas VLANs 10, 30, 50 e 70. Lacuna: a VLAN 40 (câmeras) tem saída liberada sem essas travas (por desenho), então DoT e DoH por IP passam; as VLANs 80 e 99 seguem isentas por configuração (o texto de 29/10 que dizia "todas as VLANs" para DoT/QUIC/DoH não vale para a 40). 9 dos 24 VIPs seguem presos só ao IP, sem MAC. Dispositivos fora do VIP que falam só por IP fixo (câmeras, VoIP, alguns apps) não deixam rastro de DNS e portanto não são filtrados pelo DNS.
