@@ -1,226 +1,28 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Activity, BarChart2, Clock, Edit3, Eye, EyeOff, FileText, Filter, Network, Plus,
-  Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2, UserRound, Users, Wifi,
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, Trash2, Users, Wifi } from 'lucide-react';
 import { api } from '../services/api';
-import { askConfirm, toast, useUrlTab } from '../components/ui/kit';
-import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
+import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Tabs, askConfirm, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
+import { authMethodLabel, dateTimeBR, formatCpf, formatMac, formatPersonName, formatPhone, matchesText, sessionState } from '../components/hotspot/format';
+import HotspotUsage from '../components/hotspot/HotspotUsage';
+import HotspotReport from '../components/hotspot/HotspotReport';
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+/*
+ * Hotspot de visitantes (VLAN 70): cadastro de visitantes, sessões conectadas, uso e relatório oficial.
+ * Quem não se cadastrou fica na página do portal; depois de entrar, segue as regras normais da VLAN 70.
+ */
 
-function formatCpf(value) {
-  const digits = String(value || '').replace(/\D/g, '').slice(0, 11);
-  return digits
-    .replace(/^(\d{3})(\d)/, '$1.$2')
-    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1-$2');
-}
+const LEGACY_TABS = { overview: 'visitantes', metrics: 'uso', report: 'relatorio' };
+const EMPTY_VISITOR = { full_name: '', cpf: '', phone: '', mac_address: '', password: '', active: true };
 
-function formatPhone(value) {
-  const rawDigits = String(value || '').replace(/\D/g, '');
-  const digits = rawDigits.startsWith('55') && rawDigits.length > 11
-    ? rawDigits.slice(2, 13)
-    : rawDigits.slice(0, 11);
-  if (digits.length <= 2) return digits;
-  if (digits.length <= 6) return digits.replace(/^(\d{2})(\d+)/, '($1) $2');
-  if (digits.length <= 10) return digits.replace(/^(\d{2})(\d{4})(\d+)/, '($1) $2-$3');
-  return digits.replace(/^(\d{2})(\d{5})(\d{4}).*/, '($1) $2-$3');
-}
-
-function formatMac(value) {
-  const hex = String(value || '').replace(/[^0-9a-f]/gi, '').slice(0, 12).toLowerCase();
-  return hex.match(/.{1,2}/g)?.join(':') || '';
-}
-
-function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) return '-';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
-
-function formatBytes(bytes) {
-  if (!bytes || bytes <= 0) return '-';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function formatPersonName(value) {
-  const particles = new Set(['da', 'das', 'de', 'do', 'dos', 'e']);
-  return String(value || '')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map((token, index, tokens) => {
-      const lower = token.toLocaleLowerCase('pt-BR');
-      if (index > 0 && index < tokens.length - 1 && particles.has(lower)) return lower;
-      return lower.charAt(0).toLocaleUpperCase('pt-BR') + lower.slice(1);
-    })
-    .join(' ');
-}
-
-function translateSessionStatus(status, expiresAt) {
-  if (status === 'revoked') return 'Revogada';
-  if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return 'Expirada';
-  if (status === 'active') return 'Ativa';
-  return status || '-';
-}
-
-function translateAuthMethod(method) {
-  return ({
-    first_register: 'Primeiro cadastro',
-    reactivated_register: 'Recadastro',
-    cpf_password: 'CPF e senha',
-    mac_auto: 'Reconhecimento automático',
-    mac_confirm: 'Retorno confirmado',
-    password_recovery: 'Recuperação de senha',
-  }[method] || method || '-');
-}
-
-function matchesText(row, query, fields) {
-  const normalizedQuery = String(query || '').trim().toLocaleLowerCase('pt-BR');
-  if (!normalizedQuery) return true;
-  const numericQuery = normalizedQuery.replace(/\D/g, '');
-  return fields.some((field) => {
-    const value = String(row[field] || '').toLocaleLowerCase('pt-BR');
-    if (value.includes(normalizedQuery)) return true;
-    return numericQuery && value.replace(/\D/g, '').includes(numericQuery);
-  });
-}
-
-// ── shared UI ─────────────────────────────────────────────────────────────────
-
-function Field({ label, value, onChange, type = 'text', required = false, ...props }) {
+function VisitorDrawer({ open, item, saving, onClose, onSubmit }) {
+  const [form, setForm] = useState(EMPTY_VISITOR);
   const [showPassword, setShowPassword] = useState(false);
-  const isPassword = type === 'password';
-
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
-      <div className="relative">
-        <input
-          type={isPassword && showPassword ? 'text' : type}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          required={required}
-          className={`h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20 ${isPassword ? 'pr-11' : ''}`}
-          {...props}
-        />
-        {isPassword ? (
-          <button
-            type="button"
-            onClick={() => setShowPassword((current) => !current)}
-            className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl text-on-surface/50 transition hover:bg-primary/8 hover:text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-            title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-          >
-            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
-        ) : null}
-      </div>
-    </label>
-  );
-}
-
-function Metric({ label, value, icon: Icon, sub }) {
-  return (
-    <Surface className="p-5">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-bold uppercase text-on-surface/55">{label}</p>
-          <div className="mt-2 text-3xl font-bold text-on-surface">{value}</div>
-          {sub && <p className="mt-1 text-xs text-on-surface/45">{sub}</p>}
-        </div>
-        <div className="rounded-2xl bg-primary/10 p-3 text-primary"><Icon size={24} /></div>
-      </div>
-    </Surface>
-  );
-}
-
-function TableShell({ title, rows, columns, empty, actions = null }) {
-  return (
-    <Surface className="p-5">
-      <div className="mb-4 flex items-center justify-between gap-4">
-        <h2 className="text-sm font-bold uppercase text-on-surface">{title}</h2>
-        <div className="flex items-center gap-2">
-          {actions}
-          <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">{rows.length}</span>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="min-w-full text-left text-xs">
-          <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-            <tr>{columns.map((c) => <th key={c.key} className="whitespace-nowrap px-3 py-2 font-bold">{c.label}</th>)}</tr>
-          </thead>
-          <tbody className="divide-y divide-outline/10">
-            {rows.length ? rows.map((row) => (
-              <tr key={row.id} className="group text-on-surface/78 transition-colors hover:bg-primary/5">
-                {columns.map((c) => (
-                  <td key={c.key} className="whitespace-nowrap px-3 py-3">
-                    {c.render ? c.render(row) : row[c.key]}
-                  </td>
-                ))}
-              </tr>
-            )) : (
-              <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={columns.length}>{empty}</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </Surface>
-  );
-}
-
-function TabBar({ tabs, active, onChange }) {
-  return (
-    <div className="flex gap-1 rounded-2xl border border-outline/14 bg-surface-high/60 p-1">
-      {tabs.map((tab) => (
-        <button
-          key={tab.key}
-          onClick={() => onChange(tab.key)}
-          className={[
-            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase transition-all',
-            active === tab.key
-              ? 'bg-primary text-on-primary shadow-sm'
-              : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
-          ].join(' ')}
-        >
-          {tab.icon && <tab.icon size={14} />}
-          <span className="hidden sm:inline">{tab.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function SelectField({ label, value, onChange, children }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-      >
-        {children}
-      </select>
-    </label>
-  );
-}
-
-// ── VisitorDialog ─────────────────────────────────────────────────────────────
-
-function VisitorDialog({ open, item, saving, onClose, onSubmit }) {
-  const [form, setForm] = useState({ full_name: '', cpf: '', phone: '', mac_address: '', password: '', active: true });
-
+  const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
+    setError('');
+    setShowPassword(false);
     setForm(item ? {
       full_name: item.full_name || '',
       cpf: formatCpf(item.cpf_raw || item.cpf || ''),
@@ -228,903 +30,287 @@ function VisitorDialog({ open, item, saving, onClose, onSubmit }) {
       mac_address: item.mac_address || '',
       password: '',
       active: item.active !== false,
-    } : { full_name: '', cpf: '', phone: '', mac_address: '', password: '', active: true });
+    } : EMPTY_VISITOR);
   }, [open, item]);
-
-  const submit = (e) => {
-    e.preventDefault();
+  if (!open) return null;
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const submit = () => {
+    if (form.full_name.trim().length < 3) return setError('Informe o nome completo.');
+    if (form.cpf.replace(/\D/g, '').length !== 11) return setError('CPF incompleto.');
+    if (form.phone.replace(/\D/g, '').length < 10) return setError('Celular incompleto (DDD + número).');
+    if (!item && form.password.length < 4) return setError('Defina uma senha para o visitante.');
+    setError('');
     onSubmit({ ...form, cpf: form.cpf.replace(/\D/g, ''), phone: form.phone.replace(/\D/g, '') });
   };
-
-  const set = (key) => (v) => setForm((f) => ({ ...f, [key]: v }));
-
   return (
-    <DialogShell
+    <Drawer
       open={open}
-      title={item ? 'Editar visitante' : 'Novo visitante'}
-      subtitle="Cadastro institucional usado pelo portal cativo. A senha só é alterada quando preenchida na edição."
+      busy={saving}
       onClose={onClose}
-      size="max-w-3xl"
+      title={item ? 'Editar visitante' : 'Novo visitante'}
+      description="Cadastro usado pelo portal do Wi-Fi de visitantes. Na edição, a senha só muda se for preenchida."
       footer={(
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-          <ActionButton tone="primary" type="submit" form="hotspot-visitor-form" icon={item ? Edit3 : Plus} disabled={saving}>
-            {saving ? 'Salvando...' : item ? 'Salvar visitante' : 'Criar visitante'}
-          </ActionButton>
-        </div>
-      )}
-    >
-      <form id="hotspot-visitor-form" className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-        <div className="sm:col-span-2">
-          <Field label="Nome completo" value={form.full_name} onChange={set('full_name')} required />
-        </div>
-        <Field label="CPF" value={form.cpf} onChange={(v) => setForm((f) => ({ ...f, cpf: formatCpf(v) }))} inputMode="numeric" required />
-        <Field label="Celular" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: formatPhone(v) }))} inputMode="numeric" placeholder="DDD + celular com 9 dígitos" required />
-        <Field label="MAC do dispositivo" value={form.mac_address} onChange={(v) => setForm((f) => ({ ...f, mac_address: formatMac(v) }))} placeholder="aa:bb:cc:dd:ee:ff" />
-        <Field
-          label={item ? 'Nova senha' : 'Senha'} type="password" value={form.password}
-          onChange={set('password')} placeholder={item ? 'Deixe em branco para manter' : ''} required={!item}
-        />
-        <label className="flex h-11 items-center gap-3 rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm font-bold text-on-surface/72">
-          <input type="checkbox" checked={form.active} onChange={(e) => setForm((f) => ({ ...f, active: e.target.checked }))} className="h-4 w-4 rounded border-outline/30 text-primary" />
-          Cadastro ativo
-        </label>
-      </form>
-    </DialogShell>
-  );
-}
-
-// ── MetricsTab ────────────────────────────────────────────────────────────────
-
-function MetricsTab({ metrics, loading, onRefresh }) {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-center">
-          <Activity className="mx-auto mb-3 animate-spin text-primary" size={28} />
-          <p className="text-sm text-on-surface/55">Carregando métricas...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!metrics) {
-    return (
-      <Surface className="p-10 text-center">
-        <BarChart2 className="mx-auto mb-3 text-on-surface/30" size={36} />
-        <p className="text-sm text-on-surface/55">Clique abaixo para carregar as métricas de uso do hotspot.</p>
-        <div className="mt-5">
-          <ActionButton tone="primary" icon={RefreshCw} onClick={onRefresh}>Carregar Métricas</ActionButton>
-        </div>
-      </Surface>
-    );
-  }
-
-  const { daily_users, monthly_summary, top_users, auth_methods, vlan_distribution, hourly_distribution, top_domains } = metrics;
-
-  const last7 = (daily_users || []).slice(0, 7).reverse();
-  const maxDaily = Math.max(...last7.map((d) => Number(d.unique_visitors) || 0)) || 1;
-
-  const maxHourly = Math.max(...(hourly_distribution || []).map((d) => Number(d.count) || 0)) || 1;
-
-  const maxUser = Number(top_users?.[0]?.sessions) || 1;
-
-  const methodLabel = { first_register: 'Novo cadastro', reactivated_register: 'Recadastro', cpf_password: 'CPF + Senha', mac_auto: 'Auto (MAC)', mac_confirm: 'Retorno confirmado' };
-  const methodColor = ['bg-primary', 'bg-info', 'bg-warning'];
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-end">
-        <ActionButton tone="ghost" icon={RefreshCw} onClick={onRefresh}>Atualizar métricas</ActionButton>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Sessões este mês" value={monthly_summary?.total_sessions ?? 0} icon={Activity} />
-        <Metric label="Usuários únicos mês" value={monthly_summary?.monthly_unique ?? 0} icon={Users} />
-        <Metric label="Dias com acesso" value={monthly_summary?.active_days ?? 0} icon={Clock} />
-        <Metric
-          label="Top usuário" value={top_users?.[0]?.full_name?.split(' ')[0] || '-'} icon={UserRound}
-          sub={top_users?.[0] ? `${top_users[0].sessions} sessões nos últimos 30 dias` : ''}
-        />
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Usuários únicos por dia</h3>
-          <p className="mb-4 text-xs text-on-surface/45">Últimos 7 dias</p>
-          {last7.length ? (
-            <div className="flex h-28 items-end gap-1.5">
-              {last7.map((d, i) => {
-                const val = Number(d.unique_visitors) || 0;
-                const pct = Math.max(val > 0 ? 5 : 0, Math.round((val / maxDaily) * 100));
-                const dateShort = String(d.date || '').slice(5);
-                return (
-                  <div key={i} className="group flex flex-1 flex-col items-center gap-1">
-                    <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                      <div
-                        className="w-full rounded-t-sm bg-primary/65 transition-all group-hover:bg-primary"
-                        style={{ height: `${pct}%` }}
-                        title={`${d.date}: ${val} usuário(s) único(s), ${d.sessions} sessão(ões)`}
-                      />
-                    </div>
-                    <span className="text-[8px] text-on-surface/40">{dateShort}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <p className="py-6 text-center text-xs text-on-surface/40">Sem dados nos últimos 7 dias</p>}
-        </Surface>
-
-        <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Acessos por hora do dia</h3>
-          <p className="mb-4 text-xs text-on-surface/45">Distribuição acumulada — últimos 30 dias</p>
-          <div className="flex h-28 items-end gap-px">
-            {(hourly_distribution || []).map((d, i) => {
-              const val = Number(d.count) || 0;
-              const pct = Math.max(val > 0 ? 4 : 0, Math.round((val / maxHourly) * 100));
-              return (
-                <div key={i} className="group flex flex-1 flex-col items-center">
-                  <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                    <div
-                      className="w-full rounded-t-sm bg-info/60 transition-all group-hover:bg-info"
-                      style={{ height: `${pct}%` }}
-                      title={`${String(d.hour).padStart(2, '0')}h: ${val} sessão(ões)`}
-                    />
-                  </div>
-                  {i % 4 === 0 && <span className="text-[7px] text-on-surface/35">{String(d.hour).padStart(2, '0')}</span>}
-                </div>
-              );
-            })}
-          </div>
-        </Surface>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Ranking de usuários — 30 dias</h3>
-          {top_users?.length ? (
-            <div className="space-y-3">
-              {top_users.slice(0, 8).map((u, i) => {
-                const pct = Math.round((Number(u.sessions) / maxUser) * 100);
-                return (
-                  <div key={i} className="flex items-center gap-3">
-                    <span className="w-5 shrink-0 text-right text-[10px] font-bold text-on-surface/40">{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-bold text-on-surface">{u.full_name}</span>
-                        <span className="shrink-0 text-[10px] font-bold text-primary">{u.sessions}x</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-primary/12">
-                        <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="mt-0.5 text-[9px] text-on-surface/40">
-                        {u.cpf} · último: {u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '-'}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <p className="py-6 text-center text-xs text-on-surface/40">Nenhum usuário registrado</p>}
-        </Surface>
-
-        <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Métodos de autenticação</h3>
-          <div className="space-y-3">
-            {auth_methods?.map((m, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-on-surface">{methodLabel[m.auth_method] || m.auth_method}</span>
-                    <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{m.count} ({m.pct}%)</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-outline/15">
-                    <div className={`h-full rounded-full ${methodColor[i] || 'bg-primary'}`} style={{ width: `${m.pct}%` }} />
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!auth_methods?.length && <p className="py-4 text-center text-xs text-on-surface/40">Sem dados</p>}
-          </div>
-
-          <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Distribuição por VLAN</h4>
-            <div className="flex flex-wrap gap-2">
-              {vlan_distribution?.map((v, i) => (
-                <div key={i} className="rounded-xl border border-outline/14 bg-surface-variant px-3 py-2 text-xs">
-                  <span className="font-bold text-on-surface">VLAN {v.vlan_id}</span>
-                  <span className="ml-2 text-on-surface/55">{v.count} sessões</span>
-                </div>
-              ))}
-              {!vlan_distribution?.length && <p className="text-xs text-on-surface/40">Sem dados</p>}
-            </div>
-          </div>
-
-          <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Sites mais visitados (VLAN 70 — últimos 30 dias)</h4>
-            {top_domains?.length ? (
-              <div className="space-y-2">
-                {top_domains.map((d, i) => {
-                  const maxD = Number(top_domains[0]?.total) || 1;
-                  const pct = Math.round((Number(d.total) / maxD) * 100);
-                  return (
-                    <div key={i}>
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-bold text-on-surface" title={d.domain}>{d.domain}</span>
-                        <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-outline/15">
-                        <div className="h-full rounded-full bg-info/70" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-on-surface/40">Nenhuma consulta DNS registrada para a VLAN 70 no período. Verifique se o DnsRadarService está ativo.</p>
-            )}
-          </div>
-        </Surface>
-      </div>
-    </div>
-  );
-}
-
-// ── ReportTab ─────────────────────────────────────────────────────────────────
-
-function ReportTab({ visitors }) {
-  const [filters, setFilters] = useState({ from: '', to: '', visitor_id: '', vlan_id: '' });
-  const [reportData, setReportData] = useState(null);
-  const [validationData, setValidationData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [validating, setValidating] = useState(false);
-  const [printing, setPrinting] = useState(false);
-
-  const setFilter = (key) => (v) => setFilters((f) => ({ ...f, [key]: v }));
-
-  const buildParams = (extra = {}) => {
-    const p = { ...extra };
-    if (filters.from) p.from = filters.from;
-    if (filters.to) p.to = filters.to;
-    if (filters.visitor_id) p.visitor_id = filters.visitor_id;
-    if (filters.vlan_id) p.vlan_id = filters.vlan_id;
-    return p;
-  };
-
-  const loadReport = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get('/api/hotspot/report', { params: buildParams({ page: 1, limit: 200 }) });
-      setReportData(res.data);
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao carregar relatório.', 'danger');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const syncLog = async () => {
-    setSyncing(true);
-    try {
-      const res = await api.post('/api/hotspot/access-log/sync');
-      toast(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`, 'success');
-      setValidationData(null);
-      if (reportData) loadReport();
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha na sincronização.', 'danger');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const validateReport = async () => {
-    setValidating(true);
-    try {
-      const res = await api.get('/api/hotspot/report/validate', { params: buildParams() });
-      setValidationData(res.data);
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao validar relatório.', 'danger');
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const printReport = async () => {
-    setPrinting(true);
-    try {
-      const res = await api.get('/api/hotspot/report', { params: buildParams({ page: 1, limit: 1000 }) });
-      const { rows, summary } = res.data;
-
-      const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-      const fromLabel = filters.from
-        ? new Date(filters.from + 'T12:00:00').toLocaleDateString('pt-BR')
-        : 'Início dos registros';
-      const toLabel = filters.to
-        ? new Date(filters.to + 'T12:00:00').toLocaleDateString('pt-BR')
-        : 'Data atual';
-      const docId = `SGCG-HS-${Date.now().toString(36).toUpperCase()}`;
-      const logoUrl = `${window.location.origin}/LOGO-JACAREZINHO.png`;
-
-      const fmtDur = (s) => {
-        if (!s || s <= 0) return '-';
-        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-        if (h > 0) return `${h}h ${m}m`;
-        if (m > 0) return `${m}m ${s % 60}s`;
-        return `${s}s`;
-      };
-
-      const fmtBanda = (up, down) => {
-        const total = (Number(up) || 0) + (Number(down) || 0);
-        if (total <= 0) return '-';
-        if (total < 1024) return `${total} B`;
-        if (total < 1048576) return `${(total / 1024).toFixed(1)} KB`;
-        return `${(total / 1048576).toFixed(2)} MB`;
-      };
-
-      const win = window.open('', '_blank', 'width=1200,height=820');
-      if (!win) { toast('Permita pop-ups para gerar o relatório em PDF.', 'warning'); return; }
-
-      win.document.write(`<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8">
-<title>Relatório Hotspot — ${docId}</title>
-<style>
-@page{size:A4 landscape;margin:1.2cm 1.5cm 2.2cm}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#111;background:#fff}
-.header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #003087;padding-bottom:10px;margin-bottom:10px}
-.logo{width:58px;height:64px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.logo img{width:54px;height:60px;object-fit:contain}
-.logo-fb{width:54px;height:60px;border:2.5px solid #003087;border-radius:8px;display:none;align-items:center;justify-content:center;font-size:7pt;color:#003087;font-weight:bold;text-align:center;line-height:1.3;padding:6px}
-.ht h1{font-size:12.5pt;font-weight:bold;color:#003087;text-transform:uppercase;letter-spacing:.3px}
-.ht h2{font-size:9pt;color:#555;margin-top:2px}
-.ht h3{font-size:9pt;color:#777;margin-top:1px}
-.ht h4{font-size:11pt;font-weight:bold;color:#1a1a1a;margin-top:6px;border-top:1px solid #d0d0d0;padding-top:5px;text-transform:uppercase;letter-spacing:.4px}
-.meta{background:#f0f4fa;border-left:3px solid #003087;padding:6px 10px;margin-bottom:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:3px 16px}
-.ml{font-size:7.5pt;color:#666;font-weight:bold;text-transform:uppercase;display:block}
-.mv{font-size:9pt;font-weight:bold;color:#111}
-table{width:100%;border-collapse:collapse;font-size:7.5pt}
-thead th{background:#003087;color:#fff;padding:5px 5px;text-align:left;font-size:7pt;white-space:nowrap}
-tbody td{padding:3px 5px;border-bottom:1px solid #e4e6ea;white-space:nowrap}
-tbody tr:nth-child(even) td{background:#f7f8fa}
-.footer{margin-top:14px;border-top:2px double #003087;padding-top:8px;display:flex;justify-content:space-between;align-items:flex-end;font-size:7.5pt;color:#444}
-.docid{font-family:monospace;font-size:7pt;color:#888}
-@media print{.noprint{display:none!important}}
-</style>
-</head><body>
-<div class="header">
-  <div class="logo">
-    <img
-      src="${logoUrl}"
-      onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
-    />
-    <div class="logo-fb">PMJ<br>PARANÁ</div>
-  </div>
-  <div class="ht">
-    <h1>Prefeitura Municipal de Jacarezinho</h1>
-    <h2>Estado do Paraná</h2>
-    <h3>Secretaria Municipal de Comércio, Indústria, Serviços e Inovação</h3>
-    <h4>Relatório Oficial do Hotspot Institucional</h4>
-    <p style="font-size:9pt;color:#555;margin:2px 0 0;">Relatório de Acesso ao Hotspot Municipal</p>
-  </div>
-</div>
-<div class="meta">
-  <div><span class="ml">Período</span><span class="mv">${fromLabel} a ${toLabel}</span></div>
-  <div><span class="ml">Total de Sessões</span><span class="mv">${summary?.total_sessions ?? rows.length}</span></div>
-  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_visitors ?? '-'}</span></div>
-  <div><span class="ml">Emissão</span><span class="mv">${now}</span></div>
-</div>
-<table>
-<thead><tr>
-  <th>#</th><th>Data</th><th>Hora</th><th>Usuário</th><th>CPF</th>
-  <th>Endereço IP</th><th>MAC</th><th>VLAN</th><th>Autenticação</th>
-  <th>Duração</th><th>Site Principal</th><th>Banda</th>
-</tr></thead>
-<tbody>
-${rows.map((r, i) => `<tr>
-  <td>${i + 1}</td>
-  <td>${r.date_fmt ?? '-'}</td>
-  <td>${r.hour_fmt ?? '-'}</td>
-  <td>${r.visitor_name ?? 'N/I'}</td>
-  <td>${r.cpf_masked ?? '-'}</td>
-  <td>${r.client_ip ?? '-'}</td>
-  <td>${r.mac_address ?? '-'}</td>
-  <td>${r.vlan_id ?? '-'}</td>
-  <td>${r.auth_method ?? '-'}</td>
-  <td>${fmtDur(r.duration_seconds)}</td>
-  <td>${r.top_domain ?? '-'}</td>
-  <td>${fmtBanda(r.bytes_up, r.bytes_down)}</td>
-</tr>`).join('')}
-</tbody>
-</table>
-<div class="footer">
-  <div>
-    <strong>Sistema de Governança e Controle Governamental (SGCG) — Prefeitura Municipal de Jacarezinho/PR</strong><br>
-    Documento gerado automaticamente em ${now}. Este relatório possui validade institucional, gerado com base nos registros do SGCG.<br>
-    <em>Vedada a alteração do conteúdo. Em caso de dúvidas, consulte a Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.</em>
-  </div>
-  <div style="text-align:right">
-    <span class="docid">Nº ${docId}</span><br>
-    <em>Relatório oficial validado.</em>
-  </div>
-</div>
-<script>setTimeout(function(){window.print();},500);<\/script>
-</body></html>`);
-      win.document.close();
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao gerar relatório para impressão.', 'danger');
-    } finally {
-      setPrinting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <Surface className="p-5">
-        <div className="mb-5 flex items-start gap-3">
-          <FileText className="mt-0.5 shrink-0 text-primary" size={20} />
-          <div>
-            <h2 className="text-sm font-bold uppercase text-on-surface">Relatório Institucional de Acesso</h2>
-            <p className="mt-1 text-xs text-on-surface/60">
-              Prefeitura Municipal de Jacarezinho — Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.<br />
-              Selecione o período, usuário e VLAN para gerar o relatório e exportar em PDF com cabeçalho e rodapé governamental.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="De" type="date" value={filters.from} onChange={setFilter('from')} />
-          <Field label="Até" type="date" value={filters.to} onChange={setFilter('to')} />
-          <SelectField label="Usuário" value={filters.visitor_id} onChange={setFilter('visitor_id')}>
-            <option value="">Todos os usuários</option>
-            {visitors.map((v) => <option key={v.id} value={v.id}>{v.full_name} ({v.cpf})</option>)}
-          </SelectField>
-          <SelectField label="VLAN" value={filters.vlan_id} onChange={setFilter('vlan_id')}>
-            <option value="">Todas as VLANs</option>
-            <option value="70">VLAN 70 — Hotspot visitantes</option>
-          </SelectField>
-        </div>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <ActionButton tone="primary" icon={loading ? Activity : Filter} onClick={loadReport} disabled={loading}>
-            {loading ? 'Consultando...' : 'Gerar Relatório'}
-          </ActionButton>
-          <ActionButton tone="secondary" icon={syncing ? Activity : RefreshCw} onClick={syncLog} disabled={syncing}>
-            {syncing ? 'Sincronizando...' : 'Sincronizar Log'}
-          </ActionButton>
-          <ActionButton tone="secondary" icon={validating ? Activity : ShieldCheck} onClick={validateReport} disabled={validating}>
-            {validating ? 'Validando...' : 'Validar Relatório'}
-          </ActionButton>
-          {reportData && (
-            <ActionButton tone="ghost" icon={printing ? Activity : Printer} onClick={printReport} disabled={printing}>
-              {printing ? 'Gerando PDF...' : 'Imprimir / Salvar PDF'}
-            </ActionButton>
-          )}
-        </div>
-      </Surface>
-
-      {validationData && (
-        <Surface className="p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-bold uppercase text-on-surface">Validação do Relatório</h2>
-                <StatusChip
-                  tone={validationData.status === 'valid' ? 'success' : validationData.status === 'warning' ? 'warning' : 'danger'}
-                  label={validationData.status === 'valid' ? 'Consistente' : validationData.status === 'warning' ? 'Com avisos' : 'Inconsistente'}
-                />
-              </div>
-              <p className="mt-2 text-sm leading-6 text-on-surface/64">{validationData.recommendation}</p>
-            </div>
-            <div className="grid min-w-[260px] grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl border border-outline/12 bg-surface-high/60 p-3">
-                <p className="text-[10px] font-bold uppercase text-on-surface/45">Sessões</p>
-                <p className="mt-1 text-lg font-bold text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-danger/16 bg-danger/8 p-3">
-                <p className="text-[10px] font-bold uppercase text-danger/75">Críticos</p>
-                <p className="mt-1 text-lg font-bold text-danger">{validationData.summary?.critical ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-warning/18 bg-warning/8 p-3">
-                <p className="text-[10px] font-bold uppercase text-warning/75">Avisos</p>
-                <p className="mt-1 text-lg font-bold text-warning">{validationData.summary?.warning ?? 0}</p>
-              </div>
-            </div>
-          </div>
-          <div className="mt-5 grid gap-2 lg:grid-cols-2">
-            {validationData.checks?.map((check) => (
-              <div key={check.key} className="flex items-center justify-between gap-3 rounded-xl border border-outline/12 bg-surface-high/48 px-3 py-2">
-                <div>
-                  <p className="text-xs font-bold text-on-surface">{check.label}</p>
-                  <p className="text-[10px] uppercase text-on-surface/42">{check.severity === 'critical' ? 'Bloqueia emissão auditável' : 'Revisão recomendada'}</p>
-                </div>
-                <StatusChip tone={check.count ? (check.severity === 'critical' ? 'danger' : 'warning') : 'success'} label={String(check.count || 0)} />
-              </div>
-            ))}
-          </div>
-        </Surface>
-      )}
-
-      {reportData && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Metric label="Sessões no período" value={reportData.total} icon={Activity} />
-            <Metric label="Usuários únicos" value={reportData.summary?.unique_visitors || 0} icon={Users} />
-            <Metric label="Tempo total acumulado" value={formatDuration(Number(reportData.summary?.total_seconds) || 0)} icon={Clock} />
-          </div>
-
-          <Surface className="p-5">
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-bold uppercase text-on-surface">Registros de Acesso</h2>
-                <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do hotspot</p>
-              </div>
-              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">
-                {reportData.rows?.length} / {reportData.total}
-              </span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-xs">
-                <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-                  <tr>
-                    {['Data', 'Hora', 'Usuário', 'CPF', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
-                      <th key={h} className="whitespace-nowrap px-3 py-2 font-bold">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-outline/10">
-                  {reportData.rows?.length ? reportData.rows.map((row) => (
-                    <tr key={row.id} className="text-on-surface/78 transition-colors hover:bg-primary/5">
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.date_fmt}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.hour_fmt}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-bold">{row.visitor_name}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.cpf_masked}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.client_ip || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.vlan_id || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.auth_method}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{formatDuration(row.duration_seconds)}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-on-surface/55">{row.top_domain || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{formatBytes((Number(row.bytes_up) || 0) + (Number(row.bytes_down) || 0))}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td className="px-3 py-8 text-center text-on-surface/45" colSpan={10}>
-                        Nenhum registro para os filtros selecionados.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {reportData.total > (reportData.rows?.length || 0) && (
-              <p className="mt-3 text-center text-xs text-on-surface/45">
-                Exibindo {reportData.rows?.length} de {reportData.total} registros. O PDF incluirá todos os registros.
-              </p>
-            )}
-          </Surface>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="primary" onClick={submit} disabled={saving}>{saving ? 'Salvando...' : item ? 'Salvar' : 'Cadastrar visitante'}</Button>
         </>
       )}
-    </div>
+    >
+      <Field id="hv-name" label="Nome completo">
+        <input id="hv-name" className={inputCls} value={form.full_name} onChange={(e) => set({ full_name: e.target.value })} autoComplete="off" />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="hv-cpf" label="CPF">
+          <input id="hv-cpf" className={`${inputCls} tabular`} inputMode="numeric" value={form.cpf} onChange={(e) => set({ cpf: formatCpf(e.target.value) })} />
+        </Field>
+        <Field id="hv-phone" label="Celular" hint="DDD + número com 9 dígitos.">
+          <input id="hv-phone" className={`${inputCls} tabular`} inputMode="numeric" value={form.phone} onChange={(e) => set({ phone: formatPhone(e.target.value) })} />
+        </Field>
+        <Field id="hv-mac" label="MAC do aparelho (opcional)">
+          <input id="hv-mac" className={`${inputCls} tabular`} value={form.mac_address} onChange={(e) => set({ mac_address: formatMac(e.target.value) })} placeholder="aa:bb:cc:dd:ee:ff" />
+        </Field>
+        <Field id="hv-pass" label={item ? 'Nova senha (opcional)' : 'Senha'}>
+          <div className="relative">
+            <input id="hv-pass" type={showPassword ? 'text' : 'password'} className={`${inputCls} pr-10`} value={form.password} onChange={(e) => set({ password: e.target.value })} placeholder={item ? 'Deixe em branco para manter' : ''} autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPassword((s) => !s)} className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-on-surface/50 hover:bg-on-surface/5" aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'} title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
+              {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+        </Field>
+      </div>
+      <label className="flex items-center gap-2 text-[13px] text-on-surface/80">
+        <input type="checkbox" checked={form.active} onChange={(e) => set({ active: e.target.checked })} /> Cadastro ativo (pode entrar no Wi-Fi)
+      </label>
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </Drawer>
   );
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
 export default function Hotspot() {
-  const [tab, setTab] = useUrlTab([{ key: 'overview' }, { key: 'metrics' }, { key: 'report' }], 'overview');
-  const [overview, setOverview] = useState({ totals: { visitors: 0, devices: 0, active_sessions: 0 }, enforcement: null, recent_sessions: [] });
+  const [params, setParams] = useSearchParams();
+  const TABS = [
+    { key: 'visitantes', label: 'Visitantes', icon: Users },
+    { key: 'sessoes', label: 'Sessões', icon: Wifi },
+    { key: 'uso', label: 'Uso', icon: BarChart2 },
+    { key: 'relatorio', label: 'Relatório', icon: FileText },
+  ];
+  const [tab, setTab] = useUrlTab(TABS, 'visitantes');
+  const [overview, setOverview] = useState({ totals: { visitors: 0, devices: 0, active_sessions: 0 }, enforcement: null });
   const [visitors, setVisitors] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [visitorDialog, setVisitorDialog] = useState({ open: false, item: null });
-  const [savingVisitor, setSavingVisitor] = useState(false);
-  const [cleaningSessions, setCleaningSessions] = useState(false);
+  const [drawer, setDrawer] = useState({ open: false, item: null });
+  const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [visitorFilters, setVisitorFilters] = useState({ query: '', active: 'all', device: 'all' });
+  const [filters, setFilters] = useState({ query: '', active: 'all', device: 'all' });
 
-  const filteredVisitors = useMemo(() => visitors.filter((visitor) => {
-    const activeMatch = visitorFilters.active === 'all'
-      || (visitorFilters.active === 'active' && visitor.active !== false)
-      || (visitorFilters.active === 'inactive' && visitor.active === false);
-    const deviceCount = Number(visitor.devices) || 0;
-    const deviceMatch = visitorFilters.device === 'all'
-      || (visitorFilters.device === 'linked' && (visitor.mac_address || deviceCount > 0))
-      || (visitorFilters.device === 'unlinked' && !visitor.mac_address && deviceCount === 0);
-    return activeMatch
-      && deviceMatch
-      && matchesText(visitor, visitorFilters.query, ['full_name', 'cpf', 'cpf_raw', 'phone', 'phone_raw', 'mac_address']);
-  }), [visitors, visitorFilters]);
-
-  const visitorAutocomplete = useMemo(() => (
-    [...new Set(visitors
-      .flatMap((visitor) => [
-        formatPersonName(visitor.full_name),
-        visitor.cpf,
-        visitor.phone,
-        visitor.mac_address,
-      ])
-      .filter(Boolean))]
-      .slice(0, 80)
-  ), [visitors]);
-
-  const setVisitorFilter = (key) => (value) => setVisitorFilters((current) => ({ ...current, [key]: value }));
-  const clearVisitorFilters = () => setVisitorFilters({ query: '', active: 'all', device: 'all' });
+  // Endereços antigos (?tab=overview etc.) continuam funcionando.
+  useEffect(() => {
+    const legacy = LEGACY_TABS[params.get('tab')];
+    if (legacy) {
+      const next = new URLSearchParams(params);
+      next.set('tab', legacy);
+      setParams(next, { replace: true });
+    }
+  }, [params, setParams]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [overviewRes, visitorsRes, sessionsRes] = await Promise.all([
-        api.get('/api/hotspot/overview'),
-        api.get('/api/hotspot/visitors'),
-        api.get('/api/hotspot/sessions'),
-      ]);
-      setOverview(overviewRes.data);
-      setVisitors(visitorsRes.data?.visitors || []);
-      setSessions(sessionsRes.data?.sessions || []);
+      const [o, v, s] = await Promise.all([api.get('/api/hotspot/overview'), api.get('/api/hotspot/visitors'), api.get('/api/hotspot/sessions')]);
+      setOverview(o.data || {});
+      setVisitors(v.data?.visitors || []);
+      setSessions(s.data?.sessions || []);
       setError('');
-    } catch (err) {
-      setError(err?.response?.data?.error || 'Falha ao carregar Hotspot.');
+    } catch (e) {
+      setError(errorMessage(e, 'Não foi possível carregar o Hotspot.'));
     } finally {
       setLoading(false);
     }
   };
-
   const loadMetrics = async () => {
     setMetricsLoading(true);
-    try {
-      const res = await api.get('/api/hotspot/metrics');
-      setMetrics(res.data);
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao carregar métricas.', 'danger');
-    } finally {
-      setMetricsLoading(false);
-    }
+    try { setMetrics((await api.get('/api/hotspot/metrics')).data); } catch (e) { toast(errorMessage(e, 'Não foi possível carregar o uso.'), 'danger'); } finally { setMetricsLoading(false); }
   };
-
   useEffect(() => { load(); }, []);
-  useEffect(() => { if (tab === 'metrics' && !metrics) loadMetrics(); }, [tab]);
+  useEffect(() => { if (tab === 'uso' && !metrics) loadMetrics(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const revoke = async (id) => {
-    if (!(await askConfirm(`Revogar sessão ${id}?`))) return;
-    await api.post(`/api/hotspot/sessions/${id}/revoke`);
-    load();
+  const act = async (fn, success) => {
+    setBusy(true);
+    try { await fn(); if (success) toast(success, 'success'); await load(); } catch (e) { toast(errorMessage(e), 'danger'); } finally { setBusy(false); }
   };
 
-  const cleanupStaleSessions = async () => {
-    if (!(await askConfirm('Ocultar da grade administrativa as sessões já expiradas e revogadas, preservando o Relatório e a trilha de auditoria?'))) return;
-    setCleaningSessions(true);
+  const filtered = useMemo(() => visitors.filter((v) => {
+    const devices = Number(v.devices) || 0;
+    const okActive = filters.active === 'all' || (filters.active === 'active' ? v.active !== false : v.active === false);
+    const okDevice = filters.device === 'all' || (filters.device === 'linked' ? Boolean(v.mac_address || devices > 0) : !v.mac_address && devices === 0);
+    return okActive && okDevice && matchesText(v, filters.query, ['full_name', 'cpf', 'cpf_raw', 'phone', 'phone_raw', 'mac_address']);
+  }), [visitors, filters]);
+
+  const suggestions = useMemo(() => [...new Set(visitors.flatMap((v) => [formatPersonName(v.full_name), v.cpf, v.phone, v.mac_address]).filter(Boolean))].slice(0, 80), [visitors]);
+  const activeSessions = sessions.filter((s) => s.status === 'active' && (!s.expires_at || new Date(s.expires_at).getTime() > Date.now()));
+
+  const openEditor = async (visitor = null) => {
+    if (!visitor) { setDrawer({ open: true, item: null }); return; }
     try {
-      const res = await api.post('/api/hotspot/sessions/cleanup-stale');
-      toast(`Limpeza concluída: ${res.data?.hidden_total || 0} sessão(ões) ocultada(s) apenas da grade administrativa.`, 'success');
-      await load();
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao limpar sessões antigas.', 'danger');
-    } finally {
-      setCleaningSessions(false);
-    }
+      const res = await api.get(`/api/hotspot/visitors/${visitor.id}`);
+      setDrawer({ open: true, item: res.data?.visitor || visitor });
+    } catch (e) { toast(errorMessage(e), 'danger'); }
   };
-
-  const reconcile = async () => {
-    await api.post('/api/hotspot/enforcement/reconcile');
-    load();
-  };
-
-  const openVisitorEditor = async (visitor = null) => {
-    if (!visitor) { setVisitorDialog({ open: true, item: null }); return; }
-    const res = await api.get(`/api/hotspot/visitors/${visitor.id}`);
-    setVisitorDialog({ open: true, item: res.data?.visitor || visitor });
-  };
-
   const saveVisitor = async (payload) => {
-    setSavingVisitor(true);
+    setSaving(true);
     try {
-      if (visitorDialog.item?.id) await api.put(`/api/hotspot/visitors/${visitorDialog.item.id}`, payload);
+      if (drawer.item?.id) await api.put(`/api/hotspot/visitors/${drawer.item.id}`, payload);
       else await api.post('/api/hotspot/visitors', payload);
-      setVisitorDialog({ open: false, item: null });
+      toast(drawer.item ? 'Visitante atualizado.' : 'Visitante cadastrado.', 'success');
+      setDrawer({ open: false, item: null });
       await load();
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao salvar visitante.', 'danger');
+    } catch (e) {
+      toast(errorMessage(e, 'Não foi possível salvar o visitante.'), 'danger');
     } finally {
-      setSavingVisitor(false);
+      setSaving(false);
     }
   };
-
-  const deleteVisitor = async (visitor) => {
-    if (!(await askConfirm(`Excluir visitante ${visitor.full_name}? As sessões ativas serão revogadas.`))) return;
-    try {
-      await api.delete(`/api/hotspot/visitors/${visitor.id}`);
-      await load();
-    } catch (err) {
-      toast(err?.response?.data?.error || 'Falha ao excluir visitante.', 'danger');
-    }
+  const deleteVisitor = async (v) => {
+    if (!(await askConfirm({ title: `Excluir ${formatPersonName(v.full_name)}?`, description: 'O cadastro sai do portal e as sessões abertas dele são encerradas. O histórico continua no relatório.', confirmLabel: 'Excluir visitante', tone: 'danger' }))) return;
+    await act(() => api.delete(`/api/hotspot/visitors/${v.id}`), 'Visitante excluído.');
   };
+  const revoke = async (s) => {
+    if (!(await askConfirm({ title: 'Desconectar esta sessão?', description: `${formatPersonName(s.full_name || 'Visitante')} (${s.client_ip || 'sem IP'}) volta para a página do portal.`, confirmLabel: 'Desconectar', tone: 'danger' }))) return;
+    await act(() => api.post(`/api/hotspot/sessions/${s.id}/revoke`), 'Sessão desconectada.');
+  };
+  const cleanup = async () => {
+    if (!(await askConfirm({ title: 'Ocultar sessões encerradas?', description: 'Tira da lista as sessões expiradas e desconectadas. Elas continuam no relatório e na auditoria.', confirmLabel: 'Ocultar' }))) return;
+    await act(async () => {
+      const res = await api.post('/api/hotspot/sessions/cleanup-stale');
+      toast(`${res.data?.hidden_total || 0} sessão(ões) ocultada(s) da lista.`, 'success');
+    });
+  };
+  const reconcile = () => act(() => api.post('/api/hotspot/enforcement/reconcile'), 'Portal reaplicado no firewall.');
 
-  const TABS = [
-    { key: 'overview', label: 'Visão Geral', icon: Wifi },
-    { key: 'metrics', label: 'Métricas', icon: BarChart2 },
-    { key: 'report', label: 'Relatório', icon: FileText },
-  ];
+  const enforcement = overview.enforcement || {};
 
   return (
-    <div className="space-y-6 pb-12">
-      <ModuleHeader
-        eyebrow="Controle"
-        title="Hotspot"
-        description="Cadastro institucional de visitantes, métricas de uso e relatório governamental de acessos à VLAN 70."
-        badges={(
+    <div className="space-y-4">
+      <PageHeader
+        title="Hotspot de Visitantes"
+        description="Wi-Fi dos visitantes (VLAN 70): cadastro, quem está conectado, uso e o relatório oficial de acessos."
+        actions={(
           <>
-            <StatusChip label="UFW principal preservado" tone="success" />
-            <StatusChip label="ACL/RPZ continuam ativos" tone="primary" />
-            <StatusChip label="VLAN 70 visitantes" tone="warning" />
+            <Button icon={RefreshCw} onClick={load} disabled={loading || busy}>{loading ? 'Carregando...' : 'Atualizar'}</Button>
+            <Button variant="primary" icon={Plus} onClick={() => openEditor()}>Novo visitante</Button>
           </>
         )}
-        actions={<ActionButton tone="primary" icon={loading ? Activity : RefreshCw} onClick={load}>{loading ? 'Carregando...' : 'Recarregar'}</ActionButton>}
       />
+      <KpiRow>
+        <Kpi label="Visitantes cadastrados" value={Number(overview.totals?.visitors || 0).toLocaleString('pt-BR')} />
+        <Kpi label="Aparelhos associados" value={Number(overview.totals?.devices || 0).toLocaleString('pt-BR')} />
+        <Kpi label="Conectados agora" value={overview.totals?.active_sessions ?? 0} tone={overview.totals?.active_sessions ? 'success' : 'neutral'} />
+        <Kpi label="Liberados no portal" value={enforcement.authorized_count ?? 0} sub={`interface ${enforcement.interface || 'enp6s0.70'}`} />
+      </KpiRow>
+      {error ? <Notice tone="danger" action={<Button onClick={load}>Tentar de novo</Button>}>{error}</Notice> : null}
+      <Tabs tabs={TABS.map((t) => (t.key === 'sessoes' ? { ...t, count: activeSessions.length || null } : t.key === 'visitantes' ? { ...t, count: visitors.length } : t))} value={tab} onChange={setTab} />
 
-      {error ? <div className="rounded-2xl border border-danger/25 bg-danger/10 px-4 py-3 text-sm text-danger">{error}</div> : null}
-
-      <TabBar tabs={TABS} active={tab} onChange={setTab} />
-
-      {tab === 'overview' && (
-        <div className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-3">
-            <Metric label="Visitantes cadastrados" value={overview.totals.visitors} icon={UserRound} />
-            <Metric label="Dispositivos associados" value={overview.totals.devices} icon={Smartphone} />
-            <Metric label="Sessões ativas" value={overview.totals.active_sessions} icon={Wifi} />
-          </div>
-
-          <Surface className="p-5">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-start gap-3">
-                <Network className="mt-0.5 shrink-0 text-primary" size={22} />
-                <div>
-                  <h2 className="text-sm font-bold uppercase text-on-surface">Enforcement cativo VLAN 70</h2>
-                  <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
-                    Runtime complementar com ipset/iptables: não autenticados são mantidos no portal; autenticados seguem para as políticas UFW, DNS, ACL e RPZ existentes.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold text-on-surface/62">
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">Interface: {overview.enforcement?.interface || 'enp6s0.70'}</span>
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">Gateway: {overview.enforcement?.gateway_ip || '192.168.70.1'}</span>
-                    <span className="rounded-lg bg-surface-variant px-2.5 py-1">IPs liberados: {overview.enforcement?.authorized_count ?? 0}</span>
-                  </div>
-                </div>
+      {tab === 'visitantes' ? (
+        <Panel
+          title={`Visitantes (${filtered.length} de ${visitors.length})`}
+          description={Number(overview.totals?.visitors || 0) > visitors.length
+            ? `Mostrando os ${visitors.length} cadastros mais recentes de ${overview.totals.visitors}. Busque por nome, CPF, celular ou MAC.`
+            : 'Busque por nome, CPF, celular ou MAC.'}
+          padded={false}
+          actions={(
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="relative w-64">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/40" />
+                <input list="hotspot-suggestions" className={`${inputCls} pl-9`} value={filters.query} onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))} placeholder="Nome, CPF, celular ou MAC" aria-label="Buscar visitante" />
+                <datalist id="hotspot-suggestions">{suggestions.map((s) => <option key={s} value={s} />)}</datalist>
               </div>
-              <ActionButton tone="secondary" icon={RefreshCw} onClick={reconcile}>Reconciliar</ActionButton>
-            </div>
-          </Surface>
-
-          <Surface className="p-5">
-            <div className="flex items-start gap-3">
-              <ShieldCheck className="mt-0.5 shrink-0 text-primary" size={22} />
-              <div>
-                <h2 className="text-sm font-bold uppercase text-on-surface">Regime operacional</h2>
-                <p className="mt-2 max-w-4xl text-sm leading-6 text-on-surface/68">
-                  O Hotspot identifica visitantes e registra sessões. Ele não remove bloqueios institucionais: a VLAN 70 permanece sujeita ao DNS interno, ACLs, RPZ e demais políticas de navegação.
-                </p>
+              <div className="w-44">
+                <select className={inputCls} value={filters.active} onChange={(e) => setFilters((f) => ({ ...f, active: e.target.value }))} aria-label="Filtrar por situação">
+                  <option value="all">Todas as situações</option>
+                  <option value="active">Ativos</option>
+                  <option value="inactive">Inativos</option>
+                </select>
+              </div>
+              <div className="w-48">
+                <select className={inputCls} value={filters.device} onChange={(e) => setFilters((f) => ({ ...f, device: e.target.value }))} aria-label="Filtrar por aparelho">
+                  <option value="all">Com ou sem aparelho</option>
+                  <option value="linked">Com aparelho</option>
+                  <option value="unlinked">Sem aparelho</option>
+                </select>
               </div>
             </div>
-          </Surface>
-
-          <TableShell
-            title="Sessões recentes"
-            rows={sessions}
-            empty="Nenhuma sessão registrada."
-            actions={(
-              <ActionButton tone="ghost" icon={cleaningSessions ? Activity : Trash2} onClick={cleanupStaleSessions} disabled={cleaningSessions}>
-                {cleaningSessions ? 'Limpando...' : 'Ocultar expiradas e revogadas'}
-              </ActionButton>
-            )}
+          )}
+        >
+          <DataTable
+            rows={filtered}
+            empty={loading ? 'Carregando...' : 'Nenhum visitante para esses filtros.'}
             columns={[
-              { key: 'full_name', label: 'Visitante', render: (row) => formatPersonName(row.full_name || 'não identificado') },
-              { key: 'cpf', label: 'CPF' },
-              { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || 'não capturado' },
-              { key: 'client_ip', label: 'IP' },
-              { key: 'vlan_id', label: 'VLAN', render: (row) => row.vlan_id || '-' },
-              { key: 'auth_method', label: 'Método', render: (row) => translateAuthMethod(row.auth_method) },
-              { key: 'status', label: 'Estado', render: (row) => translateSessionStatus(row.status, row.expires_at) },
-              { key: 'expires_at', label: 'Expira', render: (row) => row.expires_at ? new Date(row.expires_at).toLocaleString('pt-BR') : '-' },
+              { key: 'n', label: 'Visitante', render: (v) => <div><div className="font-semibold text-on-surface">{formatPersonName(v.full_name)}</div><div className="tabular text-[11.5px] text-on-surface/50">{v.cpf}</div></div> },
+              { key: 'p', label: 'Celular', mono: true, render: (v) => v.phone || '—' },
+              { key: 'm', label: 'MAC', mono: true, render: (v) => <span className="text-[12px]">{v.mac_address || '—'}</span> },
+              { key: 'd', label: 'Aparelhos', mono: true, align: 'right', render: (v) => Number(v.devices) || 0 },
+              { key: 's', label: 'Situação', render: (v) => <Badge tone={v.active ? 'success' : 'neutral'}>{v.active ? 'Ativo' : 'Inativo'}</Badge> },
+              { key: 'c', label: 'Cadastro', render: (v) => <span className="tabular text-[12px] text-on-surface/60">{dateTimeBR(v.created_at)}</span> },
               {
-                key: 'action',
-                label: 'Ação',
-                render: (row) => (row.status === 'active' && (!row.expires_at || new Date(row.expires_at).getTime() > Date.now()))
-                  ? <button onClick={() => revoke(row.id)} className="rounded-lg bg-danger/10 px-2 py-1 font-bold uppercase text-danger">Revogar</button>
-                  : '-',
+                key: 'a', label: '', align: 'right', render: (v) => (
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" icon={Pencil} onClick={() => openEditor(v)} aria-label={`Editar ${formatPersonName(v.full_name)}`} title="Editar" />
+                    <Button variant="ghost" icon={Trash2} onClick={() => deleteVisitor(v)} disabled={busy} aria-label={`Excluir ${formatPersonName(v.full_name)}`} title="Excluir" className="hover:!text-danger" />
+                  </div>
+                ),
               },
             ]}
           />
+        </Panel>
+      ) : null}
 
-          <Surface className="p-5">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <Search className="mt-0.5 shrink-0 text-primary" size={20} />
-                <div>
-                  <h2 className="text-sm font-bold uppercase text-on-surface">Pesquisa de visitantes</h2>
-                  <p className="mt-1 text-xs text-on-surface/55">Use nome, CPF, celular ou MAC. O campo sugere visitantes já cadastrados.</p>
-                </div>
-              </div>
-              <ActionButton tone="ghost" icon={Filter} onClick={clearVisitorFilters}>Limpar filtros</ActionButton>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.8fr]">
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">Pesquisar visitante</span>
-                <input
-                  list="hotspot-visitor-autocomplete"
-                  value={visitorFilters.query}
-                  onChange={(event) => setVisitorFilter('query')(event.target.value)}
-                  placeholder="Digite nome, CPF, celular ou MAC"
-                  className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-                />
-                <datalist id="hotspot-visitor-autocomplete">
-                  {visitorAutocomplete.map((value) => <option key={value} value={value} />)}
-                </datalist>
-              </label>
-              <SelectField label="Estado" value={visitorFilters.active} onChange={setVisitorFilter('active')}>
-                <option value="all">Todos os estados</option>
-                <option value="active">Somente ativos</option>
-                <option value="inactive">Somente inativos</option>
-              </SelectField>
-              <SelectField label="Dispositivo" value={visitorFilters.device} onChange={setVisitorFilter('device')}>
-                <option value="all">Todos os dispositivos</option>
-                <option value="linked">Com dispositivo</option>
-                <option value="unlinked">Sem dispositivo</option>
-              </SelectField>
-            </div>
-          </Surface>
-
-          <TableShell
-            title="Visitantes"
-            rows={filteredVisitors}
-            empty="Nenhum visitante encontrado para os filtros selecionados."
-            actions={(
-              <span className="text-[10px] font-bold uppercase text-on-surface/45">
-                {filteredVisitors.length} de {visitors.length}
-              </span>
-            )}
-            columns={[
-              { key: 'full_name', label: 'Nome', render: (row) => (
-                <div className="flex min-w-[260px] items-center justify-between gap-3">
-                  <span className="font-bold text-on-surface">{formatPersonName(row.full_name)}</span>
-                  <div className="flex shrink-0 gap-1 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
-                    <button type="button" onClick={() => openVisitorEditor(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-outline/12 bg-surface-high/80 text-primary transition hover:bg-primary hover:text-on-primary">
-                      <Edit3 size={14} />
-                    </button>
-                    <button type="button" onClick={() => deleteVisitor(row)} className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-danger/16 bg-danger/10 text-danger transition hover:bg-danger hover:text-white">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-              ) },
-              { key: 'cpf', label: 'CPF' },
-              { key: 'phone', label: 'Celular' },
-              { key: 'mac_address', label: 'MAC', render: (row) => row.mac_address || '-' },
-              { key: 'active', label: 'Estado', render: (row) => row.active ? 'Ativo' : 'Inativo' },
-              { key: 'devices', label: 'Dispositivos' },
-              { key: 'created_at', label: 'Cadastro', render: (row) => row.created_at ? new Date(row.created_at).toLocaleString('pt-BR') : '-' },
-            ]}
-          />
-          <div className="flex justify-end">
-            <ActionButton tone="primary" icon={Plus} onClick={() => openVisitorEditor()}>Novo visitante</ActionButton>
-          </div>
+      {tab === 'sessoes' ? (
+        <div className="space-y-4">
+          <Panel
+            title="Portal de visitantes"
+            description="Quem não se cadastrou fica na página do portal. Depois de entrar, o aparelho segue as mesmas regras da VLAN 70 (os filtros continuam valendo)."
+            actions={<Button icon={RefreshCw} onClick={reconcile} disabled={busy} title="Reaplica no firewall a lista de aparelhos liberados">Reaplicar no firewall</Button>}
+          >
+            <dl className="flex flex-wrap gap-x-8 gap-y-2 text-[13px]">
+              <div><dt className="text-on-surface/55">Interface</dt><dd className="tabular font-semibold">{enforcement.interface || 'enp6s0.70'}</dd></div>
+              <div><dt className="text-on-surface/55">Portal (gateway)</dt><dd className="tabular font-semibold">{enforcement.gateway_ip || '192.168.70.1'}</dd></div>
+              <div><dt className="text-on-surface/55">Aparelhos liberados agora</dt><dd className="tabular font-semibold">{enforcement.authorized_count ?? 0}</dd></div>
+            </dl>
+          </Panel>
+          <Panel
+            title={`Sessões recentes (${sessions.length})`}
+            description={`${activeSessions.length} conectada(s) agora.`}
+            actions={<Button variant="ghost" icon={Trash2} onClick={cleanup} disabled={busy}>Ocultar encerradas</Button>}
+            padded={false}
+          >
+            <DataTable
+              rows={sessions}
+              empty="Nenhuma sessão registrada."
+              columns={[
+                { key: 'v', label: 'Visitante', render: (s) => <div><div className="font-semibold">{formatPersonName(s.full_name || 'não identificado')}</div><div className="tabular text-[11.5px] text-on-surface/50">{s.cpf || '—'}</div></div> },
+                { key: 'ip', label: 'Aparelho', render: (s) => <div className="tabular text-[12px]"><div>{s.client_ip || '—'}</div><div className="text-on-surface/50">{s.mac_address || 'MAC não capturado'}</div></div> },
+                { key: 'm', label: 'Entrada', render: (s) => authMethodLabel(s.auth_method) },
+                { key: 'st', label: 'Situação', render: (s) => { const st = sessionState(s.status, s.expires_at); return <Badge tone={st.tone} dot={st.tone === 'success'}>{st.label}</Badge>; } },
+                { key: 'e', label: 'Expira', render: (s) => <span className="tabular text-[12px]">{dateTimeBR(s.expires_at)}</span> },
+                {
+                  key: 'a', label: '', align: 'right', render: (s) => (s.status === 'active' && (!s.expires_at || new Date(s.expires_at).getTime() > Date.now())
+                    ? <Button variant="danger-soft" onClick={() => revoke(s)} disabled={busy} aria-label={`Desconectar ${formatPersonName(s.full_name || 'visitante')}`}>Desconectar</Button>
+                    : null),
+                },
+              ]}
+            />
+          </Panel>
         </div>
-      )}
+      ) : null}
 
-      {tab === 'metrics' && (
-        <MetricsTab metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} />
-      )}
+      {tab === 'uso' ? <HotspotUsage metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} /> : null}
+      {tab === 'relatorio' ? <HotspotReport visitors={visitors} /> : null}
 
-      {tab === 'report' && (
-        <ReportTab visitors={visitors} />
-      )}
-
-      <VisitorDialog
-        open={visitorDialog.open}
-        item={visitorDialog.item}
-        saving={savingVisitor}
-        onClose={() => setVisitorDialog({ open: false, item: null })}
-        onSubmit={saveVisitor}
-      />
+      <VisitorDrawer open={drawer.open} item={drawer.item} saving={saving} onClose={() => !saving && setDrawer({ open: false, item: null })} onSubmit={saveVisitor} />
     </div>
   );
 }
