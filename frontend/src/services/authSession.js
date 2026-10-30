@@ -28,7 +28,9 @@ export const invalidateSession = () => {
     storageRemove('becker_token');
     storageRemove('becker_user');
     window.dispatchEvent(new CustomEvent('sgcg:auth-invalid'));
-    if (window.location.pathname !== '/') {
+    // O Modo TV fica no mesmo endereço: o login aparece ali e, depois de entrar, o mapa volta sozinho.
+    const keepPath = window.location.pathname.replace(/\/+$/, '') === '/mapa-trafego/tv';
+    if (window.location.pathname !== '/' && !keepPath) {
         window.location.href = '/';
     }
 };

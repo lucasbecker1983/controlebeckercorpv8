@@ -6,6 +6,7 @@ import Topbar from './components/ui/Topbar';
 import Login from './pages/Login';
 import Overview from './pages/Overview';
 import TrafficMap from './pages/TrafficMap';
+import TrafficMapTv from './pages/TrafficMapTv';
 import QuickActions from './pages/QuickActions';
 import Network from './pages/Network';
 import Server from './pages/Server';
@@ -123,6 +124,13 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [user, setUser] = useState(() => readStoredUser());
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  // Menu recolhido (só ícones) no computador; a escolha fica guardada neste navegador.
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => storageGet('sgcg_sidebar_collapsed', '0') === '1');
+  const toggleSidebarCollapsed = () => setSidebarCollapsed((current) => {
+    const next = !current;
+    storageSet('sgcg_sidebar_collapsed', next ? '1' : '0');
+    return next;
+  });
   const [theme, setTheme] = useState(() => resolveStoredTheme(readStoredUser()));
   const [accent, setAccent] = useState(() => resolveStoredAccent(readStoredUser()));
   const [uiStyle, setUiStyle] = useState(() => resolveStoredUiStyle(readStoredUser()));
@@ -218,13 +226,21 @@ export default function App() {
     }} />;
   }
 
+  // Modo TV do Mapa de Tráfego: tela cheia, sem menu nem barra (precisa estar logado, como o resto).
+  if (window.location.pathname.replace(/\/+$/, '') === '/mapa-trafego/tv') {
+    return <BrowserRouter><TrafficMapTv /></BrowserRouter>;
+  }
+
   return (
     <BrowserRouter>
       <AppShell
+        collapsed={sidebarCollapsed}
         sidebar={(
           <Sidebar
             user={user}
             isOpen={isMobileMenuOpen}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={toggleSidebarCollapsed}
             onClose={() => setIsMobileMenuOpen(false)}
             onLogout={handleLogout}
           />

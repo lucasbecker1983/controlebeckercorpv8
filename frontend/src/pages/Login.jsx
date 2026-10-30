@@ -28,7 +28,10 @@ export default function Login({ onLogin }) {
       resetAuthFetchInvalidation();
       storageSet('becker_token', token);
       storageSet('becker_user', JSON.stringify(res.data.user));
-      window.history.replaceState({}, '', '/');
+      // Depois de entrar vai para a Visão Geral, exceto no Modo TV, que continua no mesmo endereço.
+      if (window.location.pathname.replace(/\/+$/, '') !== '/mapa-trafego/tv') {
+        window.history.replaceState({}, '', '/');
+      }
       onLogin(res.data.user);
     } catch (err) {
       storageRemove('becker_token');
