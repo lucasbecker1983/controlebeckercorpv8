@@ -4,7 +4,7 @@ import EnginePanel from '../components/dns/EnginePanel';
 import ContingencyPanel from '../components/dns/ContingencyPanel';
 import DnsIgnored from '../components/dns/DnsIgnored';
 import DnsMetrics from '../components/dns/DnsMetrics';
-import BlockingReleases from './BlockingReleases';
+import LiveQueries from '../components/dns/LiveQueries';
 import DnsInstitutional from '../components/network/DnsInstitutional';
 import { ProxyReports, SquidPanel } from '../components/proxy/ProxyPanels';
 
@@ -32,7 +32,7 @@ export default function DnsProxy() {
       {tab === 'contingency' ? <ContingencyPanel /> : null}
       {tab === 'ignored' ? <DnsIgnored /> : null}
       {tab === 'metrics' ? <DnsMetrics /> : null}
-      {tab === 'observability' ? <BlockingReleases key={tab} allowedTabs={[tab]} initialTab={tab} hideHeader showQuickPanels={false} /> : null}
+      {tab === 'observability' ? <LiveQueries /> : null}
     </div>
   );
 }
