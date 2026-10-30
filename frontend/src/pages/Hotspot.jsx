@@ -4,8 +4,8 @@ import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, Tras
 import { api } from '../services/api';
 import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Tabs, askConfirm, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
 import { authMethodLabel, dateTimeBR, formatCpf, formatMac, formatPersonName, formatPhone, matchesText, sessionState } from '../components/hotspot/format';
-import HotspotUsage from '../components/hotspot/HotspotUsage';
-import HotspotReport from '../components/hotspot/HotspotReport';
+import PortalUsage from '../components/portal/PortalUsage';
+import PortalReport, { HOTSPOT_REPORT } from '../components/portal/PortalReport';
 
 /*
  * Hotspot de visitantes (VLAN 70): cadastro de visitantes, sessões conectadas, uso e relatório oficial.
@@ -307,8 +307,8 @@ export default function Hotspot() {
         </div>
       ) : null}
 
-      {tab === 'uso' ? <HotspotUsage metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} /> : null}
-      {tab === 'relatorio' ? <HotspotReport visitors={visitors} /> : null}
+      {tab === 'uso' ? <PortalUsage metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} /> : null}
+      {tab === 'relatorio' ? <PortalReport people={visitors} config={HOTSPOT_REPORT} /> : null}
 
       <VisitorDrawer open={drawer.open} item={drawer.item} saving={saving} onClose={() => !saving && setDrawer({ open: false, item: null })} onSubmit={saveVisitor} />
     </div>

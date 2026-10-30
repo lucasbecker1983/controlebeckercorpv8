@@ -2,18 +2,43 @@ import { useState } from 'react';
 import { FileSearch, Printer, RefreshCw, ShieldCheck } from 'lucide-react';
 import { api } from '../../services/api';
 import { Badge, Button, DataTable, Field, Kpi, KpiRow, Notice, Panel, errorMessage, inputCls, toast } from '../ui/kit';
-import { formatBytes, formatDuration } from './format';
+import { formatBytes, formatDuration } from '../hotspot/format';
 
 /*
- * Relatório oficial de acessos ao Hotspot (VLAN 70): filtros, conferência do log, tabela e impressão em PDF
- * com cabeçalho e rodapé da Prefeitura. O documento impresso é o mesmo de antes.
+ * Relatório oficial de acessos de um portal (Hotspot de visitantes ou Colaboradores): filtros, conferência do log,
+ * tabela e impressão em PDF com cabeçalho e rodapé da Prefeitura. O que muda entre os portais vem em `config`.
  */
+export const HOTSPOT_REPORT = {
+  apiBase: '/api/hotspot',
+  personFilterKey: 'visitor_id',
+  personLabel: 'Visitante',
+  personAll: 'Todos os visitantes',
+  personOption: (p) => ({ value: p.id, label: `${p.full_name} (${p.cpf})` }),
+  vlanOptions: [{ value: '70', label: 'VLAN 70 · Visitantes' }],
+  doc: { prefix: 'SGCG-HS', htmlTitle: 'Relatório Hotspot', heading: 'Relatório Oficial do Hotspot Institucional', subtitle: 'Relatório de Acesso ao Hotspot Municipal' },
+  printColumns: [['Usuário', (r) => r.visitor_name ?? 'N/I'], ['CPF', (r) => r.cpf_masked ?? '-']],
+  person: (r) => ({ name: r.visitor_name, sub: r.cpf_masked }),
+  uniqueLabel: 'Visitantes diferentes',
+};
 
-function openPrintWindow({ rows, summary, filters }) {
+export const COLLAB_REPORT = {
+  apiBase: '/api/collaborators',
+  personFilterKey: 'user_id',
+  personLabel: 'Colaborador',
+  personAll: 'Todos os colaboradores',
+  personOption: (p) => ({ value: p.id, label: `${p.full_name} (${p.username})` }),
+  vlanOptions: [{ value: '30', label: 'VLAN 30 · Celulares' }],
+  doc: { prefix: 'SGCG-CM', htmlTitle: 'Relatório Acesso Mobile', heading: 'Relatório Oficial do Acesso Mobile de Colaboradores', subtitle: 'Relatório de Acesso Autenticado à VLAN 30' },
+  printColumns: [['Colaborador', (r) => r.full_name ?? 'N/I'], ['Usuário', (r) => r.username ?? '-'], ['Departamento', (r) => r.department ?? '-']],
+  person: (r) => ({ name: r.full_name, sub: [r.username, r.department].filter(Boolean).join(' · ') }),
+  uniqueLabel: 'Colaboradores diferentes',
+};
+
+function openPrintWindow({ rows, summary, filters, config }) {
   const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   const fromLabel = filters.from ? new Date(`${filters.from}T12:00:00`).toLocaleDateString('pt-BR') : 'Início dos registros';
   const toLabel = filters.to ? new Date(`${filters.to}T12:00:00`).toLocaleDateString('pt-BR') : 'Data atual';
-  const docId = `SGCG-HS-${Date.now().toString(36).toUpperCase()}`;
+  const docId = `${config.doc.prefix}-${Date.now().toString(36).toUpperCase()}`;
   const logoUrl = `${window.location.origin}/LOGO-JACAREZINHO.png`;
   const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const fmtDur = (s) => {
@@ -35,7 +60,7 @@ function openPrintWindow({ rows, summary, filters }) {
   if (!win) { toast('Permita janelas pop-up para gerar o PDF.', 'warning'); return; }
   win.document.write(`<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="UTF-8">
-<title>Relatório Hotspot — ${docId}</title>
+<title>${config.doc.htmlTitle} — ${docId}</title>
 <style>
 @page{size:A4 landscape;margin:1.2cm 1.5cm 2.2cm}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -68,26 +93,26 @@ tbody tr:nth-child(even) td{background:#f7f8fa}
     <h1>Prefeitura Municipal de Jacarezinho</h1>
     <h2>Estado do Paraná</h2>
     <h3>Secretaria Municipal de Comércio, Indústria, Serviços e Inovação</h3>
-    <h4>Relatório Oficial do Hotspot Institucional</h4>
-    <p style="font-size:9pt;color:#555;margin:2px 0 0;">Relatório de Acesso ao Hotspot Municipal</p>
+    <h4>${config.doc.heading}</h4>
+    <p style="font-size:9pt;color:#555;margin:2px 0 0;">${config.doc.subtitle}</p>
   </div>
 </div>
 <div class="meta">
   <div><span class="ml">Período</span><span class="mv">${fromLabel} a ${toLabel}</span></div>
   <div><span class="ml">Total de Sessões</span><span class="mv">${summary?.total_sessions ?? rows.length}</span></div>
-  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_visitors ?? '-'}</span></div>
+  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_visitors ?? summary?.unique_users ?? '-'}</span></div>
   <div><span class="ml">Emissão</span><span class="mv">${now}</span></div>
 </div>
 <table>
 <thead><tr>
-  <th>#</th><th>Data</th><th>Hora</th><th>Usuário</th><th>CPF</th>
+  <th>#</th><th>Data</th><th>Hora</th>${config.printColumns.map(([h]) => `<th>${h}</th>`).join('')}
   <th>Endereço IP</th><th>MAC</th><th>VLAN</th><th>Autenticação</th>
   <th>Duração</th><th>Site Principal</th><th>Banda</th>
 </tr></thead>
 <tbody>
 ${rows.map((r, i) => `<tr>
-  <td>${i + 1}</td><td>${esc(r.date_fmt ?? '-')}</td><td>${esc(r.hour_fmt ?? '-')}</td><td>${esc(r.visitor_name ?? 'N/I')}</td>
-  <td>${esc(r.cpf_masked ?? '-')}</td><td>${esc(r.client_ip ?? '-')}</td><td>${esc(r.mac_address ?? '-')}</td><td>${esc(r.vlan_id ?? '-')}</td>
+  <td>${i + 1}</td><td>${esc(r.date_fmt ?? '-')}</td><td>${esc(r.hour_fmt ?? '-')}</td>${config.printColumns.map(([, fn]) => `<td>${esc(fn(r))}</td>`).join('')}
+  <td>${esc(r.client_ip ?? '-')}</td><td>${esc(r.mac_address ?? '-')}</td><td>${esc(r.vlan_id ?? '-')}</td>
   <td>${esc(r.auth_method ?? '-')}</td><td>${fmtDur(r.duration_seconds)}</td><td>${esc(r.top_domain ?? '-')}</td><td>${fmtBanda(r.bytes_up, r.bytes_down)}</td>
 </tr>`).join('')}
 </tbody>
@@ -108,8 +133,9 @@ ${rows.map((r, i) => `<tr>
   win.document.close();
 }
 
-export default function HotspotReport({ visitors }) {
-  const [filters, setFilters] = useState({ from: '', to: '', visitor_id: '', vlan_id: '' });
+export default function PortalReport({ people = [], config = HOTSPOT_REPORT }) {
+  const personKey = config.personFilterKey;
+  const [filters, setFilters] = useState({ from: '', to: '', [personKey]: '', vlan_id: '' });
   const [report, setReport] = useState(null);
   const [validation, setValidation] = useState(null);
   const [working, setWorking] = useState('');
@@ -123,37 +149,37 @@ export default function HotspotReport({ visitors }) {
     setWorking(key);
     try { await fn(); } catch (e) { toast(errorMessage(e), 'danger'); } finally { setWorking(''); }
   };
-  const load = () => run('load', async () => { setReport((await api.get('/api/hotspot/report', { params: params({ page: 1, limit: 200 }) })).data); });
+  const load = () => run('load', async () => { setReport((await api.get(`${config.apiBase}/report`, { params: params({ page: 1, limit: 200 }) })).data); });
   const sync = () => run('sync', async () => {
-    const res = await api.post('/api/hotspot/access-log/sync');
+    const res = await api.post(`${config.apiBase}/access-log/sync`);
     toast(`Registro atualizado: ${res.data.inserted} acesso(s) novo(s) no log oficial.`, 'success');
     setValidation(null);
     if (report) await load();
   });
-  const validate = () => run('validate', async () => { setValidation((await api.get('/api/hotspot/report/validate', { params: params() })).data); });
+  const validate = () => run('validate', async () => { setValidation((await api.get(`${config.apiBase}/report/validate`, { params: params() })).data); });
   const print = () => run('print', async () => {
-    const res = await api.get('/api/hotspot/report', { params: params({ page: 1, limit: 1000 }) });
-    openPrintWindow({ rows: res.data.rows || [], summary: res.data.summary, filters });
+    const res = await api.get(`${config.apiBase}/report`, { params: params({ page: 1, limit: 1000 }) });
+    openPrintWindow({ rows: res.data.rows || [], summary: res.data.summary, filters, config });
   });
   const vTone = validation?.status === 'valid' ? 'success' : validation?.status === 'warning' ? 'warning' : 'danger';
   const vLabel = validation?.status === 'valid' ? 'Consistente' : validation?.status === 'warning' ? 'Com avisos' : 'Inconsistente';
 
   return (
     <div className="space-y-4">
-      <Panel title="Relatório oficial de acessos" description="Escolha o período, o visitante e a VLAN. O PDF sai com cabeçalho e rodapé da Prefeitura.">
+      <Panel title="Relatório oficial de acessos" description="Escolha o período, a pessoa e a VLAN. O PDF sai com cabeçalho e rodapé da Prefeitura.">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field id="hr-from" label="De"><input id="hr-from" type="date" className={inputCls} value={filters.from} onChange={(e) => set({ from: e.target.value })} /></Field>
-          <Field id="hr-to" label="Até"><input id="hr-to" type="date" className={inputCls} value={filters.to} onChange={(e) => set({ to: e.target.value })} /></Field>
-          <Field id="hr-visitor" label="Visitante">
-            <select id="hr-visitor" className={inputCls} value={filters.visitor_id} onChange={(e) => set({ visitor_id: e.target.value })}>
-              <option value="">Todos os visitantes</option>
-              {visitors.map((v) => <option key={v.id} value={v.id}>{v.full_name} ({v.cpf})</option>)}
+          <Field id="pr-from" label="De"><input id="pr-from" type="date" className={inputCls} value={filters.from} onChange={(e) => set({ from: e.target.value })} /></Field>
+          <Field id="pr-to" label="Até"><input id="pr-to" type="date" className={inputCls} value={filters.to} onChange={(e) => set({ to: e.target.value })} /></Field>
+          <Field id="pr-person" label={config.personLabel}>
+            <select id="pr-person" className={inputCls} value={filters[personKey]} onChange={(e) => set({ [personKey]: e.target.value })}>
+              <option value="">{config.personAll}</option>
+              {people.map((p) => { const o = config.personOption(p); return <option key={o.value} value={o.value}>{o.label}</option>; })}
             </select>
           </Field>
-          <Field id="hr-vlan" label="VLAN">
-            <select id="hr-vlan" className={inputCls} value={filters.vlan_id} onChange={(e) => set({ vlan_id: e.target.value })}>
+          <Field id="pr-vlan" label="VLAN">
+            <select id="pr-vlan" className={inputCls} value={filters.vlan_id} onChange={(e) => set({ vlan_id: e.target.value })}>
               <option value="">Todas as VLANs</option>
-              <option value="70">VLAN 70 · Visitantes</option>
+              {config.vlanOptions.map((v) => <option key={v.value} value={v.value}>{v.label}</option>)}
             </select>
           </Field>
         </div>
@@ -188,17 +214,17 @@ export default function HotspotReport({ visitors }) {
         <>
           <KpiRow>
             <Kpi label="Sessões no período" value={Number(report.total || 0).toLocaleString('pt-BR')} />
-            <Kpi label="Visitantes diferentes" value={report.summary?.unique_visitors || 0} />
+            <Kpi label={config.uniqueLabel} value={report.summary?.unique_visitors ?? report.summary?.unique_users ?? 0} />
             <Kpi label="Tempo total" value={formatDuration(Number(report.summary?.total_seconds) || 0)} />
             <Kpi label="Na tela" value={`${report.rows?.length || 0} de ${report.total || 0}`} sub="o PDF inclui todos" />
           </KpiRow>
-          <Panel title="Registros de acesso" description="Log oficial do hotspot; os registros não podem ser alterados." padded={false}>
+          <Panel title="Registros de acesso" description="Log oficial; os registros não podem ser alterados." padded={false}>
             <DataTable
               rows={report.rows || []}
               empty="Nenhum acesso para os filtros escolhidos."
               columns={[
                 { key: 'd', label: 'Data', render: (r) => <span className="tabular">{r.date_fmt} {r.hour_fmt}</span> },
-                { key: 'v', label: 'Visitante', render: (r) => <div><div className="font-semibold">{r.visitor_name}</div><div className="tabular text-[11.5px] text-on-surface/50">{r.cpf_masked}</div></div> },
+                { key: 'v', label: config.personLabel, render: (r) => { const p = config.person(r); return <div><div className="font-semibold">{p.name}</div><div className="tabular text-[11.5px] text-on-surface/50">{p.sub}</div></div>; } },
                 { key: 'ip', label: 'IP', mono: true, render: (r) => r.client_ip || '—' },
                 { key: 'a', label: 'Entrada', render: (r) => r.auth_method || '—' },
                 { key: 't', label: 'Duração', render: (r) => formatDuration(r.duration_seconds) },

@@ -1,10 +1,21 @@
 import { Loader2, RefreshCw } from 'lucide-react';
 import { Button, Kpi, KpiRow, Panel } from '../ui/kit';
-import { authMethodLabel } from './format';
+import { authMethodLabel } from '../hotspot/format';
 
 /*
- * Uso do Hotspot: sessões e visitantes no mês, por dia, por hora, quem mais usa, como entram e sites mais visitados.
+ * Uso de um portal de acesso (Hotspot de visitantes ou Colaboradores): sessões e pessoas no mês, por dia,
+ * por hora, quem mais usa, como entram e sites mais visitados. O que muda entre os portais vem em `config`.
  */
+
+const DEFAULT_CONFIG = {
+  uniqueField: 'unique_visitors',
+  people: 'Visitantes',
+  personSub: (u) => `${u.cpf} · último acesso ${u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '—'}`,
+  personKey: (u) => `${u.cpf}-${u.full_name}`,
+  methodLabel: (m) => authMethodLabel(m),
+  sitesDescription: 'Visitantes (VLAN 70), últimos 30 dias.',
+  emptySites: 'Nenhuma consulta registrada para a VLAN 70 no período.',
+};
 
 function Bars({ items, height = 110, color = 'var(--chart-1)', label }) {
   const max = Math.max(1, ...items.map((i) => i.value));
@@ -33,9 +44,10 @@ function RankRow({ label, sub, value, pct, color = 'var(--chart-1)' }) {
   );
 }
 
-export default function HotspotUsage({ metrics, loading, onRefresh }) {
+export default function PortalUsage({ metrics, loading, onRefresh, config: custom = {} }) {
+  const config = { ...DEFAULT_CONFIG, ...custom };
   if (loading && !metrics) {
-    return <div className="sgcg-card flex items-center justify-center gap-2 py-16 text-sm text-on-surface/55"><Loader2 size={16} className="animate-spin" /> Carregando o uso do hotspot...</div>;
+    return <div className="sgcg-card flex items-center justify-center gap-2 py-16 text-sm text-on-surface/55"><Loader2 size={16} className="animate-spin" /> Carregando o uso...</div>;
   }
   if (!metrics) {
     return (
@@ -46,7 +58,7 @@ export default function HotspotUsage({ metrics, loading, onRefresh }) {
     );
   }
   const { daily_users: daily = [], monthly_summary: month = {}, top_users: top = [], auth_methods: methods = [], vlan_distribution: vlans = [], hourly_distribution: hourly = [], top_domains: domains = [] } = metrics;
-  const last7 = daily.slice(0, 7).reverse().map((d) => ({ key: d.date, value: Number(d.unique_visitors) || 0, short: String(d.date || '').slice(8, 10) + '/' + String(d.date || '').slice(5, 7), title: `${d.date}: ${d.unique_visitors} visitante(s), ${d.sessions} sessão(ões)` }));
+  const last7 = daily.slice(0, 7).reverse().map((d) => ({ key: d.date, value: Number(d[config.uniqueField]) || 0, short: String(d.date || '').slice(8, 10) + '/' + String(d.date || '').slice(5, 7), title: `${d.date}: ${d[config.uniqueField]} pessoa(s), ${d.sessions} sessão(ões)` }));
   const hours = hourly.map((h) => ({ key: h.hour, value: Number(h.count) || 0, short: Number(h.hour) % 3 === 0 ? String(h.hour).padStart(2, '0') : '', title: `${String(h.hour).padStart(2, '0')}h: ${h.count} sessão(ões)` }));
   const maxUser = Number(top[0]?.sessions) || 1;
   const maxDomain = Number(domains[0]?.total) || 1;
@@ -56,13 +68,13 @@ export default function HotspotUsage({ metrics, loading, onRefresh }) {
       <div className="flex justify-end"><Button icon={RefreshCw} onClick={onRefresh} disabled={loading}>{loading ? 'Atualizando...' : 'Atualizar'}</Button></div>
       <KpiRow>
         <Kpi label="Sessões no mês" value={Number(month.total_sessions || 0).toLocaleString('pt-BR')} />
-        <Kpi label="Visitantes diferentes no mês" value={Number(month.monthly_unique || 0).toLocaleString('pt-BR')} />
+        <Kpi label={`${config.people} diferentes no mês`} value={Number(month.monthly_unique || 0).toLocaleString('pt-BR')} />
         <Kpi label="Dias com acesso" value={month.active_days ?? 0} />
         <Kpi label="Quem mais usou" value={top[0]?.full_name?.split(' ')[0] || '—'} sub={top[0] ? `${top[0].sessions} ${Number(top[0].sessions) === 1 ? 'sessão' : 'sessões'} em 30 dias` : 'sem dados'} />
       </KpiRow>
       <div className="grid gap-4 lg:grid-cols-2">
-        <Panel title="Visitantes por dia" description="Últimos 7 dias.">
-          {last7.length ? <Bars items={last7} label="Visitantes por dia" /> : <p className="py-6 text-center text-sm text-on-surface/50">Sem acessos nos últimos 7 dias.</p>}
+        <Panel title={`${config.people} por dia`} description="Últimos 7 dias.">
+          {last7.length ? <Bars items={last7} label={`${config.people} por dia`} /> : <p className="py-6 text-center text-sm text-on-surface/50">Sem acessos nos últimos 7 dias.</p>}
         </Panel>
         <Panel title="Acessos por hora do dia" description="Soma dos últimos 30 dias.">
           {hours.length ? <Bars items={hours} color="var(--chart-2)" label="Acessos por hora" /> : <p className="py-6 text-center text-sm text-on-surface/50">Sem dados.</p>}
@@ -71,13 +83,13 @@ export default function HotspotUsage({ metrics, loading, onRefresh }) {
       <div className="grid gap-4 lg:grid-cols-3">
         <Panel title="Quem mais usa" description="Sessões em 30 dias.">
           <div className="space-y-3">
-            {top.slice(0, 8).map((u) => <RankRow key={`${u.cpf}-${u.full_name}`} label={u.full_name} sub={`${u.cpf} · último acesso ${u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '—'}`} value={`${u.sessions} ${Number(u.sessions) === 1 ? 'sessão' : 'sessões'}`} pct={Math.round((Number(u.sessions) / maxUser) * 100)} />)}
-            {!top.length ? <p className="text-sm text-on-surface/50">Nenhum visitante no período.</p> : null}
+            {top.slice(0, 8).map((u) => <RankRow key={config.personKey(u)} label={u.full_name} sub={config.personSub(u)} value={`${u.sessions} ${Number(u.sessions) === 1 ? 'sessão' : 'sessões'}`} pct={Math.round((Number(u.sessions) / maxUser) * 100)} />)}
+            {!top.length ? <p className="text-sm text-on-surface/50">Ninguém no período.</p> : null}
           </div>
         </Panel>
         <Panel title="Como entram" description="Forma de entrada no portal.">
           <div className="space-y-3">
-            {methods.map((m, i) => <RankRow key={m.auth_method} label={authMethodLabel(m.auth_method)} value={`${m.count} (${m.pct}%)`} pct={Number(m.pct) || 0} color={`var(--chart-${(i % 6) + 1})`} />)}
+            {methods.map((m, i) => <RankRow key={m.auth_method} label={config.methodLabel(m.auth_method)} value={`${m.count} (${m.pct}%)`} pct={Number(m.pct) || 0} color={`var(--chart-${(i % 6) + 1})`} />)}
             {!methods.length ? <p className="text-sm text-on-surface/50">Sem dados.</p> : null}
           </div>
           {vlans.length ? (
@@ -86,10 +98,10 @@ export default function HotspotUsage({ metrics, loading, onRefresh }) {
             </div>
           ) : null}
         </Panel>
-        <Panel title="Sites mais visitados" description="Visitantes (VLAN 70), últimos 30 dias.">
+        <Panel title="Sites mais visitados" description={config.sitesDescription}>
           <div className="space-y-3">
             {domains.map((d) => <RankRow key={d.domain} label={d.domain} value={`${d.total} · ${d.unique_ips} IP(s)`} pct={Math.round((Number(d.total) / maxDomain) * 100)} color="var(--chart-2)" />)}
-            {!domains.length ? <p className="text-sm text-on-surface/50">Nenhuma consulta registrada para a VLAN 70 no período.</p> : null}
+            {!domains.length ? <p className="text-sm text-on-surface/50">{config.emptySites}</p> : null}
           </div>
         </Panel>
       </div>

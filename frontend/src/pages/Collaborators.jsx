@@ -1,124 +1,38 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Activity, BarChart2, CheckCircle2, Clock, Eye, EyeOff, FileText, Filter, LockKeyhole,
-  LockOpen, Plus, Printer, RefreshCw, Search, ShieldCheck, Smartphone, Trash2,
-  UserRound, Users, Wifi,
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, UserX, Users, Wifi } from 'lucide-react';
 import { api } from '../services/api';
-import { askConfirm, toast, useUrlTab } from '../components/ui/kit';
-import { ActionButton, DialogShell, ModuleHeader, Surface, StatusChip } from '../components/ui/primitives';
+import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Switch, Tabs, askConfirm, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
+import { authMethodLabel, dateTimeBR, formatPersonName, matchesText } from '../components/hotspot/format';
+import PortalUsage from '../components/portal/PortalUsage';
+import PortalReport, { COLLAB_REPORT } from '../components/portal/PortalReport';
 
-function formatDuration(seconds) {
-  if (!seconds || seconds <= 0) return '-';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
+/*
+ * Colaboradores (VLAN 30, celulares da equipe): contas de acesso, quem está conectado, uso e relatório oficial.
+ * Com "Exigir login" ligado, o celular só navega depois de entrar no portal; desligado, segue só as regras de DNS e ACL.
+ */
 
-function formatBytes(bytes) {
-  if (!bytes || bytes <= 0) return '-';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
+const LEGACY_TABS = { overview: 'contas', metrics: 'uso', report: 'relatorio' };
+const EMPTY_USER = { username: '', password: '', full_name: '', department: '', position: '', active: true };
 
-function matchesText(row, query, fields) {
-  const normalizedQuery = String(query || '').trim().toLocaleLowerCase('pt-BR');
-  if (!normalizedQuery) return true;
-  return fields.some((field) => String(row[field] || '').toLocaleLowerCase('pt-BR').includes(normalizedQuery));
-}
+const USAGE_CONFIG = {
+  uniqueField: 'unique_users',
+  people: 'Colaboradores',
+  personSub: (u) => [u.username, u.department].filter(Boolean).join(' · ') || '—',
+  personKey: (u) => `${u.username}-${u.full_name}`,
+  methodLabel: (m) => (m === 'usuario_senha' ? 'Usuário e senha' : authMethodLabel(m)),
+  sitesDescription: 'Celulares dos colaboradores (VLAN 30), últimos 30 dias.',
+  emptySites: 'Nenhuma consulta registrada para a VLAN 30 no período.',
+};
 
-function Field({ label, value, onChange, type = 'text', required = false, placeholder = '' }) {
+function UserDrawer({ open, item, saving, onClose, onSubmit }) {
+  const [form, setForm] = useState(EMPTY_USER);
   const [showPassword, setShowPassword] = useState(false);
-  const isPassword = type === 'password';
-
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
-      <div className="relative">
-        <input
-          type={isPassword && showPassword ? 'text' : type}
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          required={required}
-          placeholder={placeholder}
-          className={`h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20 ${isPassword ? 'pr-11' : ''}`}
-        />
-        {isPassword ? (
-          <button
-            type="button"
-            onClick={() => setShowPassword((current) => !current)}
-            className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-xl text-on-surface/50 transition hover:bg-primary/8 hover:text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20"
-            aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-            title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-          >
-            {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-          </button>
-        ) : null}
-      </div>
-    </label>
-  );
-}
-
-function SelectField({ label, value, onChange, children }) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">{label}</span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-      >
-        {children}
-      </select>
-    </label>
-  );
-}
-
-function Metric({ label, value, icon: Icon, sub }) {
-  return (
-    <Surface className="p-5">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className="text-[10px] font-bold uppercase text-on-surface/55">{label}</p>
-          <div className="mt-2 text-3xl font-bold text-on-surface">{value}</div>
-          {sub && <p className="mt-1 text-xs text-on-surface/45">{sub}</p>}
-        </div>
-        <div className="rounded-2xl bg-primary/10 p-3 text-primary"><Icon size={24} /></div>
-      </div>
-    </Surface>
-  );
-}
-
-function TabBar({ tabs, active, onChange }) {
-  return (
-    <div className="flex gap-1 rounded-2xl border border-outline/14 bg-surface-high/60 p-1">
-      {tabs.map((tab) => (
-        <button
-          key={tab.key}
-          type="button"
-          onClick={() => onChange(tab.key)}
-          className={[
-            'flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase transition-all',
-            active === tab.key ? 'bg-primary text-on-primary shadow-sm' : 'text-on-surface/60 hover:bg-primary/8 hover:text-on-surface',
-          ].join(' ')}
-        >
-          {tab.icon && <tab.icon size={14} />}
-          <span className="hidden sm:inline">{tab.label}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function UserDialog({ open, item, saving, onClose, onSubmit }) {
-  const [form, setForm] = useState({ username: '', password: '', full_name: '', department: '', position: '', active: true });
-
+  const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
+    setError('');
+    setShowPassword(false);
     setForm(item ? {
       username: item.username || '',
       password: '',
@@ -126,851 +40,286 @@ function UserDialog({ open, item, saving, onClose, onSubmit }) {
       department: item.department || '',
       position: item.position || '',
       active: item.active !== false,
-    } : { username: '', password: '', full_name: '', department: '', position: '', active: true });
+    } : EMPTY_USER);
   }, [open, item]);
-
-  const submit = (event) => {
-    event.preventDefault();
-    const payload = { ...form, username: form.username.trim().toLowerCase() };
-    if (item && !payload.password) delete payload.password;
+  if (!open) return null;
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const submit = () => {
+    const username = form.username.trim().toLowerCase();
+    if (!item && !/^[a-z0-9._-]{3,}$/.test(username)) return setError('Usuário: pelo menos 3 letras ou números, sem espaços.');
+    if (form.full_name.trim().length < 3) return setError('Informe o nome completo.');
+    if ((!item || form.password) && form.password.length < 6) return setError('A senha precisa ter pelo menos 6 caracteres.');
+    setError('');
+    const payload = { full_name: form.full_name.trim(), department: form.department.trim(), position: form.position.trim() };
+    if (!item) Object.assign(payload, { username, password: form.password });
+    else {
+      payload.active = form.active;
+      if (form.password) payload.password = form.password;
+    }
     onSubmit(payload);
   };
-
-  const set = (key) => (value) => setForm((current) => ({ ...current, [key]: value }));
-
   return (
-    <DialogShell
+    <Drawer
       open={open}
-      title={item ? 'Editar colaborador' : 'Novo colaborador'}
-      subtitle="Conta local do SGCG para liberação de navegação na VLAN 30."
+      busy={saving}
       onClose={onClose}
-      size="max-w-3xl"
+      title={item ? 'Editar colaborador' : 'Novo colaborador'}
+      description="Conta usada no portal do Wi-Fi dos celulares (VLAN 30). Na edição, a senha só muda se for preenchida."
       footer={(
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-          <ActionButton tone="primary" type="submit" form="collab-user-form" icon={item ? CheckCircle2 : Plus} disabled={saving}>
-            {saving ? 'Salvando...' : item ? 'Salvar' : 'Criar conta'}
-          </ActionButton>
-        </div>
-      )}
-    >
-      <form id="collab-user-form" className="grid gap-4 sm:grid-cols-2" onSubmit={submit}>
-        <Field label="Usuário" value={form.username} onChange={set('username')} required={!item} />
-        <Field label={item ? 'Nova senha' : 'Senha'} type="password" value={form.password} onChange={set('password')} required={!item} placeholder={item ? 'Deixe em branco para manter' : ''} />
-        <div className="sm:col-span-2">
-          <Field label="Nome completo" value={form.full_name} onChange={set('full_name')} required />
-        </div>
-        <Field label="Departamento" value={form.department} onChange={set('department')} />
-        <Field label="Cargo/Função" value={form.position} onChange={set('position')} />
-        {item ? (
-          <label className="flex h-11 items-center gap-3 rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm font-bold text-on-surface/72">
-            <input type="checkbox" checked={form.active} onChange={(event) => set('active')(event.target.checked)} className="h-4 w-4 rounded border-outline/30 text-primary" />
-            Conta ativa
-          </label>
-        ) : null}
-      </form>
-    </DialogShell>
-  );
-}
-
-function MetricsTab({ metrics, loading, onRefresh }) {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="text-center">
-          <Activity className="mx-auto mb-3 animate-spin text-primary" size={28} />
-          <p className="text-sm text-on-surface/55">Carregando métricas...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!metrics) {
-    return (
-      <Surface className="p-10 text-center">
-        <BarChart2 className="mx-auto mb-3 text-on-surface/30" size={36} />
-        <p className="text-sm text-on-surface/55">Clique abaixo para carregar as métricas de uso da VLAN 30.</p>
-        <div className="mt-5">
-          <ActionButton tone="primary" icon={RefreshCw} onClick={onRefresh}>Carregar Métricas</ActionButton>
-        </div>
-      </Surface>
-    );
-  }
-
-  const { daily_users, monthly_summary, top_users, auth_methods, vlan_distribution, hourly_distribution, top_domains } = metrics;
-  const last7 = (daily_users || []).slice(0, 7).reverse();
-  const maxDaily = Math.max(...last7.map((d) => Number(d.unique_users) || 0)) || 1;
-  const maxHourly = Math.max(...(hourly_distribution || []).map((d) => Number(d.count) || 0)) || 1;
-  const maxUser = Number(top_users?.[0]?.sessions) || 1;
-  const methodLabel = { usuario_senha: 'Usuário + senha' };
-  const methodColor = ['bg-primary', 'bg-info', 'bg-warning'];
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-end">
-        <ActionButton tone="ghost" icon={RefreshCw} onClick={onRefresh}>Atualizar métricas</ActionButton>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Sessões este mês" value={monthly_summary?.total_sessions ?? 0} icon={Activity} />
-        <Metric label="Usuários únicos mês" value={monthly_summary?.monthly_unique ?? 0} icon={Users} />
-        <Metric label="Dias com acesso" value={monthly_summary?.active_days ?? 0} icon={Clock} />
-        <Metric
-          label="Top colaborador" value={top_users?.[0]?.full_name?.split(' ')[0] || '-'} icon={UserRound}
-          sub={top_users?.[0] ? `${top_users[0].sessions} sessões nos últimos 30 dias` : ''}
-        />
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Usuários únicos por dia</h3>
-          <p className="mb-4 text-xs text-on-surface/45">Últimos 7 dias</p>
-          {last7.length ? (
-            <div className="flex h-28 items-end gap-1.5">
-              {last7.map((d, i) => {
-                const val = Number(d.unique_users) || 0;
-                const pct = Math.max(val > 0 ? 5 : 0, Math.round((val / maxDaily) * 100));
-                return (
-                  <div key={i} className="group flex flex-1 flex-col items-center gap-1">
-                    <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                      <div className="w-full rounded-t-sm bg-primary/65 transition-all group-hover:bg-primary" style={{ height: `${pct}%` }} title={`${d.date}: ${val} usuário(s) único(s), ${d.sessions} sessão(ões)`} />
-                    </div>
-                    <span className="text-[8px] text-on-surface/40">{String(d.date || '').slice(5)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <p className="py-6 text-center text-xs text-on-surface/40">Sem dados nos últimos 7 dias</p>}
-        </Surface>
-
-        <Surface className="p-5">
-          <h3 className="mb-1 text-sm font-bold uppercase text-on-surface">Acessos por hora do dia</h3>
-          <p className="mb-4 text-xs text-on-surface/45">Distribuição acumulada — últimos 30 dias</p>
-          <div className="flex h-28 items-end gap-px">
-            {(hourly_distribution || []).map((d, i) => {
-              const val = Number(d.count) || 0;
-              const pct = Math.max(val > 0 ? 4 : 0, Math.round((val / maxHourly) * 100));
-              return (
-                <div key={i} className="group flex flex-1 flex-col items-center">
-                  <div className="flex w-full flex-col justify-end" style={{ height: 90 }}>
-                    <div className="w-full rounded-t-sm bg-info/60 transition-all group-hover:bg-info" style={{ height: `${pct}%` }} title={`${String(d.hour).padStart(2, '0')}h: ${val} sessão(ões)`} />
-                  </div>
-                  {i % 4 === 0 && <span className="text-[7px] text-on-surface/35">{String(d.hour).padStart(2, '0')}</span>}
-                </div>
-              );
-            })}
-          </div>
-        </Surface>
-      </div>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Ranking de colaboradores — 30 dias</h3>
-          {top_users?.length ? (
-            <div className="space-y-3">
-              {top_users.slice(0, 8).map((u, i) => {
-                const pct = Math.round((Number(u.sessions) / maxUser) * 100);
-                return (
-                  <div key={i} className="flex items-center gap-3">
-                    <span className="w-5 shrink-0 text-right text-[10px] font-bold text-on-surface/40">{i + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-bold text-on-surface">{u.full_name}</span>
-                        <span className="shrink-0 text-[10px] font-bold text-primary">{u.sessions}x</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-primary/12">
-                        <div className="h-full rounded-full bg-primary/70 transition-all" style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="mt-0.5 text-[9px] text-on-surface/40">
-                        {u.username} · {u.department || 'sem departamento'} · último: {u.last_seen ? new Date(u.last_seen).toLocaleDateString('pt-BR') : '-'}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ) : <p className="py-6 text-center text-xs text-on-surface/40">Nenhum usuário registrado</p>}
-        </Surface>
-
-        <Surface className="p-5">
-          <h3 className="mb-4 text-sm font-bold uppercase text-on-surface">Métodos de autenticação</h3>
-          <div className="space-y-3">
-            {auth_methods?.map((m, i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-on-surface">{methodLabel[m.auth_method] || m.auth_method}</span>
-                    <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{m.count} ({m.pct}%)</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-outline/15">
-                    <div className={`h-full rounded-full ${methodColor[i] || 'bg-primary'}`} style={{ width: `${m.pct}%` }} />
-                  </div>
-                </div>
-              </div>
-            ))}
-            {!auth_methods?.length && <p className="py-4 text-center text-xs text-on-surface/40">Sem dados</p>}
-          </div>
-
-          <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Distribuição por VLAN</h4>
-            <div className="flex flex-wrap gap-2">
-              {vlan_distribution?.map((v, i) => (
-                <div key={i} className="rounded-xl border border-outline/14 bg-surface-variant px-3 py-2 text-xs">
-                  <span className="font-bold text-on-surface">VLAN {v.vlan_id}</span>
-                  <span className="ml-2 text-on-surface/55">{v.count} sessões</span>
-                </div>
-              ))}
-              {!vlan_distribution?.length && <p className="text-xs text-on-surface/40">Sem dados</p>}
-            </div>
-          </div>
-
-          <div className="mt-5 border-t border-outline/10 pt-4">
-            <h4 className="mb-3 text-xs font-bold uppercase text-on-surface/60">Sites mais visitados (VLAN 30 — últimos 30 dias)</h4>
-            {top_domains?.length ? (
-              <div className="space-y-2">
-                {top_domains.map((d, i) => {
-                  const maxD = Number(top_domains[0]?.total) || 1;
-                  const pct = Math.round((Number(d.total) / maxD) * 100);
-                  return (
-                    <div key={i}>
-                      <div className="mb-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-bold text-on-surface" title={d.domain}>{d.domain}</span>
-                        <span className="shrink-0 text-[10px] font-bold text-on-surface/55">{d.total} consultas · {d.unique_ips} IP(s)</span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-outline/15">
-                        <div className="h-full rounded-full bg-info/70" style={{ width: `${pct}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-xs text-on-surface/40">Nenhuma consulta DNS registrada para a VLAN 30 no período. Verifique se o DnsRadarService está ativo.</p>
-            )}
-          </div>
-        </Surface>
-      </div>
-    </div>
-  );
-}
-
-function ReportTab({ users }) {
-  const [filters, setFilters] = useState({ from: '', to: '', user_id: '', vlan_id: '' });
-  const [reportData, setReportData] = useState(null);
-  const [validationData, setValidationData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [validating, setValidating] = useState(false);
-  const [printing, setPrinting] = useState(false);
-
-  const setFilter = (key) => (value) => setFilters((current) => ({ ...current, [key]: value }));
-
-  const buildParams = (extra = {}) => {
-    const params = { ...extra };
-    if (filters.from) params.from = filters.from;
-    if (filters.to) params.to = filters.to;
-    if (filters.user_id) params.user_id = filters.user_id;
-    if (filters.vlan_id) params.vlan_id = filters.vlan_id;
-    return params;
-  };
-
-  const loadReport = async () => {
-    setLoading(true);
-    try {
-      const res = await api.get('/api/collaborators/report', { params: buildParams({ page: 1, limit: 200 }) });
-      setReportData(res.data);
-    } catch (error) {
-      toast(error?.response?.data?.error || 'Falha ao carregar relatório.', 'danger');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const syncLog = async () => {
-    setSyncing(true);
-    try {
-      const res = await api.post('/api/collaborators/access-log/sync');
-      toast(`Sincronização concluída: ${res.data.inserted} registro(s) inserido(s) no log imutável.`, 'success');
-      setValidationData(null);
-      if (reportData) loadReport();
-    } catch (error) {
-      toast(error?.response?.data?.error || 'Falha na sincronização.', 'danger');
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const validateReport = async () => {
-    setValidating(true);
-    try {
-      const res = await api.get('/api/collaborators/report/validate', { params: buildParams() });
-      setValidationData(res.data);
-    } catch (error) {
-      toast(error?.response?.data?.error || 'Falha ao validar relatório.', 'danger');
-    } finally {
-      setValidating(false);
-    }
-  };
-
-  const printReport = async () => {
-    setPrinting(true);
-    try {
-      const res = await api.get('/api/collaborators/report', { params: buildParams({ page: 1, limit: 1000 }) });
-      const { rows, summary } = res.data;
-
-      const now = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-      const fromLabel = filters.from ? new Date(`${filters.from}T12:00:00`).toLocaleDateString('pt-BR') : 'Início dos registros';
-      const toLabel = filters.to ? new Date(`${filters.to}T12:00:00`).toLocaleDateString('pt-BR') : 'Data atual';
-      const docId = `SGCG-CM-${Date.now().toString(36).toUpperCase()}`;
-      const logoUrl = `${window.location.origin}/LOGO-JACAREZINHO.png`;
-
-      const fmtDur = (s) => {
-        if (!s || s <= 0) return '-';
-        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-        if (h > 0) return `${h}h ${m}m`;
-        if (m > 0) return `${m}m ${s % 60}s`;
-        return `${s}s`;
-      };
-
-      const fmtBanda = (up, down) => {
-        const total = (Number(up) || 0) + (Number(down) || 0);
-        if (total <= 0) return '-';
-        if (total < 1024) return `${total} B`;
-        if (total < 1048576) return `${(total / 1024).toFixed(1)} KB`;
-        return `${(total / 1048576).toFixed(2)} MB`;
-      };
-
-      const win = window.open('', '_blank', 'width=1200,height=820');
-      if (!win) { toast('Permita pop-ups para gerar o relatório em PDF.', 'warning'); return; }
-
-      win.document.write(`<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8">
-<title>Relatório Acesso Mobile — ${docId}</title>
-<style>
-@page{size:A4 landscape;margin:1.2cm 1.5cm 2.2cm}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,Helvetica,sans-serif;font-size:9pt;color:#111;background:#fff}
-.header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #003087;padding-bottom:10px;margin-bottom:10px}
-.logo{width:58px;height:64px;flex-shrink:0;display:flex;align-items:center;justify-content:center}
-.logo img{width:54px;height:60px;object-fit:contain}
-.logo-fb{width:54px;height:60px;border:2.5px solid #003087;border-radius:8px;display:none;align-items:center;justify-content:center;font-size:7pt;color:#003087;font-weight:bold;text-align:center;line-height:1.3;padding:6px}
-.ht h1{font-size:12.5pt;font-weight:bold;color:#003087;text-transform:uppercase;letter-spacing:.3px}
-.ht h2{font-size:9pt;color:#555;margin-top:2px}
-.ht h3{font-size:9pt;color:#777;margin-top:1px}
-.ht h4{font-size:11pt;font-weight:bold;color:#1a1a1a;margin-top:6px;border-top:1px solid #d0d0d0;padding-top:5px;text-transform:uppercase;letter-spacing:.4px}
-.meta{background:#f0f4fa;border-left:3px solid #003087;padding:6px 10px;margin-bottom:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:3px 16px}
-.ml{font-size:7.5pt;color:#666;font-weight:bold;text-transform:uppercase;display:block}
-.mv{font-size:9pt;font-weight:bold;color:#111}
-table{width:100%;border-collapse:collapse;font-size:7.5pt}
-thead th{background:#003087;color:#fff;padding:5px 5px;text-align:left;font-size:7pt;white-space:nowrap}
-tbody td{padding:3px 5px;border-bottom:1px solid #e4e6ea;white-space:nowrap}
-tbody tr:nth-child(even) td{background:#f7f8fa}
-.footer{margin-top:14px;border-top:2px double #003087;padding-top:8px;display:flex;justify-content:space-between;align-items:flex-end;font-size:7.5pt;color:#444}
-.docid{font-family:monospace;font-size:7pt;color:#888}
-@media print{.noprint{display:none!important}}
-</style>
-</head><body>
-<div class="header">
-  <div class="logo">
-    <img src="${logoUrl}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
-    <div class="logo-fb">PMJ<br>PARANÁ</div>
-  </div>
-  <div class="ht">
-    <h1>Prefeitura Municipal de Jacarezinho</h1>
-    <h2>Estado do Paraná</h2>
-    <h3>Secretaria Municipal de Comércio, Indústria, Serviços e Inovação</h3>
-    <h4>Relatório Oficial do Acesso Mobile de Colaboradores</h4>
-    <p style="font-size:9pt;color:#555;margin:2px 0 0;">Relatório de Acesso Autenticado à VLAN 30</p>
-  </div>
-</div>
-<div class="meta">
-  <div><span class="ml">Período</span><span class="mv">${fromLabel} a ${toLabel}</span></div>
-  <div><span class="ml">Total de Sessões</span><span class="mv">${summary?.total_sessions ?? rows.length}</span></div>
-  <div><span class="ml">Usuários Únicos</span><span class="mv">${summary?.unique_users ?? '-'}</span></div>
-  <div><span class="ml">Emissão</span><span class="mv">${now}</span></div>
-</div>
-<table>
-<thead><tr>
-  <th>#</th><th>Data</th><th>Hora</th><th>Colaborador</th><th>Usuário</th>
-  <th>Departamento</th><th>Endereço IP</th><th>MAC</th><th>VLAN</th><th>Autenticação</th>
-  <th>Duração</th><th>Site Principal</th><th>Banda</th>
-</tr></thead>
-<tbody>
-${rows.map((r, i) => `<tr>
-  <td>${i + 1}</td>
-  <td>${r.date_fmt ?? '-'}</td>
-  <td>${r.hour_fmt ?? '-'}</td>
-  <td>${r.full_name ?? 'N/I'}</td>
-  <td>${r.username ?? '-'}</td>
-  <td>${r.department ?? '-'}</td>
-  <td>${r.client_ip ?? '-'}</td>
-  <td>${r.mac_address ?? '-'}</td>
-  <td>${r.vlan_id ?? '-'}</td>
-  <td>${r.auth_method ?? '-'}</td>
-  <td>${fmtDur(r.duration_seconds)}</td>
-  <td>${r.top_domain ?? '-'}</td>
-  <td>${fmtBanda(r.bytes_up, r.bytes_down)}</td>
-</tr>`).join('')}
-</tbody>
-</table>
-<div class="footer">
-  <div>
-    <strong>Sistema de Governança e Controle Governamental (SGCG) — Prefeitura Municipal de Jacarezinho/PR</strong><br>
-    Documento gerado automaticamente em ${now}. Este relatório possui validade institucional, gerado com base nos registros do SGCG.<br>
-    <em>Vedada a alteração do conteúdo. Em caso de dúvidas, consulte a Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.</em>
-  </div>
-  <div style="text-align:right">
-    <span class="docid">Nº ${docId}</span><br>
-    <em>Relatório oficial validado.</em>
-  </div>
-</div>
-<script>setTimeout(function(){window.print();},500);<\/script>
-</body></html>`);
-      win.document.close();
-    } catch (error) {
-      toast(error?.response?.data?.error || 'Falha ao gerar relatório para impressão.', 'danger');
-    } finally {
-      setPrinting(false);
-    }
-  };
-
-  return (
-    <div className="space-y-6">
-      <Surface className="p-5">
-        <div className="mb-5 flex items-start gap-3">
-          <FileText className="mt-0.5 shrink-0 text-primary" size={20} />
-          <div>
-            <h2 className="text-sm font-bold uppercase text-on-surface">Relatório Institucional de Acesso</h2>
-            <p className="mt-1 text-xs text-on-surface/60">
-              Prefeitura Municipal de Jacarezinho — Secretaria Municipal de Comércio, Indústria, Serviços e Inovação.<br />
-              Selecione período, colaborador e VLAN para gerar relatório e exportar em PDF com identidade governamental.
-            </p>
-          </div>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="De" type="date" value={filters.from} onChange={setFilter('from')} />
-          <Field label="Até" type="date" value={filters.to} onChange={setFilter('to')} />
-          <SelectField label="Colaborador" value={filters.user_id} onChange={setFilter('user_id')}>
-            <option value="">Todos os colaboradores</option>
-            {users.map((u) => <option key={u.id} value={u.id}>{u.full_name} ({u.username})</option>)}
-          </SelectField>
-          <SelectField label="VLAN" value={filters.vlan_id} onChange={setFilter('vlan_id')}>
-            <option value="">Todas as VLANs</option>
-            <option value="30">VLAN 30 — Colaboradores</option>
-          </SelectField>
-        </div>
-
-        <div className="mt-5 flex flex-wrap gap-2">
-          <ActionButton tone="primary" icon={loading ? Activity : Filter} onClick={loadReport} disabled={loading}>
-            {loading ? 'Consultando...' : 'Gerar Relatório'}
-          </ActionButton>
-          <ActionButton tone="secondary" icon={syncing ? Activity : RefreshCw} onClick={syncLog} disabled={syncing}>
-            {syncing ? 'Sincronizando...' : 'Sincronizar Log'}
-          </ActionButton>
-          <ActionButton tone="secondary" icon={validating ? Activity : ShieldCheck} onClick={validateReport} disabled={validating}>
-            {validating ? 'Validando...' : 'Validar Relatório'}
-          </ActionButton>
-          {reportData && (
-            <ActionButton tone="ghost" icon={printing ? Activity : Printer} onClick={printReport} disabled={printing}>
-              {printing ? 'Gerando PDF...' : 'Imprimir / Salvar PDF'}
-            </ActionButton>
-          )}
-        </div>
-      </Surface>
-
-      {validationData && (
-        <Surface className="p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-bold uppercase text-on-surface">Validação do Relatório</h2>
-                <StatusChip
-                  tone={validationData.status === 'valid' ? 'success' : validationData.status === 'warning' ? 'warning' : 'danger'}
-                  label={validationData.status === 'valid' ? 'Consistente' : validationData.status === 'warning' ? 'Com avisos' : 'Inconsistente'}
-                />
-              </div>
-              <p className="mt-2 text-sm leading-6 text-on-surface/64">{validationData.recommendation}</p>
-            </div>
-            <div className="grid min-w-[260px] grid-cols-3 gap-2 text-center">
-              <div className="rounded-xl border border-outline/12 bg-surface-high/60 p-3">
-                <p className="text-[10px] font-bold uppercase text-on-surface/45">Sessões</p>
-                <p className="mt-1 text-lg font-bold text-on-surface">{validationData.summary?.total_sessions ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-danger/16 bg-danger/8 p-3">
-                <p className="text-[10px] font-bold uppercase text-danger/75">Críticos</p>
-                <p className="mt-1 text-lg font-bold text-danger">{validationData.summary?.critical ?? 0}</p>
-              </div>
-              <div className="rounded-xl border border-warning/18 bg-warning/8 p-3">
-                <p className="text-[10px] font-bold uppercase text-warning/75">Avisos</p>
-                <p className="mt-1 text-lg font-bold text-warning">{validationData.summary?.warning ?? 0}</p>
-              </div>
-            </div>
-          </div>
-          <div className="mt-5 grid gap-2 lg:grid-cols-2">
-            {validationData.checks?.map((check) => (
-              <div key={check.key} className="flex items-center justify-between gap-3 rounded-xl border border-outline/12 bg-surface-high/48 px-3 py-2">
-                <div>
-                  <p className="text-xs font-bold text-on-surface">{check.label}</p>
-                  <p className="text-[10px] uppercase text-on-surface/42">{check.severity === 'critical' ? 'Bloqueia emissão auditável' : 'Revisão recomendada'}</p>
-                </div>
-                <StatusChip tone={check.count ? (check.severity === 'critical' ? 'danger' : 'warning') : 'success'} label={String(check.count || 0)} />
-              </div>
-            ))}
-          </div>
-        </Surface>
-      )}
-
-      {reportData && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Metric label="Sessões no período" value={reportData.total} icon={Activity} />
-            <Metric label="Usuários únicos" value={reportData.summary?.unique_users || 0} icon={Users} />
-            <Metric label="Tempo total acumulado" value={formatDuration(Number(reportData.summary?.total_seconds) || 0)} icon={Clock} />
-          </div>
-
-          <Surface className="p-5">
-            <div className="mb-4 flex items-center justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-bold uppercase text-on-surface">Registros de Acesso</h2>
-                <p className="mt-0.5 text-xs text-on-surface/50">Tabela imutável — log oficial do acesso mobile</p>
-              </div>
-              <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase text-primary">
-                {reportData.rows?.length} / {reportData.total}
-              </span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full text-left text-xs">
-                <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-                  <tr>
-                    {['Data', 'Hora', 'Colaborador', 'Usuário', 'Departamento', 'IP', 'VLAN', 'Auth', 'Duração', 'Site', 'Banda'].map((h) => (
-                      <th key={h} className="whitespace-nowrap px-3 py-2 font-bold">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-outline/10">
-                  {reportData.rows?.length ? reportData.rows.map((row) => (
-                    <tr key={row.id} className="text-on-surface/78 transition-colors hover:bg-primary/5">
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.date_fmt}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.hour_fmt}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-bold">{row.full_name}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.username}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.department || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[10px]">{row.client_ip || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.vlan_id || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{row.auth_method}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{formatDuration(row.duration_seconds)}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5 text-on-surface/55">{row.top_domain || '-'}</td>
-                      <td className="whitespace-nowrap px-3 py-2.5">{formatBytes((Number(row.bytes_up) || 0) + (Number(row.bytes_down) || 0))}</td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td className="px-3 py-8 text-center text-on-surface/45" colSpan={11}>
-                        Nenhum registro para os filtros selecionados.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            {reportData.total > (reportData.rows?.length || 0) && (
-              <p className="mt-3 text-center text-xs text-on-surface/45">
-                Exibindo {reportData.rows?.length} de {reportData.total} registros. O PDF incluirá todos os registros.
-              </p>
-            )}
-          </Surface>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="primary" onClick={submit} disabled={saving}>{saving ? 'Salvando...' : item ? 'Salvar' : 'Criar conta'}</Button>
         </>
       )}
-    </div>
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="cu-user" label="Usuário" hint={item ? 'O usuário não pode ser trocado.' : 'Minúsculas, sem espaços. Ex.: maria.silva'}>
+          <input id="cu-user" className={`${inputCls} tabular`} value={form.username} onChange={(e) => set({ username: e.target.value.toLowerCase().replace(/\s/g, '') })} disabled={Boolean(item)} autoComplete="off" />
+        </Field>
+        <Field id="cu-pass" label={item ? 'Nova senha (opcional)' : 'Senha'} hint="Pelo menos 6 caracteres.">
+          <div className="relative">
+            <input id="cu-pass" type={showPassword ? 'text' : 'password'} className={`${inputCls} pr-10`} value={form.password} onChange={(e) => set({ password: e.target.value })} placeholder={item ? 'Deixe em branco para manter' : ''} autoComplete="new-password" />
+            <button type="button" onClick={() => setShowPassword((s) => !s)} className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-on-surface/50 hover:bg-on-surface/5" aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'} title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}>
+              {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+            </button>
+          </div>
+        </Field>
+      </div>
+      <Field id="cu-name" label="Nome completo">
+        <input id="cu-name" className={inputCls} value={form.full_name} onChange={(e) => set({ full_name: e.target.value })} autoComplete="off" />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field id="cu-dep" label="Departamento (opcional)">
+          <input id="cu-dep" className={inputCls} value={form.department} onChange={(e) => set({ department: e.target.value })} />
+        </Field>
+        <Field id="cu-pos" label="Cargo ou função (opcional)">
+          <input id="cu-pos" className={inputCls} value={form.position} onChange={(e) => set({ position: e.target.value })} />
+        </Field>
+      </div>
+      {item ? (
+        <label className="flex items-center gap-2 text-[13px] text-on-surface/80">
+          <input type="checkbox" checked={form.active} onChange={(e) => set({ active: e.target.checked })} /> Conta ativa (desmarcar desconecta os celulares dela)
+        </label>
+      ) : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </Drawer>
   );
 }
 
 export default function Collaborators() {
-  const [tab, setTab] = useUrlTab([{ key: 'overview' }, { key: 'metrics' }, { key: 'report' }], 'overview');
+  const [params, setParams] = useSearchParams();
+  const TABS = [
+    { key: 'contas', label: 'Contas', icon: Users },
+    { key: 'sessoes', label: 'Conectados', icon: Wifi },
+    { key: 'uso', label: 'Uso', icon: BarChart2 },
+    { key: 'relatorio', label: 'Relatório', icon: FileText },
+  ];
+  const [tab, setTab] = useUrlTab(TABS, 'contas');
   const [overview, setOverview] = useState(null);
   const [users, setUsers] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [metrics, setMetrics] = useState(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
-  const [status, setStatus] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [drawer, setDrawer] = useState({ open: false, item: null });
   const [saving, setSaving] = useState(false);
-  const [dialog, setDialog] = useState({ open: false, item: null });
-  const [userFilters, setUserFilters] = useState({ query: '', active: 'all', department: 'all' });
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [filters, setFilters] = useState({ query: '', active: 'all', department: 'all' });
 
-  const departments = useMemo(() => (
-    [...new Set(users.map((user) => String(user.department || '').trim()).filter(Boolean))]
-      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
-  ), [users]);
-
-  const userAutocomplete = useMemo(() => (
-    [...new Set(users
-      .flatMap((user) => [user.full_name, user.username, user.department, user.position])
-      .filter(Boolean))]
-      .slice(0, 80)
-  ), [users]);
-
-  const filteredUsers = useMemo(() => users.filter((user) => {
-    const activeMatch = userFilters.active === 'all'
-      || (userFilters.active === 'active' && user.active !== false)
-      || (userFilters.active === 'inactive' && user.active === false);
-    const departmentMatch = userFilters.department === 'all'
-      || String(user.department || '').trim() === userFilters.department;
-    return activeMatch
-      && departmentMatch
-      && matchesText(user, userFilters.query, ['full_name', 'username', 'department', 'position']);
-  }), [users, userFilters]);
-
-  const setUserFilter = (key) => (value) => setUserFilters((current) => ({ ...current, [key]: value }));
-  const clearUserFilters = () => setUserFilters({ query: '', active: 'all', department: 'all' });
+  // Endereços antigos (?tab=overview etc.) continuam funcionando.
+  useEffect(() => {
+    const legacy = LEGACY_TABS[params.get('tab')];
+    if (legacy) {
+      const next = new URLSearchParams(params);
+      next.set('tab', legacy);
+      setParams(next, { replace: true });
+    }
+  }, [params, setParams]);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [overviewRes, usersRes, sessionsRes] = await Promise.all([
-        api.get('/api/collaborators/overview'),
-        api.get('/api/collaborators/users'),
-        api.get('/api/collaborators/sessions'),
-      ]);
-      setOverview(overviewRes.data);
-      setUsers(usersRes.data || []);
-      setSessions(sessionsRes.data || []);
+      const [o, u, s] = await Promise.all([api.get('/api/collaborators/overview'), api.get('/api/collaborators/users'), api.get('/api/collaborators/sessions')]);
+      setOverview(o.data || {});
+      setUsers(Array.isArray(u.data) ? u.data : []);
+      setSessions(Array.isArray(s.data) ? s.data : []);
+      setError('');
+    } catch (e) {
+      setError(errorMessage(e, 'Não foi possível carregar os colaboradores.'));
     } finally {
       setLoading(false);
     }
   };
-
   const loadMetrics = async () => {
     setMetricsLoading(true);
-    try {
-      const res = await api.get('/api/collaborators/metrics');
-      setMetrics(res.data);
-    } catch (error) {
-      toast(error?.response?.data?.error || 'Falha ao carregar métricas.', 'danger');
-    } finally {
-      setMetricsLoading(false);
-    }
+    try { setMetrics((await api.get('/api/collaborators/metrics')).data); } catch (e) { toast(errorMessage(e, 'Não foi possível carregar o uso.'), 'danger'); } finally { setMetricsLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => { if (tab === 'uso' && !metrics) loadMetrics(); }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const act = async (fn, success) => {
+    setBusy(true);
+    try { await fn(); if (success) toast(success, 'success'); await load(); } catch (e) { toast(errorMessage(e), 'danger'); } finally { setBusy(false); }
   };
 
-  useEffect(() => { load(); }, []);
-  useEffect(() => { if (tab === 'metrics' && !metrics) loadMetrics(); }, [tab]);
+  const departments = useMemo(() => [...new Set(users.map((u) => String(u.department || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [users]);
+  const suggestions = useMemo(() => [...new Set(users.flatMap((u) => [u.full_name, u.username, u.department, u.position]).filter(Boolean))].slice(0, 80), [users]);
+  const filtered = useMemo(() => users.filter((u) => {
+    const okActive = filters.active === 'all' || (filters.active === 'active' ? u.active !== false : u.active === false);
+    const okDep = filters.department === 'all' || String(u.department || '').trim() === filters.department;
+    return okActive && okDep && matchesText(u, filters.query, ['full_name', 'username', 'department', 'position']);
+  }), [users, filters]);
 
   const saveUser = async (payload) => {
     setSaving(true);
     try {
-      if (dialog.item?.id) await api.put(`/api/collaborators/users/${dialog.item.id}`, payload);
+      if (drawer.item?.id) await api.put(`/api/collaborators/users/${drawer.item.id}`, payload);
       else await api.post('/api/collaborators/users', payload);
-      setDialog({ open: false, item: null });
+      toast(drawer.item ? 'Colaborador atualizado.' : 'Conta criada.', 'success');
+      setDrawer({ open: false, item: null });
       await load();
+    } catch (e) {
+      toast(errorMessage(e, 'Não foi possível salvar o colaborador.'), 'danger');
     } finally {
       setSaving(false);
     }
   };
-
-  const deleteUser = async (user) => {
-    const ok = await askConfirm(`Inativar o colaborador ${user.full_name}? Sessões ativas serão revogadas.`);
-    if (!ok) return;
-    await api.delete(`/api/collaborators/users/${user.id}`);
-    await load();
+  const deactivate = async (u) => {
+    if (!(await askConfirm({ title: `Inativar ${formatPersonName(u.full_name)}?`, description: 'A conta deixa de entrar no portal e os celulares conectados com ela são desconectados. O histórico continua no relatório.', confirmLabel: 'Inativar conta', tone: 'danger' }))) return;
+    await act(() => api.delete(`/api/collaborators/users/${u.id}`), 'Conta inativada.');
   };
-
-  const revokeSession = async (id) => {
-    await api.post(`/api/collaborators/sessions/${id}/revoke`);
-    await load();
+  const revoke = async (s) => {
+    if (!(await askConfirm({ title: 'Desconectar este celular?', description: `${formatPersonName(s.full_name || s.username || 'Colaborador')} (${s.client_ip || 'sem IP'}) volta para a página de login do portal.`, confirmLabel: 'Desconectar', tone: 'danger' }))) return;
+    await act(() => api.post(`/api/collaborators/sessions/${s.id}/revoke`), 'Celular desconectado.');
   };
-
-  const setupEnforcement = async () => {
-    setStatus('Aplicando portal e enforcement da VLAN 30...');
-    try {
-      const res = await api.post('/api/collaborators/enforcement/setup');
-      setStatus(`Resultado: ${Object.entries(res.data?.results || {}).map(([key, value]) => `${key}=${value}`).join(', ')}`);
-      await load();
-    } catch (error) {
-      setStatus(error?.response?.data?.error || 'Falha ao aplicar enforcement.');
-    }
-  };
-
-  const toggleAuthRequired = async () => {
-    const next = !(overview?.settings?.auth_required !== false);
-    setStatus(next ? 'Ativando exigência de login na VLAN 30...' : 'Desativando login obrigatório da VLAN 30...');
-    try {
-      await api.put('/api/collaborators/settings/access-mode', { auth_required: next });
-      setStatus(next
-        ? 'Login obrigatório ativado. Novos acessos HTTP serão direcionados ao portal.'
-        : 'Login obrigatório desativado. A VLAN 30 navega sem portal, mantendo DNS/RPZ/ACL.');
-      await load();
-    } catch (error) {
-      setStatus(error?.response?.data?.error || 'Falha ao alterar modo de acesso.');
-    }
-  };
-
   const authRequired = overview?.settings?.auth_required !== false;
-  const TABS = [
-    { key: 'overview', label: 'Visão Geral', icon: Wifi },
-    { key: 'metrics', label: 'Métricas', icon: BarChart2 },
-    { key: 'report', label: 'Relatório', icon: FileText },
-  ];
+  const toggleLogin = async (next) => {
+    const ok = await askConfirm(next
+      ? { title: 'Exigir login na VLAN 30?', description: 'Celulares que ainda não entraram no portal ficam sem internet até fazer login com usuário e senha.', confirmLabel: 'Exigir login' }
+      : { title: 'Liberar a VLAN 30 sem login?', description: 'Os celulares navegam sem passar pelo portal. Os bloqueios de DNS e ACL continuam valendo, mas o relatório deixa de saber quem é quem.', confirmLabel: 'Liberar sem login', tone: 'danger' });
+    if (!ok) return;
+    await act(() => api.put('/api/collaborators/settings/access-mode', { auth_required: next }), next ? 'Login obrigatório ligado.' : 'Login obrigatório desligado.');
+  };
+  const reapply = () => act(async () => {
+    const res = await api.post('/api/collaborators/enforcement/setup');
+    const failed = Object.entries(res.data?.results || {}).filter(([, v]) => v !== 'ok');
+    if (failed.length) throw new Error(`Falhou: ${failed.map(([k, v]) => `${k} (${v})`).join('; ')}`);
+    toast('Portal reaplicado (página de login e firewall).', 'success');
+  });
+
+  const ov = overview || {};
 
   return (
-    <div className="space-y-6 pb-12">
-      <ModuleHeader
-        eyebrow="Controle de acesso"
-        title="Acesso Mobile de Colaboradores"
-        subtitle="Autenticação local para a VLAN 30, com métricas, auditoria, relatório governamental e liberação runtime por IP."
-        icon={Smartphone}
+    <div className="space-y-4">
+      <PageHeader
+        title="Colaboradores"
+        description="Wi-Fi dos celulares da equipe (VLAN 30): contas de acesso, quem está conectado, uso e o relatório oficial."
         actions={(
-          <div className="flex flex-wrap gap-2">
-            <ActionButton tone="ghost" icon={RefreshCw} onClick={load}>{loading ? 'Carregando...' : 'Atualizar'}</ActionButton>
-            <ActionButton tone={authRequired ? 'secondary' : 'ghost'} icon={authRequired ? LockKeyhole : LockOpen} onClick={toggleAuthRequired}>
-              {authRequired ? 'Login ligado' : 'Login desligado'}
-            </ActionButton>
-            <ActionButton tone="secondary" icon={ShieldCheck} onClick={setupEnforcement}>Reconciliar</ActionButton>
-            <ActionButton tone="primary" icon={Plus} onClick={() => setDialog({ open: true, item: null })}>Novo Usuário</ActionButton>
+          <>
+            <Button icon={RefreshCw} onClick={load} disabled={loading || busy}>{loading ? 'Carregando...' : 'Atualizar'}</Button>
+            <Button variant="primary" icon={Plus} onClick={() => setDrawer({ open: true, item: null })}>Novo colaborador</Button>
+          </>
+        )}
+      />
+      <KpiRow>
+        <Kpi label="Contas ativas" value={ov.users?.active ?? '—'} sub={`${ov.users?.total ?? 0} cadastradas`} />
+        <Kpi label="Conectados agora" value={ov.sessions?.active ?? '—'} tone={ov.sessions?.active ? 'success' : 'neutral'} />
+        <Kpi label="Liberados no portal" value={ov.enforcement?.authorized_count ?? '—'} sub={ov.enforcement?.session_hours ? `sessão de ${ov.enforcement.session_hours} h` : undefined} />
+        <Kpi label="Login" value={overview ? (authRequired ? 'Obrigatório' : 'Desligado') : '—'} tone={overview ? (authRequired ? 'success' : 'warning') : 'neutral'} />
+      </KpiRow>
+      {error ? <Notice tone="danger" action={<Button onClick={load}>Tentar de novo</Button>}>{error}</Notice> : null}
+
+      <Panel
+        className="[&>div:first-child]:border-b-0"
+        padded={false}
+        title="Portal de login da VLAN 30"
+        description={authRequired
+          ? 'Ligado: o celular só navega depois de entrar com usuário e senha. Cada acesso fica no relatório com o nome do colaborador.'
+          : 'Desligado: os celulares navegam sem login. Os bloqueios de DNS e ACL continuam valendo, mas o relatório não identifica a pessoa.'}
+        actions={(
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-[13px] font-semibold text-on-surface">
+              <Switch checked={authRequired} onChange={toggleLogin} disabled={!overview || busy} label="Exigir login" />
+              Exigir login
+            </label>
+            <Button icon={RefreshCw} onClick={reapply} disabled={busy} title="Regrava a página de login e reaplica no firewall a lista de celulares liberados">Reaplicar portal</Button>
           </div>
         )}
       />
 
-      {status ? <Surface className="p-4 text-sm text-on-surface/72">{status}</Surface> : null}
+      <Tabs tabs={TABS.map((t) => (t.key === 'sessoes' ? { ...t, count: sessions.length || null } : t.key === 'contas' ? { ...t, count: users.length } : t))} value={tab} onChange={setTab} />
 
-      <TabBar tabs={TABS} active={tab} onChange={setTab} />
-
-      {tab === 'overview' && (
-        <div className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-3">
-            <Metric label="Usuários ativos" value={overview?.users?.active ?? '-'} icon={UserRound} sub={`${overview?.users?.total ?? 0} cadastrados`} />
-            <Metric label="Sessões ativas" value={overview?.sessions?.active ?? '-'} icon={Wifi} sub="VLAN 30" />
-            <Metric label="IPs liberados" value={overview?.enforcement?.authorized_count ?? '-'} icon={LockKeyhole} sub={overview?.enforcement?.auth_set || 'sgcg_collab_v30_auth'} />
-          </div>
-
-          <Surface className="p-5">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div className="max-w-3xl">
-                <div className="flex items-center gap-2">
-                  <StatusChip tone={authRequired ? 'warning' : 'success'}>
-                    {authRequired ? 'Login obrigatório' : 'Somente DNS/ACL'}
-                  </StatusChip>
-                  <span className="text-xs font-bold uppercase text-on-surface/45">VLAN 30</span>
-                </div>
-                <p className="mt-2 text-sm leading-6 text-on-surface/68">
-                  {authRequired
-                    ? 'Dispositivos não autenticados são direcionados ao portal e ficam sem saída WAN até login válido. As sessões alimentam métricas, auditoria e relatório institucional.'
-                    : 'O portal não captura os colaboradores; a navegação segue liberada pela camada IP e continua sujeita às restrições institucionais de DNS, RPZ e ACL.'}
-                </p>
+      {tab === 'contas' ? (
+        <Panel
+          title={`Contas (${filtered.length} de ${users.length})`}
+          description="Busque por nome, usuário, departamento ou cargo."
+          padded={false}
+          actions={(
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="relative w-64">
+                <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/40" />
+                <input list="collab-suggestions" className={`${inputCls} pl-9`} value={filters.query} onChange={(e) => setFilters((f) => ({ ...f, query: e.target.value }))} placeholder="Buscar colaborador" aria-label="Buscar colaborador" />
+                <datalist id="collab-suggestions">{suggestions.map((s) => <option key={s} value={s} />)}</datalist>
               </div>
-              <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-outline/14 bg-surface-high/72 px-4 py-3">
-                <span className="text-sm font-bold text-on-surface">Exigir login</span>
-                <input type="checkbox" checked={authRequired} onChange={toggleAuthRequired} className="h-5 w-5 rounded border-outline/30 text-primary" />
-              </label>
+              <div className="w-44">
+                <select className={inputCls} value={filters.active} onChange={(e) => setFilters((f) => ({ ...f, active: e.target.value }))} aria-label="Filtrar por situação">
+                  <option value="all">Todas as situações</option>
+                  <option value="active">Ativas</option>
+                  <option value="inactive">Inativas</option>
+                </select>
+              </div>
+              <div className="w-56">
+                <select className={inputCls} value={filters.department} onChange={(e) => setFilters((f) => ({ ...f, department: e.target.value }))} aria-label="Filtrar por departamento">
+                  <option value="all">Todos os departamentos</option>
+                  {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              </div>
             </div>
-          </Surface>
-
-          <Surface className="p-5">
-            <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-start gap-3">
-                <Search className="mt-0.5 shrink-0 text-primary" size={20} />
-                <div>
-                  <h2 className="text-sm font-bold uppercase text-on-surface">Pesquisa de colaboradores</h2>
-                  <p className="mt-1 text-xs text-on-surface/55">Use nome, usuário, departamento ou cargo. O campo sugere colaboradores já cadastrados.</p>
-                </div>
-              </div>
-              <ActionButton tone="ghost" icon={Filter} onClick={clearUserFilters}>Limpar filtros</ActionButton>
-            </div>
-            <div className="grid gap-4 lg:grid-cols-[1.5fr_0.8fr_0.9fr]">
-              <label className="block">
-                <span className="mb-1.5 block text-xs font-bold uppercase text-on-surface/55">Pesquisar colaborador</span>
-                <input
-                  list="collab-user-autocomplete"
-                  value={userFilters.query}
-                  onChange={(event) => setUserFilter('query')(event.target.value)}
-                  placeholder="Digite nome, usuário, departamento ou cargo"
-                  className="h-11 w-full rounded-2xl border border-outline/16 bg-surface-high/72 px-3 text-sm text-on-surface outline-none transition focus:border-primary/35 focus:ring-2 focus:ring-primary/20"
-                />
-                <datalist id="collab-user-autocomplete">
-                  {userAutocomplete.map((value) => <option key={value} value={value} />)}
-                </datalist>
-              </label>
-              <SelectField label="Estado" value={userFilters.active} onChange={setUserFilter('active')}>
-                <option value="all">Todos os estados</option>
-                <option value="active">Somente ativos</option>
-                <option value="inactive">Somente inativos</option>
-              </SelectField>
-              <SelectField label="Departamento" value={userFilters.department} onChange={setUserFilter('department')}>
-                <option value="all">Todos os departamentos</option>
-                {departments.map((department) => <option key={department} value={department}>{department}</option>)}
-              </SelectField>
-            </div>
-          </Surface>
-
-          <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
-            <Surface className="p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-bold uppercase text-on-surface">Colaboradores</h2>
-                <StatusChip tone={loading ? 'warning' : 'success'}>{loading ? 'Carregando' : `${filteredUsers.length} de ${users.length}`}</StatusChip>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-xs">
-                  <thead className="border-b border-outline/12 text-[10px] uppercase text-on-surface/50">
-                    <tr>
-                      <th className="px-3 py-2 font-bold">Nome</th>
-                      <th className="px-3 py-2 font-bold">Usuário</th>
-                      <th className="px-3 py-2 font-bold">Departamento</th>
-                      <th className="px-3 py-2 font-bold">Estado</th>
-                      <th className="px-3 py-2 font-bold">Ação</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-outline/10">
-                    {filteredUsers.map((user) => (
-                      <tr key={user.id} className="text-on-surface/78">
-                        <td className="whitespace-nowrap px-3 py-3 font-bold">{user.full_name}</td>
-                        <td className="whitespace-nowrap px-3 py-3 font-mono">{user.username}</td>
-                        <td className="whitespace-nowrap px-3 py-3">{user.department || '-'}</td>
-                        <td className="whitespace-nowrap px-3 py-3"><StatusChip tone={user.active ? 'success' : 'neutral'}>{user.active ? 'Ativo' : 'Inativo'}</StatusChip></td>
-                        <td className="whitespace-nowrap px-3 py-3">
-                          <div className="flex items-center gap-3">
-                            <button type="button" className="text-xs font-bold text-primary" onClick={() => setDialog({ open: true, item: user })}>Editar</button>
-                            <button type="button" className="text-xs font-bold text-danger disabled:cursor-not-allowed disabled:opacity-40" disabled={!user.active} onClick={() => deleteUser(user)}>
-                              Inativar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                    {!filteredUsers.length ? <tr><td className="px-3 py-8 text-center text-on-surface/45" colSpan={5}>Nenhum colaborador encontrado para os filtros selecionados.</td></tr> : null}
-                  </tbody>
-                </table>
-              </div>
-            </Surface>
-
-            <Surface className="p-5">
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <h2 className="text-sm font-bold uppercase text-on-surface">Sessões ativas</h2>
-                <StatusChip tone="info">{sessions.length}</StatusChip>
-              </div>
-              <div className="space-y-3">
-                {sessions.map((session) => (
-                  <div key={session.id} className="rounded-2xl border border-outline/12 bg-surface-high/55 p-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-on-surface">{session.full_name || session.username}</p>
-                        <p className="mt-1 font-mono text-xs text-on-surface/55">{session.client_ip} {session.mac_address ? `- ${session.mac_address}` : ''}</p>
-                      </div>
-                      <button type="button" title="Revogar sessão" className="rounded-xl border border-danger/18 bg-danger/10 p-2 text-danger" onClick={() => revokeSession(session.id)}>
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+          )}
+        >
+          <DataTable
+            rows={filtered}
+            empty={loading ? 'Carregando...' : users.length ? 'Nenhuma conta para esses filtros.' : 'Nenhuma conta cadastrada. Use "Novo colaborador".'}
+            columns={[
+              { key: 'n', label: 'Colaborador', render: (u) => <div><div className="font-semibold text-on-surface">{formatPersonName(u.full_name)}</div>{u.position ? <div className="text-[11.5px] text-on-surface/50">{u.position}</div> : null}</div> },
+              { key: 'u', label: 'Usuário', mono: true, render: (u) => u.username },
+              { key: 'd', label: 'Departamento', render: (u) => u.department || '—' },
+              { key: 's', label: 'Situação', render: (u) => <Badge tone={u.active ? 'success' : 'neutral'}>{u.active ? 'Ativa' : 'Inativa'}</Badge> },
+              { key: 'c', label: 'Criada em', render: (u) => <span className="tabular text-[12px] text-on-surface/60">{dateTimeBR(u.created_at)}</span> },
+              {
+                key: 'a', label: '', align: 'right', render: (u) => (
+                  <div className="flex justify-end gap-1">
+                    <Button variant="ghost" icon={Pencil} onClick={() => setDrawer({ open: true, item: u })} aria-label={`Editar ${formatPersonName(u.full_name)}`} title="Editar" />
+                    <Button variant="ghost" icon={UserX} onClick={() => deactivate(u)} disabled={busy || !u.active} aria-label={`Inativar ${formatPersonName(u.full_name)}`} title={u.active ? 'Inativar' : 'Já inativa'} className="hover:!text-danger" />
                   </div>
-                ))}
-                {!sessions.length ? <div className="rounded-2xl border border-dashed border-outline/16 p-8 text-center text-sm text-on-surface/45">Sem sessões ativas.</div> : null}
-              </div>
-            </Surface>
-          </div>
-        </div>
-      )}
+                ),
+              },
+            ]}
+          />
+        </Panel>
+      ) : null}
 
-      {tab === 'metrics' && <MetricsTab metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} />}
-      {tab === 'report' && <ReportTab users={users} />}
+      {tab === 'sessoes' ? (
+        <Panel title={`Conectados agora (${sessions.length})`} description="Celulares com sessão aberta no portal. Desconectar faz o celular voltar para a página de login." padded={false}>
+          <DataTable
+            rows={sessions}
+            empty={loading ? 'Carregando...' : authRequired ? 'Nenhum celular conectado agora.' : 'Com o login desligado, os celulares navegam sem abrir sessão.'}
+            columns={[
+              { key: 'v', label: 'Colaborador', render: (s) => <div><div className="font-semibold">{formatPersonName(s.full_name || s.username || 'não identificado')}</div><div className="text-[11.5px] text-on-surface/50">{[s.username, s.department].filter(Boolean).join(' · ') || '—'}</div></div> },
+              { key: 'ip', label: 'Celular', render: (s) => <div className="tabular text-[12px]"><div>{s.client_ip || '—'}</div><div className="text-on-surface/50">{s.mac_address || 'MAC não capturado'}</div></div> },
+              { key: 'i', label: 'Entrou', render: (s) => <span className="tabular text-[12px]">{dateTimeBR(s.started_at)}</span> },
+              { key: 'e', label: 'Expira', render: (s) => <span className="tabular text-[12px]">{dateTimeBR(s.expires_at)}</span> },
+              { key: 'a', label: '', align: 'right', render: (s) => <Button variant="danger-soft" onClick={() => revoke(s)} disabled={busy} aria-label={`Desconectar ${formatPersonName(s.full_name || s.username || 'colaborador')}`}>Desconectar</Button> },
+            ]}
+          />
+        </Panel>
+      ) : null}
 
-      <UserDialog open={dialog.open} item={dialog.item} saving={saving} onClose={() => setDialog({ open: false, item: null })} onSubmit={saveUser} />
+      {tab === 'uso' ? <PortalUsage metrics={metrics} loading={metricsLoading} onRefresh={loadMetrics} config={USAGE_CONFIG} /> : null}
+      {tab === 'relatorio' ? <PortalReport people={users} config={COLLAB_REPORT} /> : null}
+
+      <UserDrawer open={drawer.open} item={drawer.item} saving={saving} onClose={() => !saving && setDrawer({ open: false, item: null })} onSubmit={saveUser} />
     </div>
   );
 }

@@ -581,8 +581,13 @@ class DnsContingencyService {
             && line.includes('-j REDIRECT')
             && line.includes('--to-ports 53')
         ));
+        // Primeiro bloqueio comum do FORWARD. As regras do próprio VIP (ex.: o REJECT da porta 853) não contam:
+        // antes elas contavam e faziam todo VIP depois do primeiro parecer "abaixo de um bloqueio", e o
+        // reconciliador apagava e recriava as regras de todos a cada ciclo.
         const firstCommonForwardBlock = filterLines.findIndex((line) => (
             line.startsWith('-A FORWARD ')
+            && !line.includes('sgcg-vip-bypass')
+            && !line.includes('sgcg-emergency-bypass')
             && (
                 line.includes('SGCG SOCIAL BLOCK')
                 || (line.includes('--dport 853') && line.includes('-j DROP'))
@@ -602,7 +607,9 @@ class DnsContingencyService {
                     state.firstAuditRedirect = state.firstAuditRedirect === null ? index : Math.min(state.firstAuditRedirect, index);
                 }
             }
-            if (line.includes('-j RETURN')) {
+            // Só o RETURN geral (sem destino) conta. Os RETURN com destino (OpenDNS liberado ao VIP) ficam antes do
+            // redirecionamento de propósito; contá-los fazia o reconciliador recriar as regras de todos os VIPs a cada minuto.
+            if (line.includes('-j RETURN') && !line.includes(' -d ')) {
                 state.firstReturn = state.firstReturn === null ? index : Math.min(state.firstReturn, index);
             }
             natVipOrder.set(normalizedIp, state);

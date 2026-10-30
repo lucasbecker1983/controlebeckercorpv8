@@ -812,9 +812,9 @@ router.get('/metrics', requireJwt, async (_req: AuthenticatedRequest, res) => {
                 ORDER BY date DESC
             `),
             pool.query(`
-                SELECT COUNT(*) AS total_sessions,
+                SELECT COUNT(*) FILTER (WHERE started_at >= DATE_TRUNC('month', NOW())) AS total_sessions,
                        COUNT(DISTINCT user_id) AS unique_users,
-                       COUNT(DISTINCT DATE(started_at)) AS active_days,
+                       COUNT(DISTINCT DATE(started_at)) FILTER (WHERE started_at >= DATE_TRUNC('month', NOW())) AS active_days,
                        COUNT(DISTINCT CASE WHEN started_at >= DATE_TRUNC('month', NOW()) THEN user_id END) AS monthly_unique
                 FROM collab_sessions
                 WHERE started_at >= DATE_TRUNC('month', NOW()) - INTERVAL '1 month'
