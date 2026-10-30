@@ -1,6 +1,6 @@
 import { execCmd } from '../../utils/sys';
 import { sendAlert } from '../../utils/mailer';
-import { sendTelegram } from '../../utils/telegram';
+import { sendTelegram, telegramConfigured } from '../../utils/telegram';
 import { pool } from '../../config/db';
 
 // Serviços do systemd. O postgresql@18-main é a instância do banco: o "postgresql" puro é só uma casca que
@@ -22,6 +22,7 @@ const REMINDER_INTERVAL = 3 * 60 * 60 * 1000; // 3 Horas
 
 export const startMonitor = async () => {
     console.log(`>>> [IA SENTINEL] Vigilância Iniciada (Check: 2m | Reminder: 3h)`);
+    console.log(`>>> [IA SENTINEL] Telegram: ${telegramConfigured() ? 'configurado' : 'NÃO configurado neste processo'}`);
     
     // Executa a primeira checagem 30s após o boot para dar tempo dos serviços subirem
     setTimeout(checkServices, 30000);

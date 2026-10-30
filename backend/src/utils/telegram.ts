@@ -12,7 +12,10 @@ export const telegramConfigured = () =>
 export const sendTelegram = async (text: string): Promise<boolean> => {
     const token = (process.env.TELEGRAM_BOT_TOKEN || '').trim();
     const chatId = (process.env.TELEGRAM_CHAT_ID || '').trim();
-    if (!token || !chatId) return false;
+    if (!token || !chatId) {
+        console.warn('[TELEGRAM] Não configurado neste processo (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID ausentes); mensagem ignorada.');
+        return false;
+    }
 
     const body = `${text}\n\n— ${os.hostname()} · ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`;
     try {
@@ -26,6 +29,7 @@ export const sendTelegram = async (text: string): Promise<boolean> => {
             console.error(`[TELEGRAM] Envio recusado (HTTP ${response.status}).`);
             return false;
         }
+        console.log('[TELEGRAM] Mensagem enviada.');
         return true;
     } catch (error) {
         console.error('[TELEGRAM] Falha no envio:', error instanceof Error ? error.message.replace(token, '***') : 'erro desconhecido');
