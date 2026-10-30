@@ -1,9 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, FileSearch, RefreshCw, Send, Sparkles, UserRound } from 'lucide-react';
+import { Bot, RefreshCw, Send, Sparkles, UserRound } from 'lucide-react';
 import { api } from '../services/api';
 import { storageGet, storageSet } from '../services/browserStorage';
-import { ActionButton, ModuleHeader, StatusChip, Surface } from '../components/ui/primitives';
-import { Badge, Button, Panel } from '../components/ui/kit';
+import { Badge, Button, Notice, PageHeader, Panel } from '../components/ui/kit';
 
 const STORAGE_KEY = 'sgcg_ai_assistant_thread_v1';
 
@@ -194,27 +193,23 @@ export default function AiAssistant() {
 
   return (
     <div className="flex min-h-[calc(100dvh-8rem)] flex-col gap-5 pb-8">
-      <ModuleHeader
-        eyebrow="Inteligencia operacional"
+      <PageHeader
         title="Assistente IA"
-        description="Conversa com o RAG do SGCG usando base local, fontes recuperadas e sinais vivos do ambiente."
-        badges={(
-          <>
-            <StatusChip label={`${ragStatus?.chunks ?? '—'} trechos`} tone="primary" />
-            <StatusChip label={`${ragStatus?.sources ?? '—'} fontes`} tone="primary" />
-            <StatusChip
-              label={`Prometheus ${ragStatus?.runtime?.prometheus_ready ? 'pronto' : 'verificar'}`}
-              tone={ragStatus?.runtime?.prometheus_ready ? 'success' : 'warning'}
-            />
-          </>
+        description="Conversa com o RAG do SGCG usando a base local, as fontes recuperadas e os sinais vivos do ambiente."
+        meta={(
+          <span className="flex flex-wrap gap-2">
+            <Badge tone="primary">{ragStatus?.chunks ?? '—'} trechos</Badge>
+            <Badge tone="primary">{ragStatus?.sources ?? '—'} fontes</Badge>
+            <Badge tone={ragStatus?.runtime?.prometheus_ready ? 'success' : 'warning'} dot>Prometheus {ragStatus?.runtime?.prometheus_ready ? 'pronto' : 'a verificar'}</Badge>
+          </span>
         )}
       />
 
       <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-        <Surface className="flex min-h-[68dvh] flex-col p-0" stripe={false}>
-          <div className="flex items-center justify-between gap-3 border-b border-outline/10 px-4 py-3 sm:px-5">
+        <section className="sgcg-card flex min-h-[68dvh] min-w-0 flex-col">
+          <div className="flex items-center justify-between gap-3 border-b border-outline px-4 py-3 sm:px-5">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/16 bg-primary/12 text-primary">
+              <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
                 <Bot size={19} />
               </div>
               <div className="min-w-0">
@@ -225,8 +220,8 @@ export default function AiAssistant() {
               </div>
             </div>
             <div className="flex gap-2">
-              <ActionButton tone="ghost" icon={RefreshCw} onClick={loadStatus}>Status</ActionButton>
-              <ActionButton tone="ghost" onClick={clearThread}>Limpar</ActionButton>
+              <Button variant="ghost" icon={RefreshCw} onClick={loadStatus}>Atualizar status</Button>
+              <Button variant="ghost" onClick={clearThread}>Limpar conversa</Button>
             </div>
           </div>
 
@@ -249,10 +244,10 @@ export default function AiAssistant() {
                       <div className="whitespace-pre-wrap text-sm leading-7">{message.content}</div>
                       {assistant && message.meta ? (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <StatusChip label={message.meta.external_ai_used ? 'Gemini' : 'Local'} tone={message.meta.external_ai_used ? 'success' : 'warning'} />
-                          <StatusChip label={message.meta.model || 'RAG'} tone="primary" />
-                          {message.meta.confidence ? <StatusChip label={`Confiança ${message.meta.confidence}`} tone="neutral" /> : null}
-                          {message.meta.runtime?.prometheus_ready ? <StatusChip label={`${message.meta.runtime.prometheus_targets_up} alvos up`} tone="success" /> : null}
+                          <Badge tone={message.meta.external_ai_used ? 'success' : 'warning'}>{message.meta.external_ai_used ? 'Gemini' : 'Local'}</Badge>
+                          <Badge tone="primary">{message.meta.model || 'RAG'}</Badge>
+                          {message.meta.confidence ? <Badge>Confiança {message.meta.confidence}</Badge> : null}
+                          {message.meta.runtime?.prometheus_ready ? <Badge tone="success">{message.meta.runtime.prometheus_targets_up} alvos no ar</Badge> : null}
                         </div>
                       ) : null}
                       {assistant && message.meta?.external_ai_error ? (
@@ -299,13 +294,9 @@ export default function AiAssistant() {
             </div>
           </div>
 
-          {error ? (
-            <div className="mx-4 mb-3 rounded-2xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning sm:mx-5">
-              {error}
-            </div>
-          ) : null}
+          {error ? <div className="mx-4 mb-3 sm:mx-5"><Notice tone="warning">{error}</Notice></div> : null}
 
-          <form onSubmit={handleSubmit} className="border-t border-outline/10 bg-surface-high/60 p-3 sm:p-4">
+          <form onSubmit={handleSubmit} className="border-t border-outline p-3 sm:p-4">
             <div className="mx-auto flex max-w-5xl gap-3">
               <textarea
                 value={question}
@@ -317,50 +308,43 @@ export default function AiAssistant() {
                   }
                 }}
                 rows={2}
+                aria-label="Pergunta ao assistente"
                 data-autofocus="true"
                 placeholder="Pergunte sobre VLAN, Hotspot, DNS, Prometheus, Grafana, QoS, bloqueios ou um sintoma operacional."
                 className="min-h-[var(--control-height)] flex-1 resize-none rounded-2xl border border-outline/14 bg-surface px-4 py-3 text-sm leading-6 text-on-surface focus:border-primary/45 focus:outline-none"
               />
-              <ActionButton type="submit" tone="primary" icon={Send} disabled={loading || !question.trim()} className="self-end">
+              <Button type="submit" variant="primary" icon={Send} disabled={loading || !question.trim()} className="self-end">
                 Enviar
-              </ActionButton>
+              </Button>
             </div>
           </form>
-        </Surface>
+        </section>
 
         <div className="space-y-4">
-          <Surface className="p-4" stripe={false}>
-            <div className="flex items-center gap-2 text-sm font-bold text-on-surface">
-              <Sparkles size={17} className="text-primary" />
-              Perguntas rápidas
-            </div>
-            <div className="mt-3 space-y-2">
+          <Panel title="Perguntas rápidas" description="Toque para enviar ao assistente.">
+            <div className="space-y-2">
               {starterPrompts.map((prompt) => (
                 <button
                   key={prompt}
                   type="button"
                   onClick={() => ask(prompt)}
                   disabled={loading}
-                  className="w-full rounded-2xl border border-outline/12 bg-surface-high/62 px-3 py-2 text-left text-xs font-semibold leading-5 text-on-surface/72 transition-colors hover:border-primary/18 hover:text-primary disabled:opacity-50"
+                  className="w-full rounded-lg border border-outline px-3 py-2 text-left text-[12.5px] font-medium leading-5 text-on-surface/80 transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-50"
                 >
                   {prompt}
                 </button>
               ))}
             </div>
-          </Surface>
+          </Panel>
 
-          <Surface className="p-4" stripe={false}>
-            <div className="flex items-center gap-2 text-sm font-bold text-on-surface">
-              <FileSearch size={17} className="text-primary" />
-              Estado do RAG
+          <Panel title="Estado do RAG" description="Base local indexada e monitoramento do ambiente.">
+            <div className="grid gap-2">
+              <Badge tone="primary">{ragStatus?.chunks ?? '—'} trechos indexados</Badge>
+              <Badge tone="primary">{ragStatus?.sources ?? '—'} fontes locais</Badge>
+              <Badge tone="success">Alvos do Prometheus no ar: {ragStatus?.runtime?.prometheus_targets_up ?? '—'}</Badge>
+              <Badge tone={(ragStatus?.runtime?.prometheus_targets_down || 0) ? 'danger' : 'success'}>Alvos fora do ar: {ragStatus?.runtime?.prometheus_targets_down ?? '—'}</Badge>
             </div>
-            <div className="mt-3 grid gap-2">
-              <StatusChip label={`${ragStatus?.chunks ?? '—'} trechos indexados`} tone="primary" />
-              <StatusChip label={`${ragStatus?.sources ?? '—'} fontes locais`} tone="primary" />
-              <StatusChip label={`${ragStatus?.runtime?.prometheus_targets_up ?? '—'} targets Prometheus up`} tone="success" />
-              <StatusChip label={`${ragStatus?.runtime?.prometheus_targets_down ?? '—'} targets down`} tone={(ragStatus?.runtime?.prometheus_targets_down || 0) ? 'danger' : 'success'} />
-            </div>
-          </Surface>
+          </Panel>
         </div>
       </div>
       <InsightsPanel />
