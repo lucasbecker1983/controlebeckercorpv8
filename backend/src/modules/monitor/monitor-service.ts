@@ -962,6 +962,28 @@ class MonitorService {
         const privateMac = vipRows.rows.filter((row) => row.mac && (parseInt(String(row.mac).slice(0, 2), 16) & 0x02) === 0x02);
         if (privateMac.length) alerts.push({ severity: 'info', title: plural(privateMac.length, 'VIP vinculado a MAC privado', '# VIPs vinculados a MAC privado'), detail: `${names(privateMac)}. O endereço do celular pode mudar; fixe o endereço Wi-Fi no aparelho e vincule de novo.`, link: '/politicas?tab=vips' });
 
+        // WhatsApp precisa funcionar em todas as VLANs: avisa se algum endereço das regras de liberação do WhatsApp
+        // (regras de liberação com "whatsapp" no nome) foi barrado pelo DNS nos últimos 15 minutos. Isso acontece
+        // quando uma regra de bloqueio nova passa a valer numa VLAN onde a liberação não está completa.
+        const waBlocked = await pool.query(
+            `SELECT d.query_name, d.vlan_id, COUNT(*)::int AS total
+               FROM dns_policy_events d
+              WHERE d.occurred_at > NOW() - INTERVAL '15 minutes' AND d.action = 'blocked'
+                AND EXISTS (
+                    SELECT 1 FROM domain_policy_entries e JOIN domain_policies p ON p.id = e.policy_id
+                     WHERE p.policy_type = 'allow' AND p.enabled AND p.name ILIKE '%whatsapp%'
+                       AND (d.query_name = e.normalized_domain OR d.query_name LIKE '%.' || e.normalized_domain))
+              GROUP BY 1, 2 ORDER BY total DESC LIMIT 6`,
+        ).catch(() => ({ rows: [] as any[] }));
+        if (waBlocked.rows.length) {
+            alerts.push({
+                severity: 'warning',
+                title: plural(waBlocked.rows.length, 'WhatsApp com 1 endereço bloqueado', 'WhatsApp com # endereços bloqueados'),
+                detail: `${waBlocked.rows.map((row) => `${row.query_name} (VLAN ${row.vlan_id ?? '?'}, ${row.total}x)`).join(', ')}. Confira a regra de liberação do WhatsApp para essa VLAN.`,
+                link: '/politicas?tab=regras',
+            });
+        }
+
         const order = { critical: 0, warning: 1, info: 2 };
         return alerts.sort((a, b) => order[a.severity] - order[b.severity]);
     }
