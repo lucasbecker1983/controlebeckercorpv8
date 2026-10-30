@@ -144,6 +144,8 @@ create_backup() {
     set_status 'running' 'packing' 'Empacotando código, configurações e dados persistentes sem artefatos reconstruíveis.'
     printf '{\n  "format": 2,\n  "database": "%s",\n  "database_dump": "recovery/database.dump",\n  "database_sha256": "%s",\n  "created_at": "%s",\n  "excluded": ["node_modules", "dist", ".git", "backups", "logs", "cache", "coverage"],\n  "excluded_table_data": ["dns_policy_events", "access_events", "navigation_events"]\n}\n' \
         "$DB_NAME" "$(sha256sum "$dump" | awk '{print $1}')" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$manifest"
+    # O backup leva os .env e dados pessoais: nasce legível só pelo root (a ACL padrão da pasta não vale com modo 600).
+    install -m 600 /dev/null "$archive_tmp"
     tar -czf "$archive_tmp" \
         --exclude='node_modules' --exclude='dist' --exclude='.git' --exclude='backups' --exclude='*.log' --exclude='.cache' --exclude='coverage' \
         -C "$PROJECT_ROOT" "${payload[@]}" \
@@ -151,6 +153,7 @@ create_backup() {
     archive_is_safe "$archive_tmp"
     mv "$archive_tmp" "$BACKUP_DIR/$filename"
     sha256sum "$BACKUP_DIR/$filename" > "$BACKUP_DIR/$filename.sha256"
+    chmod 600 "$BACKUP_DIR/$filename" "$BACKUP_DIR/$filename.sha256"
     set_status 'success' 'complete' 'Backup validado e concluído; ele exclui dependências e builds reconstruíveis.'
     log "Backup concluído: $filename"
 }
