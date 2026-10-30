@@ -53,6 +53,9 @@ export const env = {
     unboundPolicyConf: process.env.UNBOUND_POLICY_CONF || '/etc/unbound/unbound.conf.d/becker_policy_compiler.conf',
     unboundConfigPath: process.env.UNBOUND_CONFIG_PATH || '/etc/unbound/unbound.conf',
     vipCleanDnsPort: toNumber(process.env.VIP_CLEAN_DNS_PORT, 5355),
+    // Exceção antiga do PontoRH: OpenDNS direto para TODAS as VLANs (escapava do filtro de DNS).
+    // Desligada em 29/10/2026 a pedido do responsável; VIPs usam OpenDNS pelas regras próprias de cada um.
+    pontorhOpenDnsAllVlans: toBoolean(process.env.SGCG_PONTORH_OPENDNS_TODAS_VLANS, false),
     proxyTestTargetIp: process.env.PROXY_TEST_TARGET_IP || '',
     proxyTestTargetIpSingle: process.env.PROXY_TEST_TARGET_IP_SINGLE || '',
     proxyLocalResolverIp: process.env.PROXY_LOCAL_RESOLVER_IP || '127.0.0.1',

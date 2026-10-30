@@ -766,6 +766,16 @@ class DnsContingencyService {
         ] as Array<[string, string, string[]]>)));
         const applied: string[] = [];
 
+        // Exceção desligada: remove as regras globais e não recria. Só os VIPs seguem com OpenDNS,
+        // pelas regras sgcg-vip-bypass de cada um (com MAC quando vinculado).
+        if (!env.pontorhOpenDnsAllVlans) {
+            const removed: string[] = [];
+            for (const [table, chain, args] of rules) {
+                if (await this.deleteAllIptablesRules(table, chain, args)) removed.push(`${table}/${chain} ${args.join(' ')}`);
+            }
+            return { mode: 'disabled', applied, removed };
+        }
+
         // Reinsere no topo para que a excecao do PontoRH sempre vença o REDIRECT global.
         for (const [table, chain, args] of [...rules].reverse()) {
             await this.deleteAllIptablesRules(table, chain, args);
@@ -796,7 +806,9 @@ class DnsContingencyService {
         const lines = [
             EARLY_BEGIN_MARKER,
             '# VIPs sempre saem antes dos bloqueios comuns; por padrao, DNS classico e auditado no resolvedor limpo 5355.',
-            '# A excecao PontoRH/OpenDNS permanece fora da captura pelo bloco SGCG_PONTORH_OPENDNS.',
+            env.pontorhOpenDnsAllVlans
+                ? '# A excecao PontoRH/OpenDNS permanece fora da captura pelo bloco SGCG_PONTORH_OPENDNS.'
+                : '# Excecao PontoRH/OpenDNS desativada: OpenDNS so para VIPs (DNS e DoH bloqueados aos demais).',
             ...vipForwardRules,
             '',
             '# WhatsApp/Web WhatsApp compartilha infraestrutura Meta; nao bloquear faixas Meta ou portas push aqui.',
@@ -810,7 +822,8 @@ class DnsContingencyService {
             '# VLANs em bypass emergencial recebem ACCEPT antes do bloqueio global.',
             ...emergencyVlans.map((v) => `-A ufw-before-forward -i ${v.interface_name} -p tcp --dport 853 -j ACCEPT`),
             `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -p udp --dport 443 -j REJECT --reject-with icmp-port-unreachable`,
-            ...DOH_BLOCK_SERVERS.map((ip) => `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d ${ip}/32 -p tcp --dport 443 -j REJECT --reject-with tcp-reset`),
+            ...[...DOH_BLOCK_SERVERS, ...(env.pontorhOpenDnsAllVlans ? [] : this.getResolverAddresses(PERMANENT_WORK_DNS_PROVIDERS))]
+                .map((ip) => `-A ufw-before-forward -i enp6s0+ -o ${env.wanInterface} -d ${ip}/32 -p tcp --dport 443 -j REJECT --reject-with tcp-reset`),
             `-A ufw-before-forward -i enp6s0+ -p tcp --dport 853 -j REJECT --reject-with tcp-reset`,
             EARLY_END_MARKER,
         ];
@@ -819,6 +832,14 @@ class DnsContingencyService {
 
     buildPontorhOpenDnsNatBlock(configuredVlans: VlanRow[]) {
         const resolvers = this.getResolverAddresses(PERMANENT_WORK_DNS_PROVIDERS);
+        if (!env.pontorhOpenDnsAllVlans) {
+            return [
+                PONTORH_BEGIN_MARKER,
+                '# Excecao global do PontoRH/OpenDNS DESATIVADA (SGCG_PONTORH_OPENDNS_TODAS_VLANS=false).',
+                '# Nao-VIPs tem o DNS para o OpenDNS redirecionado ao Unbound; VIPs usam OpenDNS pelas regras proprias.',
+                PONTORH_END_MARKER,
+            ].join('\n');
+        }
         const lines = [
             PONTORH_BEGIN_MARKER,
             '# Regra inegociavel SGCG: PontoRH usa OpenDNS hardcoded e precisa sair direto.',
