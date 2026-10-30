@@ -845,7 +845,6 @@ const CRITICAL_VLAN_GATEWAYS = [
     { vlan_id: 50, gateway: '192.168.50.1' },
     { vlan_id: 70, gateway: '192.168.70.1' },
     { vlan_id: 80, gateway: '192.168.80.1' },
-    { vlan_id: 99, gateway: '192.168.99.1' },
 ];
 const CRITICAL_SERVICES = [
     {

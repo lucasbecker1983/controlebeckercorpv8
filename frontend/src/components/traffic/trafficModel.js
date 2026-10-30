@@ -50,7 +50,7 @@ export const parseColor = (value, fallback) => {
 };
 export const rgba = (c, a = 1) => `rgba(${c.r},${c.g},${c.b},${Math.max(0, Math.min(1, (c.a ?? 1) * a))})`;
 
-const VLAN_IDS = [10, 30, 40, 50, 70, 80, 99];
+const VLAN_IDS = [10, 30, 40, 50, 70, 80];
 export function readTheme() {
   const cs = getComputedStyle(document.documentElement);
   const v = (name, fb) => parseColor(cs.getPropertyValue(name), fb);

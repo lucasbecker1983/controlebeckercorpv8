@@ -24,8 +24,10 @@ const DEFAULT_VLAN_NAMES: Record<number, string> = {
     50: 'SINE',
     70: 'Visitantes',
     80: 'VoIP',
-    99: 'Infraestrutura',
 };
+
+// VLANs que existem na rede mas saíram do escopo do SGCG: não entram no monitor, no mapa nem nos alertas.
+const VLANS_FORA_DO_ESCOPO = new Set([99]);
 
 type Counter = { rx: number; tx: number };
 type VlanRuntime = {
@@ -194,6 +196,7 @@ class MonitorService {
             return fs.readdirSync('/sys/class/net')
                 .filter((name) => name.startsWith(prefix) && /^\d+$/.test(name.slice(prefix.length)))
                 .map((name) => ({ iface: name, id: Number(name.slice(prefix.length)) }))
+                .filter(({ id }) => !VLANS_FORA_DO_ESCOPO.has(id))
                 .sort((a, b) => a.id - b.id);
         } catch {
             return [];
@@ -921,7 +924,7 @@ class MonitorService {
             if (!vlan.internal_exempt && vlan.internal_down > 5 && vlan.limit_down && vlan.limit_down < 1000) {
                 alerts.push({ severity: 'info', title: `Tráfego interno contando no limite da VLAN ${vlan.id}`, detail: `${round(vlan.internal_down, 1)} Mbps entre VLANs (ex.: câmeras) passam pela fila de internet de ${vlan.limit_down} Mbps.`, link: '/mapa-trafego' });
             }
-            if (businessHours && vlan.neighbors === 0 && !vlan.exempt && vlan.id !== 99) {
+            if (businessHours && vlan.neighbors === 0 && !vlan.exempt) {
                 alerts.push({ severity: 'warning', title: `VLAN ${vlan.id} (${vlan.name}) sem nenhum dispositivo`, detail: 'Nenhum equipamento conectado em horário de expediente. Verifique switch, cabo ou ponto de acesso.', link: '/rede?tab=vlans' });
             }
         }

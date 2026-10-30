@@ -11,7 +11,6 @@ export const VLAN_GATEWAYS: Record<string, string> = {
     'enp6s0.50': '192.168.50.1',
     'enp6s0.70': '192.168.70.1',
     'enp6s0.80': '192.168.80.1',
-    'enp6s0.99': '192.168.99.1',
 };
 
 export const INTERCEPT_VLANS = ['enp6s0.10', 'enp6s0.30', 'enp6s0.50', 'enp6s0.70'] as const;
@@ -32,7 +31,6 @@ const defaultBypassVlanMap = () => ({
     'enp6s0.50': false,
     'enp6s0.70': false,
     'enp6s0.80': true,
-    'enp6s0.99': true,
 });
 
 export const defaultBypassState = (): BypassState => ({

@@ -746,13 +746,6 @@ class BlockingReleaseService {
                 subnetCidr: '192.168.80.0/24',
                 notes: 'VLAN desligada do padrão: VoIP fora de monitoramento, liberações e bloqueios.',
             },
-            {
-                vlanId: 99,
-                label: 'Infra fora do padrão',
-                interfaceName: 'enp6s0.99',
-                subnetCidr: '192.168.99.0/24',
-                notes: 'VLAN desligada do padrão operacional do módulo.',
-            },
         ];
 
         await pool.query(`DELETE FROM blocking_policies`);

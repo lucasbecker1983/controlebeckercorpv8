@@ -11,7 +11,7 @@ export const brSend = (method, path, body) => api.request({ method, url: `${BASE
 // Recompila as regras e recarrega DNS e firewall. Leva de alguns segundos a 1 minuto.
 export const applyRules = (body) => brSend('post', 'apply', body);
 
-export const VLAN_NAMES = { 10: 'Secretaria', 30: 'Celulares', 40: 'Câmeras', 50: 'SINE', 70: 'Visitantes', 80: 'VoIP', 99: 'Infraestrutura' };
+export const VLAN_NAMES = { 10: 'Secretaria', 30: 'Celulares', 40: 'Câmeras', 50: 'SINE', 70: 'Visitantes', 80: 'VoIP' };
 export const vlanName = (id, fallback) => VLAN_NAMES[Number(id)] || fallback || `VLAN ${id}`;
 
 export function VlanChip({ id, label, muted = false, small = false }) {

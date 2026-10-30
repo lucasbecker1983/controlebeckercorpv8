@@ -6,7 +6,7 @@ Uso:
     sudo python3 bypass_vlan.py <vlan_id>           # ativa bypass
     sudo python3 bypass_vlan.py <vlan_id> --undo    # restaura enforcement
 
-VLANs gerenciadas: 10, 30, 40, 50, 70, 80, 99
+VLANs gerenciadas: 10, 30, 40, 50, 70, 80
 
 O script atua apenas em runtime (iptables/tc). Nenhum arquivo é editado.
 O reboot restaura o estado UFW persistente automaticamente.
@@ -28,7 +28,6 @@ VLANS: dict[int, dict[str, str]] = {
     50:  {"iface": "enp6s0.50",  "subnet": "192.168.50.0/24",  "ifb": "ifb50",  "label": "SINE"},
     70:  {"iface": "enp6s0.70",  "subnet": "192.168.70.0/24",  "ifb": "ifb70",  "label": "Visitantes"},
     80:  {"iface": "enp6s0.80",  "subnet": "192.168.80.0/24",  "ifb": "ifb80",  "label": "VOIP"},
-    99:  {"iface": "enp6s0.99",  "subnet": "192.168.99.0/24",  "ifb": "ifb99",  "label": "Gestao"},
 }
 
 

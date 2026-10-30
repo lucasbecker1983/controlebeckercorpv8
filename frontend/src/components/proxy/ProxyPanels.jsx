@@ -13,7 +13,6 @@ const VLANS = [
   { key: 'VLAN50', label: 'VLAN 50' },
   { key: 'VLAN70', label: 'VLAN 70' },
   { key: 'VLAN80', label: 'VLAN 80' },
-  { key: 'VLAN99', label: 'VLAN 99' },
 ];
 
 function fmt(value) {

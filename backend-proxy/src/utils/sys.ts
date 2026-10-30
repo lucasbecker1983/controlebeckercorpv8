@@ -1,7 +1,7 @@
 import { exec } from 'child_process';
 
-const VLAN_IFACES = '(enp6s0\\.10|enp6s0\\.30|enp6s0\\.40|enp6s0\\.50|enp6s0\\.70|enp6s0\\.80|enp6s0\\.99)';
-const VLAN_GATEWAYS = '(192\\.168\\.(10|30|40|50|70|80|99)\\.1)';
+const VLAN_IFACES = '(enp6s0\\.10|enp6s0\\.30|enp6s0\\.40|enp6s0\\.50|enp6s0\\.70|enp6s0\\.80)';
+const VLAN_GATEWAYS = '(192\\.168\\.(10|30|40|50|70|80)\\.1)';
 
 export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'systemctl', pattern: /^(sudo\s+)?systemctl (is-active|start|stop|restart|reload|show) [\w@.-]+(\s+--property=[\w-]+)?(\s+\|\|\s+(echo\s+inactive|true))?$/ },
