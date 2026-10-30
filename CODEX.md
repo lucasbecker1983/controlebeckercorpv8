@@ -8606,3 +8606,5 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Teste: na porta 5355 (VIPs) os três nomes passaram a NOERROR; na porta 53 (rede comum) seguem NXDOMAIN; adulto, malware e outros DNS criptografados (`dns.google`) seguem NXDOMAIN para VIPs também. O firewall dos VIPs já libera UDP/TCP 443 (QUIC).
 - Para valer num aparelho, ele precisa ser VIP. Nenhum dos 5 iPhones que tentaram é VIP hoje, e os dois ligados usam MAC privado (aleatório).
 - Para desfazer: remover o bloco `rpz.vip-allow` de `/etc/unbound/sgcg-vip-clean.conf` (ou restaurar a cópia) e `systemctl restart sgcg-vip-dns`.
+
+- Em 30/10, a pedido do responsável, dois iPhones da VLAN 10 viraram VIP para usar a Retransmissão Privada (não se sabia qual era o do chefe, então foram os dois). Ambos vinculados ao aparelho (MAC privado), criados pelo serviço de exceções (auditado) e com revisão em 29/11/2026, para desativar o que não for do chefe. Conferido: regras de firewall e desvio de DNS para a porta 5355 presas ao MAC de cada um; 26 VIPs ativos, 182 regras no FORWARD e 182 no NAT. Os identificadores dos aparelhos ficam só no banco e na tela de VIPs, não neste arquivo.
