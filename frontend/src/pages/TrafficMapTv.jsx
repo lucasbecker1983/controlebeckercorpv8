@@ -16,6 +16,8 @@ import { F_BODY, F_DISPLAY, F_MONO, MIN_W, buildModel, fmt, layoutModel, limitDe
 
 const POLL_TV_MS = 2000;
 const ROTATE_MS = 20000;
+const SELECT_TIMEOUT_MS = 45000; // sem mexer por este tempo, o detalhe fecha e a TV volta ao painel normal
+const selKey = (x) => (x ? (x.t === 'site' ? `site:${x.key}` : x.key) : null);
 const MIN_STEP = 16; // altura mínima, em px lógicos, de cada linha de IP
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -54,6 +56,19 @@ const TV_CSS = `
 .tv-barline { grid-column:1/-1; height:.28em; border-radius:2px; background:var(--md-surface); overflow:hidden; }
 .tv-barline i { display:block; height:100%; border-radius:2px; }
 .tv-empty { font-size:.7em; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
+.tv.idle canvas { cursor:none !important; }
+.tv-rank li.pick { cursor:pointer; border-radius:.35em; padding:.1em .3em; margin:0 -.3em; }
+.tv-rank li.pick:hover, .tv-rank li.sel { background:color-mix(in srgb, var(--vlan-80) 14%, transparent); }
+.tv-hint { font-size:.62em; color:color-mix(in srgb, var(--md-on-surface) 55%, transparent); margin-top:auto; }
+.tv-detail { flex:1; min-height:0; overflow:hidden; display:flex; flex-direction:column; gap:.35em; border-top:1px solid var(--md-outline); padding-top:.7em; position:relative; }
+.tv-detail h2 { margin:0; padding-right:2.2em; font-family:${F_DISPLAY}; font-stretch:90%; font-size:1.35em; font-weight:750; line-height:1.1; overflow-wrap:anywhere; }
+.tv-detail h3 { margin:.5em 0 .1em; font-size:.62em; font-family:${F_MONO}; text-transform:uppercase; letter-spacing:.07em; font-weight:600; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
+.tv-detail .tv-muted { font-size:.75em; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
+.tv-detail .tv-sum { font-family:${F_MONO}; font-size:.95em; font-variant-numeric:tabular-nums; }
+.tv-crit { color:var(--md-danger); font-weight:700; font-size:.75em; }
+.tv-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.8em; font-size:.78em; align-items:baseline; }
+.tv-close { position:absolute; right:0; top:.5em; width:1.9em; height:1.9em; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--md-outline); border-radius:.45em; background:var(--md-container); color:var(--md-on-surface); cursor:pointer; }
+.tv-more { font-size:.65em; color:color-mix(in srgb, var(--md-on-surface) 55%, transparent); }
 .tv-legend { display:flex; flex-wrap:wrap; gap:.25em 1.1em; padding:.5em 1em; border-top:1px solid var(--md-outline); font-size:.62em; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
 .tv-legend span { display:inline-flex; align-items:center; gap:.45em; }
 .tv-legend i { width:.8em; height:.8em; border-radius:50%; display:inline-block; }
@@ -63,6 +78,90 @@ const TV_CSS = `
 .tv-ctl button { font:inherit; font-size:.7em; font-weight:700; display:inline-flex; align-items:center; gap:.4em; background:var(--md-container); color:var(--md-on-surface); border:1px solid var(--md-outline); border-radius:.5em; padding:.5em .9em; cursor:pointer; box-shadow:0 2px 10px rgba(0,0,0,.25); }
 @media (prefers-reduced-motion: reduce) { .tv-dot { animation:none; } }
 `;
+
+/*
+ * Detalhe ao clicar num nó: o que o IP, a VLAN ou o site está trafegando agora (mesmos dados da página normal).
+ * `n` é quantas linhas cabem na altura da TV; o excedente vira "e mais N".
+ */
+function TvDetail({ sel, model, view, n, onClose }) {
+  const vName = (id) => model.vlans.find((v) => v.id === id)?.name || '';
+  const siteName = (key) => (key === '__outros__' ? 'Outros destinos' : model.sites.find((t) => t.key === key)?.name || key);
+  const rows = (list, render) => (
+    <>
+      {list.slice(0, n).map(render)}
+      {list.length > n ? <div className="tv-more">e mais {list.length - n}</div> : null}
+    </>
+  );
+
+  let body = null;
+  if (sel.t === 'dev') {
+    const d = model.devices.find((x) => x.ip === sel.ip) || view.devices.find((x) => x.ip === sel.ip);
+    if (!d) return null;
+    const dests = [...d.flows].sort((a, b) => (b.d + b.u) - (a.d + a.u));
+    body = (
+      <>
+        <h2 className="tv-mono">{d.ip}</h2>
+        <div className="tv-muted">
+          {d.agg ? `${d.members.length} IPs agrupados` : d.kind} · VLAN {d.vlan} {vName(d.vlan)}{d.qosVip ? ' · faixa prioritária' : ''}
+        </div>
+        {d.ip === model.topIp ? <div className="tv-crit">Maior consumo da rede agora</div> : null}
+        <div className="tv-sum">↓{fmt(d.down)} ↑{fmt(d.up)} Mbps</div>
+        <div className="tv-muted">internet ↓{fmt(d.inetDown)} ↑{fmt(d.inetUp)} · interno ↓{fmt(d.intDown)} ↑{fmt(d.intUp)}</div>
+        {d.agg ? (
+          <>
+            <h3>IPs agrupados</h3>
+            {rows(d.members, (m) => (
+              <div className="tv-row" key={m.ip}><span className="tv-name tv-mono">{m.ip}</span><span className="tv-mb">↓{fmt(m.down)} ↑{fmt(m.up)}</span></div>
+            ))}
+          </>
+        ) : null}
+        <h3>Está trafegando com</h3>
+        {dests.length ? rows(dests, (f) => (
+          <div className="tv-row" key={f.site}><span className="tv-name">{siteName(f.site)}</span><span className="tv-mb">↓{fmt(f.d)} ↑{fmt(f.u)}</span></div>
+        )) : <div className="tv-muted">Sem destinos agora.</div>}
+      </>
+    );
+  } else if (sel.t === 'site') {
+    const s = model.sites.find((t) => t.key === sel.key);
+    if (!s) return null;
+    const who = model.devices.filter((d) => d.flows.some((f) => f.site === s.key)).sort((a, b) => b.total - a.total);
+    body = (
+      <>
+        <h2>{s.name}</h2>
+        {s.dom ? <div className="tv-muted tv-mono">{s.dom}</div> : null}
+        <div className="tv-sum">↓{fmt(s.down)} ↑{fmt(s.up)} Mbps</div>
+        {s.internal ? <div className="tv-muted">Interno: não passa pelo link de internet</div> : null}
+        <h3>Quem está puxando</h3>
+        {rows(who, (d) => {
+          const f = d.flows.find((x) => x.site === s.key);
+          return <div className="tv-row" key={d.ip}><span className="tv-name tv-mono">{d.ip}</span><span className="tv-mb">↓{fmt(f?.d)} ↑{fmt(f?.u)}</span></div>;
+        })}
+      </>
+    );
+  } else if (sel.t === 'vlan') {
+    const v = model.vlans.find((x) => x.id === sel.id);
+    if (!v) return null;
+    const ips = model.devices.filter((d) => d.vlan === v.id).sort((a, b) => b.total - a.total);
+    body = (
+      <>
+        <h2>VLAN {v.id} · {v.name}</h2>
+        <div className="tv-sum">↓{fmt(v.down)} ↑{fmt(v.up)} Mbps</div>
+        <div className="tv-muted">Internet: {fmt(v.inet)}{v.limit ? ` de ${v.limit} Mbps do limite de QoS` : ''}{v.internal > 0.05 ? ` · interno ${fmt(v.internal)} Mbps` : ''}</div>
+        <div className="tv-muted">{v.count} IP{v.count === 1 ? '' : 's'} com tráfego · {v.neighbors} aparelhos ligados</div>
+        <h3>IPs com tráfego</h3>
+        {ips.length ? rows(ips, (d) => (
+          <div className="tv-row" key={d.ip}><span className="tv-name tv-mono">{d.ip === model.topIp ? <span className="tv-dot" /> : null}{d.ip}</span><span className="tv-mb">↓{fmt(d.down)} ↑{fmt(d.up)}</span></div>
+        )) : <div className="tv-muted">Sem tráfego agora.</div>}
+      </>
+    );
+  }
+  return (
+    <div className="tv-detail" role="region" aria-label="Detalhe do item selecionado">
+      <button type="button" className="tv-close" onClick={onClose} aria-label="Fechar o detalhe" title="Fechar (Esc)"><X size="1.1em" /></button>
+      {body}
+    </div>
+  );
+}
 
 function useStageSize(ref) {
   const [size, setSize] = useState({ w: 1280, h: 720 });
@@ -120,6 +219,8 @@ export default function TrafficMapTv() {
   const [auto, setAuto] = useState(startMode !== 'download' && startMode !== 'upload');
   const [mode, setMode] = useState(startMode === 'upload' ? 'u' : 'd');
   const [idle, setIdle] = useState(false);
+  const [sel, setSel] = useState(null);
+  const lastActivity = useRef(Date.now());
   const [fullscreen, setFullscreen] = useState(Boolean(document.fullscreenElement));
   const [now, setNow] = useState(Date.now());
   const stageRef = useRef(null);
@@ -155,6 +256,7 @@ export default function TrafficMapTv() {
   useEffect(() => {
     let timer = 0;
     const wake = () => {
+      lastActivity.current = Date.now();
       setIdle(false);
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setIdle(true), 4000);
@@ -162,6 +264,20 @@ export default function TrafficMapTv() {
     wake();
     ['mousemove', 'mousedown', 'keydown', 'touchstart'].forEach((ev) => window.addEventListener(ev, wake, { passive: true }));
     return () => { window.clearTimeout(timer); ['mousemove', 'mousedown', 'keydown', 'touchstart'].forEach((ev) => window.removeEventListener(ev, wake)); };
+  }, []);
+
+  // Detalhe aberto e ninguém mexendo: fecha sozinho e a TV volta ao painel normal.
+  useEffect(() => {
+    if (!sel) return undefined;
+    const t = window.setInterval(() => {
+      if (Date.now() - lastActivity.current > SELECT_TIMEOUT_MS) setSel(null);
+    }, 3000);
+    return () => window.clearInterval(t);
+  }, [sel]);
+
+  const select = useCallback((next) => {
+    lastActivity.current = Date.now();
+    setSel((cur) => (cur && next && selKey(cur) === selKey(next) ? null : next));
   }, []);
 
   const toggleFullscreen = useCallback(() => {
@@ -173,7 +289,8 @@ export default function TrafficMapTv() {
     const onKey = (e) => {
       if (e.target?.tagName === 'INPUT') return;
       const k = e.key.toLowerCase();
-      if (k === 'f') toggleFullscreen();
+      if (e.key === 'Escape') setSel(null);
+      else if (k === 'f') toggleFullscreen();
       else if (k === 'm') { setAuto(false); setMode((m) => (m === 'd' ? 'u' : 'd')); }
       else if (k === 'a') setAuto((a) => !a);
     };
@@ -202,6 +319,16 @@ export default function TrafficMapTv() {
   const topIps = model ? [...model.devices].sort((a, b) => b.total - a.total).slice(0, listN) : [];
   const topSites = model ? model.sites.filter((t) => !t.internal && t.key !== '__outros__').slice(0, listN) : [];
   const topDev = model?.topIp ? model.devices.find((d) => d.ip === model.topIp) : null;
+
+  // Item selecionado (clique no mapa ou nos rankings). Se ele sumiu dos dados, a seleção se desfaz.
+  const found = sel && model && (
+    (sel.t === 'dev' && (model.devices.some((d) => d.ip === sel.ip) || view?.devices.some((d) => d.ip === sel.ip)))
+    || (sel.t === 'site' && model.sites.some((t) => t.key === sel.key))
+    || (sel.t === 'vlan' && model.vlans.some((v) => v.id === sel.id))
+  );
+  useEffect(() => { if (sel && model && !found) setSel(null); }, [sel, model, found]);
+  const hasDetail = Boolean(sel && found);
+  const detailN = clamp(Math.floor((size.h - u * 14) / (u * 1.55)), 5, 16);
 
   const noConn = error && lastOkAt && now - lastOkAt > 15000;
   const dataAgeS = data?.updated_at ? Math.round((now - Number(data.updated_at)) / 1000) : 0;
@@ -233,7 +360,9 @@ export default function TrafficMapTv() {
             LW={LW}
             scale={k}
             mode={mode}
-            sel={null}
+            sel={hasDetail ? sel : null}
+            interactive
+            onSelect={select}
             LINK={LINK}
             fps={30}
             dprMax={dprMax}
@@ -254,11 +383,14 @@ export default function TrafficMapTv() {
               </div>
             ))}
           </div>
+          {hasDetail ? <TvDetail sel={sel} model={model} view={view} n={detailN} onClose={() => setSel(null)} /> : null}
+          {!hasDetail ? (
+            <>
           <div className="tv-rank">
             <h3>Quem mais consome</h3>
             <ol>
               {topIps.map((d) => (
-                <li key={d.ip}>
+                <li key={d.ip} className="pick" onClick={() => select({ t: 'dev', ip: d.ip, key: `dev:${d.ip}` })}>
                   <span className="tv-name tv-mono">{d.ip === model.topIp ? <span className="tv-dot" /> : null}{d.ip}</span>
                   <span className="tv-mb">↓{fmt(d.down)} ↑{fmt(d.up)}</span>
                   <span className="tv-barline"><i style={{ width: `${Math.min(100, (d.total / LINK) * 300).toFixed(1)}%`, background: `var(--vlan-${d.vlan}, var(--vlan-80))` }} /></span>
@@ -271,7 +403,7 @@ export default function TrafficMapTv() {
             <h3>Sites mais pesados</h3>
             <ol>
               {topSites.map((t) => (
-                <li key={t.key}>
+                <li key={t.key} className="pick" onClick={() => select({ t: 'site', key: t.key })}>
                   <span className="tv-name">{t.name}</span>
                   <span className="tv-mb">{fmt(t.val)} Mbps · {pct(t.val, LINK)}%</span>
                   <span className="tv-barline"><i style={{ width: `${Math.min(100, (t.val / LINK) * 300).toFixed(1)}%`, background: 'var(--vlan-80)' }} /></span>
@@ -280,6 +412,9 @@ export default function TrafficMapTv() {
               {!topSites.length ? <li className="tv-empty">Nenhum site de internet agora.</li> : null}
             </ol>
           </div>
+          <p className="tv-hint">Clique num IP, VLAN ou site do mapa para ver o que ele está trafegando.</p>
+            </>
+          ) : null}
         </aside>
       </div>
 

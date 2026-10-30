@@ -263,6 +263,8 @@ export function limitDevices(m, max) {
       hostname: '',
       qosVip: false,
       agg: true,
+      // quem foi agrupado (para o detalhe ao clicar na linha "+N IPs menores")
+      members: list.map((d) => ({ ip: d.ip, down: d.down, up: d.up, total: d.total })).sort((a, b) => b.total - a.total),
       down: sum('down'),
       up: sum('up'),
       intDown: sum('intDown'),

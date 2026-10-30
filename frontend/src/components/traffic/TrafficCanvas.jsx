@@ -98,6 +98,8 @@ export default function TrafficCanvas({
       });
       const wan = wanPos;
       nodesRef.current = { devices, vlans, sites };
+      // Posição dos nós, só para diagnóstico e testes automáticos (não é usada pela tela).
+      canvas.__map = { nodes: nodesRef.current, LW: LWd, scale: k };
       const s = st.sel;
       const selDev = s?.t === 'dev' ? devices.find((d) => d.ip === s.ip) : null;
       const usesSite = (d, key) => d.flows.some((f) => f.site === key);
