@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BadgeCheck, CalendarClock, LayoutGrid, ListChecks, Loader2, Plus, RefreshCw, SlidersHorizontal, Timer } from 'lucide-react';
+import { BadgeCheck, CalendarClock, LayoutGrid, ListChecks, Loader2, Plus, RefreshCw, SlidersHorizontal, Timer, UserCheck } from 'lucide-react';
 import { api } from '../services/api';
 import { Button, Kpi, KpiRow, Notice, PageHeader, Tabs, errorMessage, toast, useUrlTab } from '../components/ui/kit';
 import { brGet, timeBR } from '../components/policies/shared';
@@ -8,6 +8,7 @@ import PolicyOverview from '../components/policies/PolicyOverview';
 import SiteRules from '../components/policies/SiteRules';
 import VipList, { reviewState, vipBinding } from '../components/policies/VipList';
 import TempReleases, { isActiveRelease } from '../components/policies/TempReleases';
+import CategoryExceptions from '../components/policies/CategoryExceptions';
 import SchedulesPanel from '../components/network/SchedulesPanel';
 import BlockingReleases from './BlockingReleases';
 
@@ -21,7 +22,7 @@ const LEGACY_TABS = { policies: 'regras', sporadic: 'temporarias', overview: 'vi
 
 export default function AccessPolicies() {
   const [params, setParams] = useSearchParams();
-  const [data, setData] = useState({ rules: [], vlans: [], exceptions: [], sporadic: [], cards: null });
+  const [data, setData] = useState({ rules: [], vlans: [], exceptions: [], sporadic: [], categoryExceptions: [], cards: null });
   const [devices, setDevices] = useState(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -40,11 +41,12 @@ export default function AccessPolicies() {
 
   const load = useCallback(async () => {
     try {
-      const [rules, vlans, exceptions, sporadic] = await Promise.all([
+      const [rules, vlans, exceptions, sporadic, categoryExceptions] = await Promise.all([
         brGet('domain-policies'),
         brGet('vlans'),
         brGet('exceptions'),
         brGet('sporadic-exceptions'),
+        brGet('category-exceptions').catch(() => []),
       ]);
       // Os números do topo (overview) são lentos: chegam depois, sem segurar a tela.
       brGet('overview')
@@ -56,6 +58,7 @@ export default function AccessPolicies() {
         vlans: Array.isArray(vlans) ? vlans : [],
         exceptions: Array.isArray(exceptions) ? exceptions : [],
         sporadic: Array.isArray(sporadic) ? sporadic : [],
+        categoryExceptions: Array.isArray(categoryExceptions) ? categoryExceptions : [],
       }));
       setLoadError('');
     } catch (e) {
@@ -95,6 +98,7 @@ export default function AccessPolicies() {
     { key: 'visao', label: 'Visão geral', icon: LayoutGrid },
     { key: 'regras', label: 'Regras de sites', icon: ListChecks, count: data.rules.length },
     { key: 'vips', label: 'VIPs', icon: BadgeCheck, count: activeVips.length },
+    { key: 'excecoes', label: 'Exceções por IP', icon: UserCheck, count: data.categoryExceptions.filter((e) => e.active).length || null },
     { key: 'temporarias', label: 'Liberações temporárias', icon: Timer, count: activeReleases.length || null },
     { key: 'horarios', label: 'Horários', icon: CalendarClock },
     { key: 'vlans', label: 'Ajustes das VLANs', icon: SlidersHorizontal },
@@ -136,7 +140,8 @@ export default function AccessPolicies() {
 
       <Tabs tabs={TABS} value={tab} onChange={setTab} />
 
-      {loading && ['visao', 'regras', 'vips', 'temporarias'].includes(tab) ? (
+      {!loading && tab === 'excecoes' ? <CategoryExceptions items={data.categoryExceptions} devices={devices} runChange={runChange} busy={busy} /> : null}
+      {loading && ['visao', 'regras', 'vips', 'excecoes', 'temporarias'].includes(tab) ? (
         <div className="sgcg-card flex items-center justify-center gap-2 px-4 py-12 text-sm text-on-surface/55" role="status">
           <Loader2 size={16} className="animate-spin" /> Carregando regras, VIPs e liberações...
         </div>

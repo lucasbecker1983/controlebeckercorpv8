@@ -139,6 +139,12 @@ https.createServer(options, app).listen(PORT, '0.0.0.0', () => {
             console.error('[PROXY API] Falha na sincronização periódica da telemetria:', error);
         });
     }, 60 * 1000).unref();
+    // Exceções por IP com prazo: vencem sozinhas e saem do DNS (registrado na auditoria).
+    setInterval(() => {
+        blockingReleaseService.reconcileCategoryExceptions().catch((error) => {
+            console.error('[PROXY API] Falha ao vencer exceções por IP:', error);
+        });
+    }, 60 * 1000).unref();
     dnsContingencyService.bootstrap().catch((error) => {
         console.error('[PROXY API] Falha no bootstrap da Contingência DNS:', error);
     });

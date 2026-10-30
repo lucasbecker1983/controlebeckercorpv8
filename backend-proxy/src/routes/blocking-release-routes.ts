@@ -545,6 +545,47 @@ router.delete('/exceptions/:id', async (req, res) => {
     }
 });
 
+// Exceções por IP para uma categoria (ex.: redes sociais), com rastreabilidade e auditoria.
+router.get('/category-exceptions', async (_req, res) => {
+    try {
+        res.json(await blockingReleaseService.listCategoryExceptions());
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/category-exceptions', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.createCategoryException(req.body, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.patch('/category-exceptions/:id', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.updateCategoryException(Number(req.params.id), req.body, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.post('/category-exceptions/:id/revoke', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.revokeCategoryException(Number(req.params.id), req.body?.reason, requestedBy(req)));
+    } catch (error: any) {
+        res.status(400).json({ error: error.message });
+    }
+});
+
+router.get('/category-exceptions/:id/history', async (req, res) => {
+    try {
+        res.json(await blockingReleaseService.getCategoryExceptionHistory(Number(req.params.id)));
+    } catch (error: any) {
+        res.status(404).json({ error: error.message });
+    }
+});
+
 router.get('/sporadic-exceptions', async (req, res) => {
     try {
         res.json(await blockingReleaseService.listSporadicExceptions(req.query));

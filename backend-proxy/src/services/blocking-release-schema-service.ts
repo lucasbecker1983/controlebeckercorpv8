@@ -402,6 +402,32 @@ ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ;
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 -- VIP amarrado ao aparelho: com MAC preenchido, a liberação só vale para esse endereço físico.
 ALTER TABLE policy_exceptions ADD COLUMN IF NOT EXISTS mac_address VARCHAR(17);
+
+-- Exceção por IP para uma categoria (hoje: redes sociais), sem passe livre geral.
+-- Rastreável: quem pediu, quem aprovou, motivo, validade/revisão; cada mudança vai para action_audit_logs.
+CREATE TABLE IF NOT EXISTS ip_category_exceptions (
+    id BIGSERIAL PRIMARY KEY,
+    ip INET NOT NULL,
+    mac_address VARCHAR(17),
+    vlan_id INTEGER,
+    category VARCHAR(64) NOT NULL DEFAULT 'redes_sociais',
+    holder_name TEXT NOT NULL,
+    requested_by TEXT NOT NULL,
+    approved_by TEXT NOT NULL,
+    justification TEXT NOT NULL,
+    starts_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ,
+    review_date DATE,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by TEXT NOT NULL DEFAULT 'system',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_by TEXT,
+    revoked_at TIMESTAMPTZ,
+    revoke_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_ip_category_exceptions_active ON ip_category_exceptions (ip, category) WHERE active;
+CREATE INDEX IF NOT EXISTS idx_ip_category_exceptions_active ON ip_category_exceptions (active, expires_at);
 ALTER TABLE dns_vip ADD COLUMN IF NOT EXISTS dns_audit_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 
 CREATE TABLE IF NOT EXISTS dns_ignored_domains (

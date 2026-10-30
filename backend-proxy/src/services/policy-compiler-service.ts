@@ -28,6 +28,16 @@ type ExceptionRow = {
     mac_address?: string | null;
 };
 
+type CategoryExceptionRow = {
+    ip: string;
+    category: string;
+};
+
+// Categoria da exceção por IP -> nomes (minúsculos) das regras de bloqueio que formam a categoria.
+export const CATEGORY_EXCEPTION_POLICIES: Record<string, string[]> = {
+    redes_sociais: ['redes sociais'],
+};
+
 type VlanRow = {
     vlan_id: number;
     interface_name: string;
@@ -208,6 +218,30 @@ export class PolicyCompilerService {
     }
 
     async loadState() {
+        // Exceções por IP para uma categoria: domínios vêm das regras de bloqueio da categoria (ex.: "Redes Sociais").
+        const categoryPolicyNames = Object.values(CATEGORY_EXCEPTION_POLICIES).flat();
+        const [categoryExceptions, categoryDomains] = await Promise.all([
+            pool.query(`
+                SELECT host(ip) AS ip, category
+                FROM ip_category_exceptions
+                WHERE active = TRUE AND starts_at <= NOW() AND (expires_at IS NULL OR expires_at > NOW())
+                ORDER BY id ASC
+            `).catch(() => ({ rows: [] as CategoryExceptionRow[] })),
+            pool.query(`
+                SELECT lower(dp.name) AS policy_name, dpe.normalized_domain
+                FROM domain_policy_entries dpe
+                JOIN domain_policies dp ON dp.id = dpe.policy_id
+                WHERE dp.enabled = TRUE AND dp.policy_type = 'block' AND dpe.entry_type = 'domain' AND lower(dp.name) = ANY($1)
+            `, [categoryPolicyNames]).catch(() => ({ rows: [] as Array<{ policy_name: string; normalized_domain: string }> })),
+        ]);
+        const domainsByCategory = new Map<string, string[]>();
+        for (const [category, names] of Object.entries(CATEGORY_EXCEPTION_POLICIES)) {
+            domainsByCategory.set(category, sortedUnique(categoryDomains.rows
+                .filter((row) => names.includes(row.policy_name))
+                .map((row) => normalizeDomain(row.normalized_domain))
+                .filter(Boolean)));
+        }
+
         const [blocks, allows, exceptions, vlans, engine, emergencyVlans, domainPolicyEntries] = await Promise.all([
             pool.query(`SELECT * FROM blocking_policies WHERE active = TRUE ORDER BY scope_type, scope_value, domain`),
             pool.query(`SELECT * FROM release_policies WHERE active = TRUE ORDER BY scope_type, scope_value, domain`),
@@ -239,6 +273,8 @@ export class PolicyCompilerService {
             engine: engine.rows[0] || null,
             emergencyVlans: emergencyVlans.rows as EmergencyVlanBypassRow[],
             domainPolicyEntries: domainPolicyEntries.rows as DomainPolicyEntryRow[],
+            categoryExceptions: categoryExceptions.rows as CategoryExceptionRow[],
+            domainsByCategory,
         };
     }
 
@@ -560,6 +596,35 @@ export class PolicyCompilerService {
         )}\n`;
         this.writeRawFile(env.vipConf, files.vipBypass);
 
+        // Exceções por IP para uma categoria (ex.: redes sociais): zona própria de passthru com etiqueta
+        // exc_<categoria>. O IP mantém a etiqueta da VLAN, então todo o resto do filtro continua valendo.
+        // VIPs (já com passe livre) e VLANs em bypass emergencial ficam de fora.
+        const vipDnsIps = new Set(compiled.dnsBypassEntries.map((entry) => entry.replace(/\/32$/, '')));
+        const vlanTagByOctet = new Map(compiled.managedVlans.map((vlan) => [String(vlan.subnet_cidr || '').split('.')[2], this.buildVlanTag(vlan.vlan_id)]));
+        const exceptionTagsByIp = new Map<string, { vlanTag: string; tags: Set<string> }>();
+        for (const row of state.categoryExceptions) {
+            const ip = String(row.ip || '').replace(/\/32$/, '').trim();
+            const domains = state.domainsByCategory.get(row.category) || [];
+            const vlanTag = vlanTagByOctet.get(ip.split('.')[2]);
+            if (!isManagedBlockingIp(ip) || !vlanTag || vipDnsIps.has(ip) || !domains.length) continue;
+            const item = exceptionTagsByIp.get(ip) || { vlanTag, tags: new Set<string>() };
+            item.tags.add(`exc_${row.category}`);
+            exceptionTagsByIp.set(ip, item);
+        }
+        const exceptionCategories = sortedUnique(Array.from(exceptionTagsByIp.values()).flatMap((item) => Array.from(item.tags)).map((tag) => tag.replace(/^exc_/, '')));
+        for (const category of exceptionCategories) {
+            const zonePath = path.join(this.unboundPolicyDir, `exception-${category}.rpz`);
+            files[`dnsException_${category}`] = `${this.buildZoneFile(
+                `rpz.exc.${category}.becker.local`,
+                [
+                    `; Exceção por IP para a categoria ${category} — gerado automaticamente`,
+                    ...toRpzEntries(state.domainsByCategory.get(category) || [], 'rpz-passthru.'),
+                ],
+                [`Exceção por IP: ${category}`],
+            )}\n`;
+            this.writeRawFile(zonePath, files[`dnsException_${category}`]);
+        }
+
         const dnsTaggedVlans = compiled.managedVlans.filter((vlan) => {
             const allowCount = compiled.allowByVlan.get(vlan.vlan_id)?.length || 0;
             const blockCount = compiled.blockByVlan.get(vlan.vlan_id)?.length || 0;
@@ -628,6 +693,7 @@ export class PolicyCompilerService {
             const definedTags = sortedUnique([
                 vipBypassTag,
                 ...compiled.managedVlans.map((vlan) => this.buildVlanTag(vlan.vlan_id)),
+                ...exceptionCategories.map((category) => `exc_${category}`),
             ]).join(' ');
 
             if (definedTags) {
@@ -635,6 +701,10 @@ export class PolicyCompilerService {
                     `    define-tag: "${definedTags}"`,
                     ...compiled.managedVlans.map((vlan) => `    access-control-tag: ${vlan.subnet_cidr} "${this.buildVlanTag(vlan.vlan_id)}"`),
                     ...compiled.dnsBypassEntries.map((cidr) => `    access-control-tag: ${cidr} "${vipBypassTag}"`),
+                    // Exceção por IP: etiqueta da VLAN + etiqueta da categoria liberada.
+                    ...Array.from(exceptionTagsByIp.entries())
+                        .sort(([left], [right]) => left.localeCompare(right))
+                        .map(([ip, item]) => `    access-control-tag: ${ip} "${[item.vlanTag, ...Array.from(item.tags).sort()].join(' ')}"`),
                     '',
                 );
             }
@@ -646,6 +716,14 @@ export class PolicyCompilerService {
                 `    zonefile: "${env.vipConf}"`,
                 `    tags: "${vipBypassTag}"`,
                 '',
+                // Depois da segurança e do VIP, antes das regras da VLAN: libera só a categoria da exceção.
+                ...exceptionCategories.flatMap((category) => ([
+                    'rpz:',
+                    `    name: "rpz.exc.${category}.becker.local."`,
+                    `    zonefile: "${path.join(this.unboundPolicyDir, `exception-${category}.rpz`)}"`,
+                    `    tags: "exc_${category}"`,
+                    '',
+                ])),
                 ...dnsTaggedVlans.flatMap((vlan) => ([
                     'rpz:',
                     `    name: "rpz.allow.vlan${vlan.vlan_id}.becker.local."`,

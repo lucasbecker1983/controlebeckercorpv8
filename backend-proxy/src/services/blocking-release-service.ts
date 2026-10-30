@@ -20,7 +20,7 @@ import {
 import { dnsContingencyService } from './dns-contingency-service';
 import { dnsRadarService } from './dns-radar-service';
 import { identityEnrichmentService } from './identity-enrichment-service';
-import { EnforcementMode, policyCompilerService } from './policy-compiler-service';
+import { CATEGORY_EXCEPTION_POLICIES, EnforcementMode, policyCompilerService } from './policy-compiler-service';
 import { cachedUnboundCheckconf, invalidateUnboundCheckconf } from './unbound-checkconf-cache';
 
 type ScopeType = 'global' | 'vlan';
@@ -2935,6 +2935,201 @@ class BlockingReleaseService {
         await policyCompilerService.compile(mode);
         await this.reloadUnbound();
         await dnsContingencyService.ensureFirewallState();
+    }
+
+    // ===================== Exceções por IP para uma categoria (ex.: redes sociais) =====================
+    // Libera só a categoria para o IP (zona própria no DNS); o resto do filtro continua. Tudo auditado.
+
+    readonly categoryExceptionLabels: Record<string, string> = { redes_sociais: 'Redes sociais' };
+
+    // Recompila e recarrega só o DNS (segundos), sem mexer no firewall.
+    async applyDnsOnly() {
+        const mode = ((await this.getEngineState()).enforcement_mode || policyCompilerService.readManifest()?.enforcementMode || 'acl-plus-dns') as EnforcementMode;
+        await policyCompilerService.compile(mode);
+        await this.validateUnbound();
+        await this.reloadUnbound();
+    }
+
+    private categoryDomainsSql() {
+        return `
+            SELECT DISTINCT dpe.normalized_domain AS domain
+            FROM domain_policy_entries dpe
+            JOIN domain_policies dp ON dp.id = dpe.policy_id
+            WHERE dp.enabled = TRUE AND dp.policy_type = 'block' AND dpe.entry_type = 'domain' AND lower(dp.name) = ANY($1)
+        `;
+    }
+
+    async listCategoryExceptions() {
+        await this.ensureReady();
+        const { rows } = await pool.query(`
+            SELECT e.*, host(e.ip) AS ip_text
+            FROM ip_category_exceptions e
+            ORDER BY e.active DESC, e.created_at DESC
+            LIMIT 300
+        `);
+        // Uso: consultas aos domínios da categoria feitas pelo IP (7 dias), a partir do Radar DNS.
+        const usage = new Map<string, { total_7d: number; total_24h: number; last_at: string | null }>();
+        const active = rows.filter((row) => row.active);
+        for (const row of active) {
+            const names = CATEGORY_EXCEPTION_POLICIES[row.category] || [];
+            const { rows: u } = await pool.query(`
+                WITH d AS (${this.categoryDomainsSql()})
+                SELECT count(*)::int AS total_7d,
+                       count(*) FILTER (WHERE e.occurred_at > NOW() - interval '24 hours')::int AS total_24h,
+                       max(e.occurred_at) AS last_at
+                FROM dns_policy_events e
+                WHERE e.client_ip = $2::inet AND e.occurred_at > NOW() - interval '7 days'
+                  AND EXISTS (SELECT 1 FROM d WHERE e.query_name = d.domain OR e.query_name LIKE '%.' || d.domain)
+            `, [names, row.ip_text]).catch(() => ({ rows: [{ total_7d: 0, total_24h: 0, last_at: null }] }));
+            usage.set(String(row.id), u[0]);
+        }
+        return rows.map((row) => ({
+            ...row,
+            ip: row.ip_text,
+            category_label: this.categoryExceptionLabels[row.category] || row.category,
+            usage: usage.get(String(row.id)) || null,
+        }));
+    }
+
+    private validateCategoryExceptionPayload(payload: any, current?: any) {
+        const pick = (key: string) => (Object.prototype.hasOwnProperty.call(payload || {}, key) ? payload[key] : current?.[key]);
+        const ip = String(pick('ip') || '').trim().replace(/\/32$/, '');
+        if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip) || !isManagedBlockingIp(ip)) throw new Error('IP inválido ou fora das VLANs com filtro (10, 30, 40, 50, 70).');
+        const category = String(pick('category') || 'redes_sociais');
+        if (!CATEGORY_EXCEPTION_POLICIES[category]) throw new Error('Categoria inválida.');
+        const rawMac = String(pick('mac_address') || '').trim().toUpperCase().replace(/-/g, ':');
+        if (rawMac && !/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(rawMac)) throw new Error('MAC inválido. Use o formato AA:BB:CC:DD:EE:FF.');
+        const holder = String(pick('holder_name') || '').trim();
+        const requested = String(pick('requested_by') || '').trim();
+        const approved = String(pick('approved_by') || '').trim();
+        const justification = String(pick('justification') || '').trim();
+        if (holder.length < 2) throw new Error('Informe quem usa o aparelho (nome ou setor).');
+        if (requested.length < 2) throw new Error('Informe quem pediu a exceção.');
+        if (approved.length < 2) throw new Error('Informe quem aprovou a exceção.');
+        if (justification.length < 10) throw new Error('Escreva o motivo da exceção (pelo menos 10 caracteres).');
+        const expiresRaw = pick('expires_at');
+        const expiresAt = expiresRaw ? new Date(expiresRaw) : null;
+        if (expiresAt && (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now())) throw new Error('A validade precisa ser uma data futura.');
+        const reviewRaw = pick('review_date');
+        const reviewDate = reviewRaw ? String(reviewRaw).slice(0, 10) : null;
+        if (reviewDate && !/^\d{4}-\d{2}-\d{2}$/.test(reviewDate)) throw new Error('Data de revisão inválida.');
+        if (!expiresAt && !reviewDate) throw new Error('Defina uma validade ou uma data de revisão.');
+        const vlanId = Number(ip.split('.')[2]);
+        return { ip, category, mac: rawMac || null, holder, requested, approved, justification, expiresAt, reviewDate, vlanId };
+    }
+
+    async createCategoryException(payload: any, requestedBy = 'system') {
+        await this.ensureReady();
+        const v = this.validateCategoryExceptionPayload(payload);
+        const filtered = await pool.query(`SELECT 1 FROM vlan_policies WHERE vlan_id = $1 AND blocking_enabled = TRUE AND exempt = FALSE LIMIT 1`, [v.vlanId]);
+        if (!filtered.rows.length) throw new Error(`A VLAN ${v.vlanId} não tem filtro de sites; o IP ${v.ip} não precisa de exceção.`);
+        const vip = await pool.query(`SELECT 1 FROM policy_exceptions WHERE active = TRUE AND host(ip) = $1 LIMIT 1`, [v.ip]);
+        if (vip.rows.length) throw new Error(`O IP ${v.ip} já é VIP e acessa tudo; a exceção não é necessária.`);
+        const dup = await pool.query(`SELECT id FROM ip_category_exceptions WHERE active = TRUE AND host(ip) = $1 AND category = $2`, [v.ip, v.category]);
+        if (dup.rows.length) throw new Error(`Já existe exceção ativa de ${this.categoryExceptionLabels[v.category] || v.category} para ${v.ip}.`);
+        const { rows } = await pool.query(`
+            INSERT INTO ip_category_exceptions (ip, mac_address, vlan_id, category, holder_name, requested_by, approved_by, justification, expires_at, review_date, created_by)
+            VALUES ($1::inet, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING *, host(ip) AS ip_text
+        `, [v.ip, v.mac, v.vlanId, v.category, v.holder, v.requested, v.approved, v.justification, v.expiresAt, v.reviewDate, requestedBy]);
+        const row = rows[0];
+        try {
+            await this.applyDnsOnly();
+        } catch (error: any) {
+            // Não deixa exceção "ativa" no banco sem valer no DNS.
+            await pool.query(`UPDATE ip_category_exceptions SET active = FALSE, revoked_by = 'sistema', revoked_at = NOW(), revoke_reason = $2 WHERE id = $1`, [row.id, `Falha ao aplicar no DNS: ${String(error?.message || error).slice(0, 200)}`]);
+            await this.applyDnsOnly().catch(() => undefined);
+            await this.recordAudit({ action: 'category-exception:create', requestedBy, payload, result: { id: row.id }, success: false, message: `Falha ao aplicar a exceção de ${v.ip} no DNS: ${error?.message || error}`, vlanId: v.vlanId, ip: v.ip }).catch(() => undefined);
+            throw new Error(`Não foi possível aplicar a exceção no DNS; nada mudou. Detalhe: ${error?.message || error}`);
+        }
+        await this.recordAudit({
+            action: 'category-exception:create', requestedBy, payload: { ...payload, exception_id: row.id }, result: row, success: true,
+            message: `Exceção de ${this.categoryExceptionLabels[v.category] || v.category} criada para ${v.ip} (${v.holder}); pedido por ${v.requested}, aprovado por ${v.approved}`,
+            vlanId: v.vlanId, ip: v.ip,
+        });
+        return { ...row, ip: row.ip_text };
+    }
+
+    async updateCategoryException(id: number, payload: any, requestedBy = 'system') {
+        await this.ensureReady();
+        const { rows: cur } = await pool.query(`SELECT *, host(ip) AS ip_text FROM ip_category_exceptions WHERE id = $1`, [id]);
+        if (!cur.length) throw new Error('Exceção não encontrada.');
+        if (!cur[0].active) throw new Error('Exceção revogada não pode ser alterada; crie uma nova.');
+        const v = this.validateCategoryExceptionPayload({ ...payload, ip: cur[0].ip_text, category: cur[0].category }, { ...cur[0], ip: cur[0].ip_text });
+        const { rows } = await pool.query(`
+            UPDATE ip_category_exceptions
+            SET mac_address = $2, holder_name = $3, requested_by = $4, approved_by = $5, justification = $6, expires_at = $7, review_date = $8, updated_at = NOW()
+            WHERE id = $1
+            RETURNING *, host(ip) AS ip_text
+        `, [id, v.mac, v.holder, v.requested, v.approved, v.justification, v.expiresAt, v.reviewDate]);
+        await this.applyDnsOnly();
+        await this.recordAudit({
+            action: 'category-exception:update', requestedBy, payload: { ...payload, exception_id: id, before: cur[0] }, result: rows[0], success: true,
+            message: `Exceção ${id} de ${v.ip} alterada`, vlanId: v.vlanId, ip: v.ip,
+        });
+        return { ...rows[0], ip: rows[0].ip_text };
+    }
+
+    async revokeCategoryException(id: number, reason: string, requestedBy = 'system') {
+        await this.ensureReady();
+        const why = String(reason || '').trim();
+        if (why.length < 5) throw new Error('Informe o motivo da revogação (pelo menos 5 caracteres).');
+        const { rows } = await pool.query(`
+            UPDATE ip_category_exceptions
+            SET active = FALSE, revoked_by = $2, revoked_at = NOW(), revoke_reason = $3, updated_at = NOW()
+            WHERE id = $1 AND active = TRUE
+            RETURNING *, host(ip) AS ip_text
+        `, [id, requestedBy, why]);
+        if (!rows.length) throw new Error('Exceção não encontrada ou já revogada.');
+        await this.applyDnsOnly();
+        await this.recordAudit({
+            action: 'category-exception:revoke', requestedBy, payload: { exception_id: id, reason: why }, result: rows[0], success: true,
+            message: `Exceção ${id} de ${rows[0].ip_text} revogada: ${why}`, vlanId: rows[0].vlan_id, ip: rows[0].ip_text,
+        });
+        return { ...rows[0], ip: rows[0].ip_text };
+    }
+
+    // Vence as exceções com prazo e tira do DNS; chamado a cada minuto pelo servidor.
+    async reconcileCategoryExceptions() {
+        const { rows } = await pool.query(`
+            UPDATE ip_category_exceptions
+            SET active = FALSE, revoked_by = 'sistema (prazo vencido)', revoked_at = NOW(), revoke_reason = 'Validade encerrada', updated_at = NOW()
+            WHERE active = TRUE AND expires_at IS NOT NULL AND expires_at <= NOW()
+            RETURNING *, host(ip) AS ip_text
+        `).catch(() => ({ rows: [] as any[] }));
+        if (!rows.length) return { expired: 0 };
+        await this.applyDnsOnly();
+        for (const row of rows) {
+            await this.recordAudit({
+                action: 'category-exception:expire', requestedBy: 'system', payload: { exception_id: row.id }, result: row, success: true,
+                message: `Exceção ${row.id} de ${row.ip_text} venceu e saiu do DNS`, vlanId: row.vlan_id, ip: row.ip_text,
+            }).catch(() => undefined);
+        }
+        return { expired: rows.length };
+    }
+
+    async getCategoryExceptionHistory(id: number) {
+        await this.ensureReady();
+        const { rows: cur } = await pool.query(`SELECT *, host(ip) AS ip_text FROM ip_category_exceptions WHERE id = $1`, [id]);
+        if (!cur.length) throw new Error('Exceção não encontrada.');
+        const row = cur[0];
+        const { rows: audit } = await pool.query(`
+            SELECT created_at, action, requested_by, message
+            FROM action_audit_logs
+            WHERE action LIKE 'category-exception:%' AND (payload->>'exception_id' = $1 OR result->>'id' = $1)
+            ORDER BY created_at DESC
+            LIMIT 100
+        `, [String(id)]);
+        const names = CATEGORY_EXCEPTION_POLICIES[row.category] || [];
+        const { rows: topDomains } = await pool.query(`
+            WITH d AS (${this.categoryDomainsSql()})
+            SELECT e.query_name AS domain, count(*)::int AS total, max(e.occurred_at) AS last_at
+            FROM dns_policy_events e
+            WHERE e.client_ip = $2::inet AND e.occurred_at > NOW() - interval '7 days'
+              AND EXISTS (SELECT 1 FROM d WHERE e.query_name = d.domain OR e.query_name LIKE '%.' || d.domain)
+            GROUP BY 1 ORDER BY 2 DESC LIMIT 15
+        `, [names, row.ip_text]).catch(() => ({ rows: [] as any[] }));
+        return { exception: { ...row, ip: row.ip_text }, audit, top_domains: topDomains };
     }
 
     async regenerateVipRpz() {

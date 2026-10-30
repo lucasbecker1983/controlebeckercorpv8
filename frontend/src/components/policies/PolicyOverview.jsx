@@ -10,7 +10,7 @@ import { VlanChip, applyRules, brSend, vlanName } from './shared';
 
 const STEPS = [
   { icon: ShieldAlert, tone: 'danger', title: 'Segurança', text: 'Malware, phishing, conteúdo adulto e DNS criptografado. Sempre bloqueado, para todos, inclusive VIPs.' },
-  { icon: Ticket, tone: 'warning', title: 'VIP e liberação temporária', text: 'O aparelho navega sem os filtros de categoria (redes sociais, vídeo, streaming).' },
+  { icon: Ticket, tone: 'warning', title: 'VIP, liberação e exceção', text: 'VIP e liberação temporária: sem filtros de categoria. Exceção por IP: libera só redes sociais.' },
   { icon: Network, tone: 'primary', title: 'Regras da VLAN', text: 'Liberações e bloqueios escolhidos para cada VLAN. Liberar vence bloquear.' },
   { icon: Globe2, tone: 'primary', title: 'Regras gerais', text: 'Valem para todas as VLANs com filtro. Liberar vence bloquear.' },
   { icon: Check, tone: 'success', title: 'Sem regra', text: 'O que não aparece em nenhuma regra fica liberado.' },
