@@ -445,6 +445,13 @@ const cidrContainsIp = (cidr: string, ip: string) => {
 
 let telemetrySyncPromise: Promise<any> | null = null;
 let lastTelemetrySyncAt = 0;
+// Cópia incremental dos eventos DNS para access_events: até o id já copiado (marca d'água, em memória).
+// Depois de reiniciar, a primeira sincronização é completa; depois disso só roda completa 1 vez por dia.
+let dnsCopyWatermarkId = 0;
+let lastFullDnsCopyAt = 0;
+const TELEMETRY_FULL_RECONCILE_MS = 24 * 60 * 60 * 1000;
+// Ids reprocessados a cada rodada: cobre linhas que gravaram depois de outras com id maior (dois gravadores em paralelo).
+const TELEMETRY_COPY_OVERLAP_IDS = 20000;
 
 const resolveExceptionGovernance = (payload: any, requestedBy = 'system', fallback?: any) => {
     const parsedPayload = parseGovernanceText(payload?.notes ?? payload?.reason);
@@ -976,6 +983,12 @@ class BlockingReleaseService {
 
         const run = async () => {
             await this.ensureReady();
+            // Só copia o que é novo desde a última rodada (antes relia as ~1 milhão de linhas a cada 5 min).
+            const fullDnsCopy = force || !lastFullDnsCopyAt || Date.now() - lastFullDnsCopyAt > TELEMETRY_FULL_RECONCILE_MS;
+            const dnsFromId = fullDnsCopy ? 0 : Math.max(0, dnsCopyWatermarkId - TELEMETRY_COPY_OVERLAP_IDS);
+            const dnsMaxRow = await pool.query('SELECT COALESCE(MAX(id), 0)::bigint AS max_id FROM dns_policy_events').catch(() => null);
+            const dnsMaxId = Number(dnsMaxRow?.rows?.[0]?.max_id ?? 0);
+            let dnsCopyOk = Boolean(dnsMaxRow);
             const [proxyRadarImport, dnsImport, proxyImport] = await Promise.all([
                 pool.query(
                 `
@@ -1032,9 +1045,15 @@ class BlockingReleaseService {
                             response_code,
                             COALESCE(raw_payload, '{}'::jsonb)
                         FROM dns_policy_events
+                        WHERE id > $1 AND id <= $2
                         ON CONFLICT (occurred_at, client_ip, vlan_id, domain, action, source) DO NOTHING
                     `,
-                ).catch(() => ({ rowCount: 0 })),
+                    [dnsFromId, dnsMaxId],
+                ).catch((error) => {
+                    dnsCopyOk = false;
+                    console.error('[TELEMETRIA] Falha ao copiar eventos DNS para access_events:', error?.message || error);
+                    return { rowCount: 0 };
+                }),
                 pool.query(
                     `
                         INSERT INTO access_events (
@@ -1065,6 +1084,12 @@ class BlockingReleaseService {
                     `,
                 ).catch(() => ({ rowCount: 0 })),
             ]);
+
+            // A marca só avança se a cópia deu certo; senão a próxima rodada tenta de novo do mesmo ponto.
+            if (dnsCopyOk) {
+                dnsCopyWatermarkId = dnsMaxId;
+                if (fullDnsCopy) lastFullDnsCopyAt = Date.now();
+            }
 
             await this.refreshReportIndex();
             lastTelemetrySyncAt = Date.now();

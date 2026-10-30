@@ -131,6 +131,14 @@ https.createServer(options, app).listen(PORT, '0.0.0.0', () => {
         .catch((error) => {
         console.error('[PROXY API] Falha no bootstrap de Bloqueios e Liberações:', error);
     });
+    // Sincronização periódica da telemetria: antes só rodava quando alguém abria uma tela, e sem ninguém
+    // olhando `access_events` envelhecia (alerta falso de "eventos do proxy parados"). Com a cópia
+    // incremental isso é barato; a própria função respeita a janela de 5 min e ignora a chamada se for cedo.
+    setInterval(() => {
+        blockingReleaseService.syncTelemetry({ background: true }).catch((error) => {
+            console.error('[PROXY API] Falha na sincronização periódica da telemetria:', error);
+        });
+    }, 60 * 1000).unref();
     dnsContingencyService.bootstrap().catch((error) => {
         console.error('[PROXY API] Falha no bootstrap da Contingência DNS:', error);
     });
