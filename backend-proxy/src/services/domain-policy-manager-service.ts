@@ -461,7 +461,8 @@ export class DomainPolicyManagerService {
                         normalized_host_domain = EXCLUDED.normalized_host_domain,
                         updated_at = NOW()
                 `,
-                [policyId, entry.raw, entry.entry_type, entry.normalized_domain, entry.normalized_host_domain],
+                // `raw` vem do formulário; ao editar só o escopo (ex.: VLANs) as entradas já gravadas chegam com `domain`.
+                [policyId, entry.raw ?? (entry as any).domain ?? entry.normalized_domain, entry.entry_type, entry.normalized_domain, entry.normalized_host_domain],
             );
         }
     }

@@ -44,8 +44,9 @@ function DecisionFlow() {
   );
 }
 
-function Cell({ rule, on, global, onToggle, busy }) {
+function Cell({ rule, on, global, onToggle, busy, vlanId }) {
   const block = rule.policy_type === 'block';
+  const action = on ? 'Desativar' : 'Ativar';
   if (global) {
     return (
       <span title="Regra geral: vale para todas as VLANs com filtro" className={`inline-flex h-7 w-full items-center justify-center rounded-md ${rule.enabled ? (block ? 'bg-danger/[0.07] text-danger/70' : 'bg-success/[0.07] text-success/70') : 'text-on-surface/25'}`}>
@@ -58,7 +59,8 @@ function Cell({ rule, on, global, onToggle, busy }) {
       type="button"
       disabled={busy}
       onClick={onToggle}
-      title={on ? `Tirar desta VLAN` : `Aplicar nesta VLAN`}
+      title={`${action} a regra nesta VLAN`}
+      aria-label={`${action} a regra "${rule.name}" na VLAN ${vlanId}`}
       className={`inline-flex h-7 w-full items-center justify-center rounded-md border transition-colors disabled:cursor-wait ${on
         ? (rule.enabled ? (block ? 'border-danger/30 bg-danger/10 text-danger hover:bg-danger/20' : 'border-success/30 bg-success/10 text-success hover:bg-success/20') : 'border-outline bg-on-surface/[0.05] text-on-surface/40')
         : 'border-dashed border-outline text-transparent hover:border-primary/50 hover:text-primary/60'}`}
@@ -84,25 +86,44 @@ export default function PolicyOverview({ rules, vlans, runChange, busy, onEdit }
   const toggleCell = async (rule, vlanId, on) => {
     const current = (rule.vlan_ids || []).map(Number);
     const next = on ? current.filter((id) => id !== vlanId) : [...current, vlanId].sort((a, b) => a - b);
+    const block = rule.policy_type === 'block';
+    const sites = rule.domain_count || rule.domains?.length || 0;
+    const where = `VLAN ${vlanId} (${vlanName(vlanId)})`;
+
+    // Era a última VLAN da regra: desativar aqui é desativar a regra inteira.
     if (!next.length) {
-      toast('Uma regra precisa valer em pelo menos uma VLAN. Para ela parar de valer, desligue a regra em "Regras de sites".', 'warning');
+      if (!rule.enabled) {
+        toast(`A regra "${rule.name}" já está desativada. Para ativá-la, use a chave em "Regras de sites".`, 'warning');
+        return;
+      }
+      const okAll = await askConfirm({
+        title: `Desativar a regra "${rule.name}"?`,
+        description: `Ela só valia na ${where}. Os ${sites} sites deixam de ser ${block ? 'bloqueados' : 'liberados'} por ela. A regra continua na lista, desativada, e dá para ativá-la de novo em "Regras de sites".`,
+        confirmLabel: 'Desativar a regra',
+        tone: 'danger',
+      });
+      if (!okAll) return;
+      await runChange(async () => {
+        await brSend('post', `domain-policies/${rule.id}/toggle`);
+        await applyRules();
+      }, `Regra "${rule.name}" desativada.`);
       return;
     }
-    const verb = rule.policy_type === 'block' ? 'Bloquear' : 'Liberar';
+
     const ok = await askConfirm({
-      title: on ? `Tirar "${rule.name}" da VLAN ${vlanId}?` : `${verb} "${rule.name}" na VLAN ${vlanId}?`,
+      title: on ? `Desativar a regra "${rule.name}" na VLAN ${vlanId}?` : `Ativar a regra "${rule.name}" na VLAN ${vlanId}?`,
       description: on
-        ? `A VLAN ${vlanId} (${vlanName(vlanId)}) deixa de seguir esta regra. A mudança é aplicada na rede em seguida.`
-        : `A VLAN ${vlanId} (${vlanName(vlanId)}) passa a seguir esta regra (${rule.domain_count || rule.domains?.length || 0} sites). A mudança é aplicada na rede em seguida.`,
-      confirmLabel: on ? 'Tirar da VLAN' : 'Aplicar na VLAN',
-      tone: on || rule.policy_type === 'block' ? 'danger' : 'primary',
+        ? `Os ${sites} sites desta regra deixam de ser ${block ? 'bloqueados' : 'liberados'} na ${where}. Nas outras VLANs a regra continua valendo. ${rule.enabled ? 'A mudança é aplicada na rede em seguida.' : 'A regra está desligada; a mudança só vale quando ela for ligada.'}`
+        : `Os ${sites} sites desta regra passam a ser ${block ? 'bloqueados' : 'liberados'} na ${where}${block ? ', e as conexões abertas para eles são derrubadas' : ''}. ${rule.enabled ? 'A mudança é aplicada na rede em seguida.' : 'A regra está desligada; a mudança só vale quando ela for ligada.'}`,
+      confirmLabel: on ? `Desativar na VLAN ${vlanId}` : `Ativar na VLAN ${vlanId}`,
+      tone: on || block ? 'danger' : 'primary',
     });
     if (!ok) return;
     await runChange(async () => {
       await brSend('patch', `domain-policies/${rule.id}`, { scope_type: 'vlan', vlan_ids: next });
-      const disconnect = !on && rule.enabled && rule.policy_type === 'block';
+      const disconnect = !on && rule.enabled && block;
       await applyRules(disconnect ? { disconnect_active_sessions: true, domains: rule.domains, vlan_ids: [vlanId], lookback_minutes: 20 } : undefined);
-    }, on ? `"${rule.name}" saiu da VLAN ${vlanId}.` : `"${rule.name}" agora vale na VLAN ${vlanId}.`);
+    }, on ? `Regra "${rule.name}" desativada na VLAN ${vlanId}.` : `Regra "${rule.name}" ativada na VLAN ${vlanId}.`);
   };
 
   return (
@@ -111,7 +132,7 @@ export default function PolicyOverview({ rules, vlans, runChange, busy, onEdit }
 
       <Panel
         title="Regras por VLAN"
-        description="Cada linha é uma regra; cada coluna, uma VLAN. Clique numa célula para ligar ou tirar a regra daquela VLAN. Clique no nome para editar."
+        description="Cada linha é uma regra; cada coluna, uma VLAN. Clique numa célula para ativar ou desativar a regra naquela VLAN. Clique no nome para editar a regra."
         actions={(
           <label className="flex items-center gap-2 text-[12.5px] text-on-surface/70">
             <input type="checkbox" checked={onlyEnabled} onChange={(e) => setOnlyEnabled(e.target.checked)} /> Só regras ligadas
@@ -157,7 +178,7 @@ export default function PolicyOverview({ rules, vlans, runChange, busy, onEdit }
                         const on = global || (rule.vlan_ids || []).map(Number).includes(Number(v.vlan_id));
                         return (
                           <td key={v.vlan_id} className="px-1.5 py-1.5">
-                            <Cell rule={rule} on={on} global={global} busy={busy} onToggle={() => toggleCell(rule, Number(v.vlan_id), on)} />
+                            <Cell rule={rule} on={on} global={global} busy={busy} vlanId={Number(v.vlan_id)} onToggle={() => toggleCell(rule, Number(v.vlan_id), on)} />
                           </td>
                         );
                       })}
@@ -173,7 +194,7 @@ export default function PolicyOverview({ rules, vlans, runChange, busy, onEdit }
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-outline px-4 py-2.5 text-[12px] text-on-surface/55">
           <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-5 w-5 items-center justify-center rounded border border-danger/30 bg-danger/10 text-danger"><Ban size={11} /></span>Bloqueado</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-5 w-5 items-center justify-center rounded border border-success/30 bg-success/10 text-success"><Check size={11} /></span>Liberado</span>
-          <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-5 w-5 rounded border border-dashed border-outline" />Não vale nesta VLAN</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-5 w-5 rounded border border-dashed border-outline" />Regra desativada nesta VLAN (clique para ativar)</span>
           <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-5 w-5 items-center justify-center rounded bg-danger/[0.07] text-danger/70"><Ban size={11} /></span>Regra geral (todas as VLANs)</span>
         </div>
       </Panel>
