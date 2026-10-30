@@ -12,7 +12,8 @@ STATE="${SGCG_WATCHDOG_STATE:-/run/sgcg-watchdog}"
 API="${TELEGRAM_API_BASE:-https://api.telegram.org}"
 MIN_UPTIME="${SGCG_WATCHDOG_MIN_UPTIME:-180}"   # logo após o boot o backend ainda está subindo
 REMINDER=$((3 * 60 * 60))
-FAILS_TO_ALERT=2                                  # duas checagens seguidas (~1 min), para não acusar um restart rápido
+FAILS_TO_ALERT=2                                  # duas checagens seguidas...
+MIN_DOWN_SECONDS=100                              # ...e pelo menos 100 s fora: um restart do pm2 (ts-node) leva até ~70 s
 NAME="bcc-backend"
 
 mkdir -p "$STATE"; chmod 700 "$STATE"
@@ -53,6 +54,7 @@ fails=$(( $(cat "$STATE/fails" 2>/dev/null || echo 0) + 1 )); echo "$fails" > "$
 [[ "$fails" -ge "$FAILS_TO_ALERT" ]] || exit 0
 
 since="$(cat "$STATE/down_since")"; mins=$(( (now - since) / 60 ))
+(( now - since >= MIN_DOWN_SECONDS )) || exit 0
 if [[ ! -f "$STATE/alerted" ]]; then
   notify "🚨 FALHA DETECTADA: $NAME não responde. O Sentinela do sistema roda dentro dele e também está parado. Verifique com: sudo pm2 list"
   touch "$STATE/alerted"; echo "$now" > "$STATE/last_alert"
