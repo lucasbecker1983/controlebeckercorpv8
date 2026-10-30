@@ -1,0 +1,11 @@
+[Unit]
+Description=SGCG vigia independente do bcc-backend (avisa pelo Telegram)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/controlebeckercorp-v8/scripts/sgcg-watchdog.sh
+User=root
+RuntimeDirectory=sgcg-watchdog
+RuntimeDirectoryPreserve=yes
+TimeoutStartSec=60

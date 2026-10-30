@@ -46,6 +46,7 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'monitor-vnstat', pattern: /^vnstat --json [hd] \d{1,3} -i [a-z0-9]+(\.\d{1,4})?$/ },
     { name: 'misc-safe', pattern: /^(sync|sudo sysctl -w vm\.drop_caches=3)$/ },
     { name: 'nmap-scan', pattern: /^sudo nmap -sn -n --min-rate 1000 .+$/ },
+    { name: 'pm2-list', pattern: /^pm2 jlist$/ },
     { name: 'clamav-control', pattern: /^(sudo\s+)?systemctl (start|stop|restart) clamav-(daemon|freshclam|clamonacc)(\.service)?$/ },
     { name: 'clamav-status', pattern: /^(sudo\s+)?systemctl is-active clamav-(daemon|freshclam|clamonacc)(\.service)?(\s+\|\|\s+echo\s+"?inactive"?)?$/ },
     { name: 'clamav-update', pattern: /^(sudo\s+)?freshclam(--stdout)?$/ },
