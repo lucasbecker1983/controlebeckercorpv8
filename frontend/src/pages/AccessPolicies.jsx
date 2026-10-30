@@ -10,7 +10,7 @@ import VipList, { reviewState, vipBinding } from '../components/policies/VipList
 import TempReleases, { isActiveRelease } from '../components/policies/TempReleases';
 import CategoryExceptions from '../components/policies/CategoryExceptions';
 import SchedulesPanel from '../components/network/SchedulesPanel';
-import BlockingReleases from './BlockingReleases';
+import VlanSettings from '../components/dns/VlanSettings';
 
 /*
  * Políticas de Acesso: quem pode acessar o quê.
@@ -159,7 +159,7 @@ export default function AccessPolicies() {
       {tab === 'vlans' ? (
         <div className="space-y-3">
           <Notice tone="warning" title="Ajustes avançados">Ligar ou desligar o filtro de uma VLAN, isentá-la ou mudar o modo de filtragem afeta todos os aparelhos dela. As regras de sites são feitas nas outras abas.</Notice>
-          <BlockingReleases key="vlans" allowedTabs={['vlans']} initialTab="vlans" hideHeader showQuickPanels={false} />
+          <VlanSettings />
         </div>
       ) : null}
     </div>
