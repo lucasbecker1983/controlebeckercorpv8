@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import {
-  AlertTriangle, Building2, CheckCircle2, ClipboardList,
-  Download, FileCheck2, KeyRound, LayoutDashboard, Lock,
-  Plus, RefreshCcw, ScrollText, Search, Shield,
-  ShieldAlert, UserRoundSearch, XCircle,
+  AlertTriangle, CheckCircle2, ClipboardList, Download, FileCheck2, KeyRound,
+  LayoutDashboard, Plus, RefreshCw, ScrollText, Search, Shield, ShieldAlert, UserRoundSearch, XCircle,
 } from 'lucide-react';
 import { api } from '../services/api';
-import { toast, useUrlTab } from '../components/ui/kit';
-import {
-  ActionButton, DialogShell, EmptyState, ModuleHeader,
-  SegmentedTabs, StatusChip, Surface,
-} from '../components/ui/primitives';
+import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Switch, Tabs, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
+
+/*
+ * Proteção de dados (LGPD): painel de gestão, inventário de tratamentos (Art. 37), pedidos de titulares (Art. 18),
+ * incidentes (Art. 48) e evidências de auditoria. Os cadastros abrem em uma gaveta lateral.
+ */
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -131,46 +130,72 @@ function authActionLabel(action) {
   return AUTH_ACTION_LABELS[action] || String(action || 'Evento de acesso').replace(/[_-]+/g, ' ');
 }
 
-// ─── Form primitives ──────────────────────────────────────────────────────────
+// ─── Formulários ──────────────────────────────────────────────────────────────
 
-const inputCls = 'w-full rounded-2xl border border-outline/16 bg-surface px-4 py-3 text-sm text-on-surface outline-none transition-all focus:border-primary/30 focus:ring-2 focus:ring-primary/15';
-
-function TF({ label, value, onChange, multiline, type = 'text', placeholder = '' }) {
+function TF({ label, value, onChange, multiline, type = 'text', placeholder = '', hint }) {
+  const id = useId();
   return (
-    <label className="space-y-2">
-      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
+    <Field id={id} label={label} hint={hint}>
       {multiline
-        ? <textarea rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />
-        : <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />}
-    </label>
+        ? <textarea id={id} rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />
+        : <input id={id} type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className={inputCls} />}
+    </Field>
   );
 }
+
 function SF({ label, value, onChange, options }) {
+  const id = useId();
   return (
-    <label className="space-y-2">
-      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-on-surface/52">{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+    <Field id={id} label={label}>
+      <select id={id} value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-    </label>
-  );
-}
-function Toggle({ label, checked, onChange, hint }) {
-  return (
-    <button type="button" onClick={() => onChange(!checked)}
-      className={`w-full rounded-2xl border px-4 py-3 text-left transition-all ${checked ? 'border-primary/22 bg-primary/10' : 'border-outline/16 bg-surface'}`}>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <div className="text-sm font-semibold text-on-surface">{label}</div>
-          {hint && <div className="mt-1 text-xs text-on-surface/58">{hint}</div>}
-        </div>
-        <StatusChip label={checked ? 'Sim' : 'Não'} tone={checked ? 'success' : 'neutral'} />
-      </div>
-    </button>
+    </Field>
   );
 }
 
-// ─── Dialogs ──────────────────────────────────────────────────────────────────
+function ToggleRow({ label, hint, checked, onChange }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-outline px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-[13px] font-semibold text-on-surface">{label}</div>
+        {hint ? <div className="text-[12px] text-on-surface/55">{hint}</div> : null}
+      </div>
+      <Switch checked={checked} onChange={onChange} label={label} />
+    </div>
+  );
+}
+
+const RISK_OPTIONS = [{ value: 'baixo', label: 'Baixo' }, { value: 'medio', label: 'Médio' }, { value: 'alto', label: 'Alto' }, { value: 'critico', label: 'Crítico' }];
+const PA_STATUS_OPTIONS = [{ value: 'mapeado', label: 'Mapeado' }, { value: 'revisao', label: 'Em revisão' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'suspenso', label: 'Suspenso' }];
+const REQ_STATUS_OPTIONS = [{ value: 'recebido', label: 'Recebido' }, { value: 'em-analise', label: 'Em análise' }, { value: 'atendido', label: 'Atendido' }, { value: 'indeferido', label: 'Indeferido' }, { value: 'encerrado', label: 'Encerrado' }];
+const INC_STATUS_OPTIONS = [{ value: 'aberto', label: 'Aberto' }, { value: 'investigacao', label: 'Em investigação' }, { value: 'contido', label: 'Contido' }, { value: 'comunicado', label: 'Comunicado' }, { value: 'encerrado', label: 'Encerrado' }];
+
+// Gaveta padrão dos cadastros: cabeçalho, corpo rolável e rodapé com Cancelar/Salvar.
+function FormDrawer({ open, title, description, saving, error, submitLabel, onClose, onSubmit, children }) {
+  return (
+    <Drawer
+      open={open}
+      busy={saving}
+      onClose={onClose}
+      title={title}
+      description={description}
+      width="max-w-3xl"
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button>
+          <Button variant="primary" onClick={onSubmit} disabled={saving}>{saving ? 'Salvando…' : submitLabel}</Button>
+        </>
+      )}
+    >
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+      <div className="grid gap-4 md:grid-cols-2">{children}</div>
+    </Drawer>
+  );
+}
+const Full = ({ children }) => <div className="md:col-span-2">{children}</div>;
+
+// ─── Gavetas de cadastro ──────────────────────────────────────────────────────
 
 function ProgramDialog({ open, item, saving, onClose, onSubmit }) {
   const [f, setF] = useState(defaultProgram);
@@ -188,190 +213,141 @@ function ProgramDialog({ open, item, saving, onClose, onSubmit }) {
   if (!open) return null;
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
   return (
-    <DialogShell open title="Estrutura institucional LGPD" subtitle="Controlador, encarregado, canal do titular e ciclo de revisão." onClose={onClose} size="max-w-5xl">
-      <div className="grid gap-4 md:grid-cols-2">
-        <TF label="Controlador" value={f.controller_name} onChange={set('controller_name')} />
-        <TF label="Unidade responsável" value={f.controller_unit} onChange={set('controller_unit')} />
-        <TF label="E-mail do controlador" value={f.controller_email} onChange={set('controller_email')} type="email" />
-        <TF label="Encarregado (DPO)" value={f.dpo_name} onChange={set('dpo_name')} />
-        <TF label="E-mail do DPO" value={f.dpo_email} onChange={set('dpo_email')} type="email" />
-        <TF label="Telefone do DPO" value={f.dpo_phone} onChange={set('dpo_phone')} />
-        <TF label="Canal do titular" value={f.data_subject_channel} onChange={set('data_subject_channel')} placeholder="Fala.BR, ouvidoria, e-mail..." />
-        <TF label="Aviso de privacidade (URL)" value={f.privacy_notice_url} onChange={set('privacy_notice_url')} placeholder="https://..." />
-        <TF label="Frequência de revisão (dias)" value={String(f.review_frequency_days)} onChange={(v) => set('review_frequency_days')(Number(v || 180))} type="number" />
-        <TF label="Última revisão" value={f.last_review_at} onChange={set('last_review_at')} type="date" />
-        <div className="md:col-span-2"><TF label="Notas institucionais" value={f.notes} onChange={set('notes')} multiline /></div>
-      </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-        <ActionButton tone="primary" onClick={() => onSubmit(f)} disabled={saving}>{saving ? 'Salvando...' : 'Salvar estrutura'}</ActionButton>
-      </div>
-    </DialogShell>
+    <FormDrawer open title="Estrutura institucional LGPD" description="Controlador, encarregado, canal do titular e ciclo de revisão." saving={saving} submitLabel="Salvar estrutura" onClose={onClose} onSubmit={() => onSubmit(f)}>
+      <TF label="Controlador" value={f.controller_name} onChange={set('controller_name')} />
+      <TF label="Unidade responsável" value={f.controller_unit} onChange={set('controller_unit')} />
+      <TF label="E-mail do controlador" value={f.controller_email} onChange={set('controller_email')} type="email" />
+      <TF label="Encarregado (DPO)" value={f.dpo_name} onChange={set('dpo_name')} />
+      <TF label="E-mail do DPO" value={f.dpo_email} onChange={set('dpo_email')} type="email" />
+      <TF label="Telefone do DPO" value={f.dpo_phone} onChange={set('dpo_phone')} />
+      <TF label="Canal do titular" value={f.data_subject_channel} onChange={set('data_subject_channel')} placeholder="Fala.BR, ouvidoria, e-mail…" />
+      <TF label="Aviso de privacidade (URL)" value={f.privacy_notice_url} onChange={set('privacy_notice_url')} placeholder="https://…" />
+      <TF label="Frequência de revisão (dias)" value={String(f.review_frequency_days)} onChange={(v) => set('review_frequency_days')(Number(v || 180))} type="number" />
+      <TF label="Última revisão" value={f.last_review_at} onChange={set('last_review_at')} type="date" />
+      <Full><TF label="Notas institucionais" value={f.notes} onChange={set('notes')} multiline /></Full>
+    </FormDrawer>
   );
 }
 
 function ProcessingDialog({ open, item, saving, onClose, onSubmit }) {
   const [f, setF] = useState(defaultProcessing);
+  const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
+    setError('');
     setF(item ? { ...defaultProcessing, ...item, data_categories: joinList(item.data_categories), data_subject_categories: joinList(item.data_subject_categories), shared_with: joinList(item.shared_with) } : defaultProcessing);
   }, [open, item]);
   if (!open) return null;
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
-  const submit = () => onSubmit({ ...f, data_categories: splitList(f.data_categories), data_subject_categories: splitList(f.data_subject_categories), shared_with: splitList(f.shared_with) });
+  const submit = () => {
+    if (!f.process_name.trim() || !f.legal_basis.trim() || !f.purpose.trim()) return setError('Preencha processo, base legal e finalidade.');
+    setError('');
+    return onSubmit({ ...f, data_categories: splitList(f.data_categories), data_subject_categories: splitList(f.data_subject_categories), shared_with: splitList(f.shared_with) });
+  };
   return (
-    <DialogShell open title={item ? 'Editar atividade de tratamento' : 'Nova atividade de tratamento'} subtitle="Inventário oficial: finalidade, base legal, categorias, compartilhamento, retenção e risco." onClose={onClose} size="max-w-5xl">
-      <div className="grid gap-4 md:grid-cols-2">
-        <TF label="Processo *" value={f.process_name} onChange={set('process_name')} />
-        <TF label="Base legal *" value={f.legal_basis} onChange={set('legal_basis')} />
-        <TF label="Controlador" value={f.controller_name} onChange={set('controller_name')} />
-        <TF label="Operador" value={f.operator_name} onChange={set('operator_name')} />
-        <TF label="Categorias de dados" value={f.data_categories} onChange={set('data_categories')} multiline placeholder="nome, cpf, e-mail..." />
-        <TF label="Titulares afetados" value={f.data_subject_categories} onChange={set('data_subject_categories')} multiline placeholder="servidores, cidadãos..." />
-        <TF label="Compartilhamento" value={f.shared_with} onChange={set('shared_with')} multiline placeholder="fornecedor, órgão..." />
-        <TF label="Armazenamento" value={f.storage_location} onChange={set('storage_location')} />
-        <TF label="Retenção" value={f.retention_period} onChange={set('retention_period')} />
-        <SF label="Risco" value={f.risk_level} onChange={set('risk_level')} options={[{ value: 'baixo', label: 'Baixo' }, { value: 'medio', label: 'Médio' }, { value: 'alto', label: 'Alto' }, { value: 'critico', label: 'Crítico' }]} />
-        <SF label="Status" value={f.status} onChange={set('status')} options={[{ value: 'mapeado', label: 'Mapeado' }, { value: 'revisao', label: 'Em revisão' }, { value: 'aprovado', label: 'Aprovado' }, { value: 'suspenso', label: 'Suspenso' }]} />
-        <div className="md:col-span-2"><TF label="Finalidade *" value={f.purpose} onChange={set('purpose')} multiline /></div>
-        <div className="md:col-span-2"><TF label="Medidas de segurança" value={f.security_measures} onChange={set('security_measures')} multiline /></div>
-        <div className="md:col-span-2">
-          <Toggle label="Transferência internacional" checked={f.international_transfer} onChange={set('international_transfer')} hint="Marque se há fluxo internacional de dados." />
-          {f.international_transfer && <div className="mt-3"><TF label="Detalhes da transferência" value={f.transfer_details} onChange={set('transfer_details')} multiline /></div>}
-        </div>
-      </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-        <ActionButton tone="primary" onClick={submit} disabled={saving}>{saving ? 'Salvando...' : 'Salvar atividade'}</ActionButton>
-      </div>
-    </DialogShell>
+    <FormDrawer open title={item ? 'Editar atividade de tratamento' : 'Nova atividade de tratamento'} description="Inventário oficial: finalidade, base legal, categorias, compartilhamento, retenção e risco." saving={saving} error={error} submitLabel="Salvar atividade" onClose={onClose} onSubmit={submit}>
+      <TF label="Processo *" value={f.process_name} onChange={set('process_name')} />
+      <TF label="Base legal *" value={f.legal_basis} onChange={set('legal_basis')} />
+      <TF label="Controlador" value={f.controller_name} onChange={set('controller_name')} />
+      <TF label="Operador" value={f.operator_name} onChange={set('operator_name')} />
+      <TF label="Categorias de dados" value={f.data_categories} onChange={set('data_categories')} multiline placeholder="nome, cpf, e-mail…" hint="Separe por vírgula." />
+      <TF label="Titulares afetados" value={f.data_subject_categories} onChange={set('data_subject_categories')} multiline placeholder="servidores, cidadãos…" hint="Separe por vírgula." />
+      <TF label="Compartilhamento" value={f.shared_with} onChange={set('shared_with')} multiline placeholder="fornecedor, órgão…" hint="Separe por vírgula." />
+      <TF label="Armazenamento" value={f.storage_location} onChange={set('storage_location')} />
+      <TF label="Retenção" value={f.retention_period} onChange={set('retention_period')} />
+      <SF label="Risco" value={f.risk_level} onChange={set('risk_level')} options={RISK_OPTIONS} />
+      <SF label="Status" value={f.status} onChange={set('status')} options={PA_STATUS_OPTIONS} />
+      <Full><TF label="Finalidade *" value={f.purpose} onChange={set('purpose')} multiline /></Full>
+      <Full><TF label="Medidas de segurança" value={f.security_measures} onChange={set('security_measures')} multiline /></Full>
+      <Full>
+        <ToggleRow label="Transferência internacional" checked={f.international_transfer} onChange={set('international_transfer')} hint="Ligue se há fluxo internacional de dados." />
+        {f.international_transfer ? <div className="mt-3"><TF label="Detalhes da transferência" value={f.transfer_details} onChange={set('transfer_details')} multiline /></div> : null}
+      </Full>
+    </FormDrawer>
   );
 }
 
 function RequestDialog({ open, item, saving, onClose, onSubmit }) {
   const [f, setF] = useState(defaultRequest);
+  const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
+    setError('');
     setF(item ? { ...defaultRequest, ...item, due_date: item.due_date ? String(item.due_date).slice(0, 10) : '' } : defaultRequest);
   }, [open, item]);
   if (!open) return null;
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
+  const submit = () => {
+    if (!f.requester_name.trim()) return setError('Informe o nome do titular.');
+    setError('');
+    return onSubmit(f);
+  };
   return (
-    <DialogShell open title={item ? 'Editar solicitação' : 'Nova solicitação do titular'} subtitle="Controle formal de direitos previstos no Art. 18 da LGPD." onClose={onClose} size="max-w-4xl">
-      <div className="grid gap-4 md:grid-cols-2">
-        <TF label="Titular *" value={f.requester_name} onChange={set('requester_name')} />
-        <TF label="E-mail" value={f.requester_email} onChange={set('requester_email')} type="email" />
-        <TF label="Documento" value={f.requester_document} onChange={set('requester_document')} />
-        <TF label="Prazo" value={f.due_date} onChange={set('due_date')} type="date" />
-        <SF label="Tipo de direito *" value={f.request_type} onChange={set('request_type')} options={REQUEST_TYPE_OPTIONS} />
-        <SF label="Status" value={f.status} onChange={set('status')} options={[
-          { value: 'recebido', label: 'Recebido' }, { value: 'em-analise', label: 'Em análise' },
-          { value: 'atendido', label: 'Atendido' }, { value: 'indeferido', label: 'Indeferido' }, { value: 'encerrado', label: 'Encerrado' },
-        ]} />
-        <div className="md:col-span-2"><TF label="Resposta resumida" value={f.response_summary} onChange={set('response_summary')} multiline /></div>
-        <div className="md:col-span-2"><TF label="Observações" value={f.notes} onChange={set('notes')} multiline /></div>
-      </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-        <ActionButton tone="primary" onClick={() => onSubmit(f)} disabled={saving}>{saving ? 'Salvando...' : 'Salvar solicitação'}</ActionButton>
-      </div>
-    </DialogShell>
+    <FormDrawer open title={item ? 'Editar solicitação' : 'Nova solicitação do titular'} description="Controle formal de direitos previstos no Art. 18 da LGPD." saving={saving} error={error} submitLabel="Salvar solicitação" onClose={onClose} onSubmit={submit}>
+      <TF label="Titular *" value={f.requester_name} onChange={set('requester_name')} />
+      <TF label="E-mail" value={f.requester_email} onChange={set('requester_email')} type="email" />
+      <TF label="Documento" value={f.requester_document} onChange={set('requester_document')} />
+      <TF label="Prazo" value={f.due_date} onChange={set('due_date')} type="date" />
+      <SF label="Tipo de direito *" value={f.request_type} onChange={set('request_type')} options={REQUEST_TYPE_OPTIONS} />
+      <SF label="Status" value={f.status} onChange={set('status')} options={REQ_STATUS_OPTIONS} />
+      <Full><TF label="Resposta resumida" value={f.response_summary} onChange={set('response_summary')} multiline /></Full>
+      <Full><TF label="Observações" value={f.notes} onChange={set('notes')} multiline /></Full>
+    </FormDrawer>
   );
 }
 
 function IncidentDialog({ open, item, saving, onClose, onSubmit }) {
   const [f, setF] = useState(defaultIncident);
+  const [error, setError] = useState('');
   useEffect(() => {
     if (!open) return;
+    setError('');
     setF(item ? { ...defaultIncident, ...item, affected_data: joinList(item.affected_data), occurred_at: item.occurred_at ? String(item.occurred_at).slice(0, 16) : '', reported_at: item.reported_at ? String(item.reported_at).slice(0, 16) : '', authority_notified_at: item.authority_notified_at ? String(item.authority_notified_at).slice(0, 16) : '' } : defaultIncident);
   }, [open, item]);
   if (!open) return null;
   const set = (k) => (v) => setF((p) => ({ ...p, [k]: v }));
+  const submit = () => {
+    if (!f.title.trim()) return setError('Informe o título do incidente.');
+    setError('');
+    return onSubmit({ ...f, affected_data: splitList(f.affected_data) });
+  };
   return (
-    <DialogShell open title={item ? 'Editar incidente LGPD' : 'Novo incidente LGPD'} subtitle="Registro formal: impacto, contenção e comunicação à autoridade (Art. 48)." onClose={onClose} size="max-w-5xl">
-      <div className="grid gap-4 md:grid-cols-2">
-        <TF label="Título *" value={f.title} onChange={set('title')} />
-        <TF label="Titulares afetados (estimativa)" value={String(f.affected_subjects_estimate)} onChange={(v) => set('affected_subjects_estimate')(Number(v || 0))} type="number" />
-        <SF label="Severidade" value={f.severity} onChange={set('severity')} options={[{ value: 'baixo', label: 'Baixo' }, { value: 'medio', label: 'Médio' }, { value: 'alto', label: 'Alto' }, { value: 'critico', label: 'Crítico' }]} />
-        <SF label="Status" value={f.status} onChange={set('status')} options={[
-          { value: 'aberto', label: 'Aberto' }, { value: 'investigacao', label: 'Em investigação' },
-          { value: 'contido', label: 'Contido' }, { value: 'comunicado', label: 'Comunicado' }, { value: 'encerrado', label: 'Encerrado' },
-        ]} />
-        <TF label="Ocorrido em" value={f.occurred_at} onChange={set('occurred_at')} type="datetime-local" />
-        <TF label="Reportado em" value={f.reported_at} onChange={set('reported_at')} type="datetime-local" />
-        <div className="md:col-span-2"><TF label="Dados afetados" value={f.affected_data} onChange={set('affected_data')} multiline placeholder="cadastro, autenticação, endereço..." /></div>
-        <div className="md:col-span-2"><TF label="Resumo do incidente" value={f.summary} onChange={set('summary')} multiline /></div>
-        <div className="md:col-span-2"><TF label="Ações de contenção" value={f.containment_actions} onChange={set('containment_actions')} multiline /></div>
-        <div className="md:col-span-2">
-          <Toggle label="Autoridade comunicada (ANPD)" checked={f.authority_notified} onChange={set('authority_notified')} hint="Marque quando houver comunicação formal à ANPD ou outra autoridade." />
-          {f.authority_notified && <div className="mt-3"><TF label="Data da comunicação" value={f.authority_notified_at} onChange={set('authority_notified_at')} type="datetime-local" /></div>}
-        </div>
-        <div className="md:col-span-2"><TF label="Observações" value={f.notes} onChange={set('notes')} multiline /></div>
-      </div>
-      <div className="mt-6 flex justify-end gap-2">
-        <ActionButton tone="ghost" onClick={onClose}>Cancelar</ActionButton>
-        <ActionButton tone="primary" onClick={() => onSubmit({ ...f, affected_data: splitList(f.affected_data) })} disabled={saving}>{saving ? 'Salvando...' : 'Salvar incidente'}</ActionButton>
-      </div>
-    </DialogShell>
+    <FormDrawer open title={item ? 'Editar incidente LGPD' : 'Novo incidente LGPD'} description="Registro formal: impacto, contenção e comunicação à autoridade (Art. 48)." saving={saving} error={error} submitLabel="Salvar incidente" onClose={onClose} onSubmit={submit}>
+      <TF label="Título *" value={f.title} onChange={set('title')} />
+      <TF label="Titulares afetados (estimativa)" value={String(f.affected_subjects_estimate)} onChange={(v) => set('affected_subjects_estimate')(Number(v || 0))} type="number" />
+      <SF label="Severidade" value={f.severity} onChange={set('severity')} options={RISK_OPTIONS} />
+      <SF label="Status" value={f.status} onChange={set('status')} options={INC_STATUS_OPTIONS} />
+      <TF label="Ocorrido em" value={f.occurred_at} onChange={set('occurred_at')} type="datetime-local" />
+      <TF label="Reportado em" value={f.reported_at} onChange={set('reported_at')} type="datetime-local" />
+      <Full><TF label="Dados afetados" value={f.affected_data} onChange={set('affected_data')} multiline placeholder="cadastro, autenticação, endereço…" hint="Separe por vírgula." /></Full>
+      <Full><TF label="Resumo do incidente" value={f.summary} onChange={set('summary')} multiline /></Full>
+      <Full><TF label="Ações de contenção" value={f.containment_actions} onChange={set('containment_actions')} multiline /></Full>
+      <Full>
+        <ToggleRow label="Autoridade comunicada (ANPD)" checked={f.authority_notified} onChange={set('authority_notified')} hint="Ligue quando houver comunicação formal à ANPD ou outra autoridade." />
+        {f.authority_notified ? <div className="mt-3"><TF label="Data da comunicação" value={f.authority_notified_at} onChange={set('authority_notified_at')} type="datetime-local" /></div> : null}
+      </Full>
+      <Full><TF label="Observações" value={f.notes} onChange={set('notes')} multiline /></Full>
+    </FormDrawer>
   );
 }
 
-// ─── Shared UI ────────────────────────────────────────────────────────────────
+// ─── Peças de tela ────────────────────────────────────────────────────────────
 
-function KpiCard({ icon: Icon, label, value, sub, tone = 'primary', alert = false }) {
-  const iconCls = {
-    primary: 'border-primary/16 bg-primary/10 text-primary',
-    danger:  'border-danger/18 bg-danger/10 text-danger',
-    warning: 'border-warning/20 bg-warning/10 text-warning',
-    success: 'border-info/18 bg-info/10 text-info',
-  }[tone] || 'border-primary/16 bg-primary/10 text-primary';
+const filterCls = `${inputCls} sm:!w-auto sm:min-w-[170px]`;
+
+function FilterBar({ count, total, children }) {
   return (
-    <Surface stripe={false} className="p-5">
-      <div className={`inline-flex h-10 w-10 items-center justify-center rounded-2xl border ${iconCls}`}>
-        <Icon size={18} />
-      </div>
-      <div className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">{label}</div>
-      <div className={`mt-1 text-3xl font-bold tracking-tight ${alert && Number(value) > 0 ? 'text-danger' : 'text-on-surface'}`}>{value ?? '—'}</div>
-      {sub && <div className="mt-1.5 text-xs text-on-surface/55">{sub}</div>}
-    </Surface>
-  );
-}
-
-const TableWrap = ({ children, minW = '700px' }) => (
-  <div className="overflow-x-auto rounded-xl border border-outline/10 bg-surface-high shadow-sm">
-    <table className="w-full text-sm" style={{ minWidth: minW }}>
+    <div className="flex flex-wrap items-center gap-2 border-b border-outline px-4 py-3">
       {children}
-    </table>
-  </div>
-);
-const Th = ({ children }) => (
-  <th className="px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-on-surface/50">{children}</th>
-);
-const Td = ({ children, className = '' }) => (
-  <td className={`px-3 py-2.5 ${className}`}>{children}</td>
-);
-
-function FilterBar({ children }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-outline/10 bg-surface-high px-4 py-3">
-      {children}
+      <span className="tabular ml-auto text-[12px] text-on-surface/50">{count} de {total}</span>
     </div>
   );
 }
-const filterSelectCls = 'rounded-lg border border-outline/16 bg-surface px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/30';
-const filterInputCls  = 'rounded-lg border border-outline/16 bg-surface px-2.5 py-1.5 text-xs text-on-surface outline-none focus:border-primary/30 min-w-[180px]';
 
-const Spinner = () => (
-  <div className="flex items-center justify-center gap-2 py-14 text-on-surface/40">
-    <RefreshCcw size={16} className="animate-spin" />
-    <span className="text-sm">Carregando...</span>
-  </div>
-);
-
-// ─── Main component ───────────────────────────────────────────────────────────
+const fillerNote = (loading, empty) => (loading ? 'Carregando…' : empty);
 
 export default function Lgpd() {
-  const [activeTab, setActiveTab] = useUrlTab([{ key: 'painel' }, { key: 'inventario' }, { key: 'titulares' }, { key: 'incidentes' }, { key: 'auditoria' }], 'painel');
+  const [activeTab, setActiveTab] = useUrlTab(TABS, 'painel');
   const [audSubTab, setAudSubTab]  = useState('lgpd');
 
   // Filters (client-side, applied on local data)
@@ -456,36 +432,39 @@ export default function Lgpd() {
     return true;
   }), [incidents, incSeverity, incStatus]);
 
-  // Save functions
-  const saveProgram = async (payload) => {
-    setSaving((s) => ({ ...s, program: true }));
-    try { await api.post('/api/lgpd/program-settings', payload); await load(); setProgramDialog(false); }
-    finally { setSaving((s) => ({ ...s, program: false })); }
-  };
-  const saveProcessing = async (payload) => {
-    setSaving((s) => ({ ...s, processing: true }));
+  // Salvar: avisa o resultado e só fecha a gaveta se deu certo (antes um erro do servidor não aparecia).
+  const persist = async (kind, request, done, okMessage) => {
+    setSaving((s) => ({ ...s, [kind]: true }));
     try {
-      if (processingDialog.item?.id) await api.patch(`/api/lgpd/processing-activities/${processingDialog.item.id}`, payload);
-      else await api.post('/api/lgpd/processing-activities', payload);
-      await load(); setProcessingDialog({ open: false, item: null });
-    } finally { setSaving((s) => ({ ...s, processing: false })); }
+      await request();
+      await load();
+      done();
+      toast(okMessage);
+    } catch (e) {
+      toast(errorMessage(e, 'Não foi possível salvar. Confira os campos e tente de novo.'), 'danger');
+    } finally {
+      setSaving((s) => ({ ...s, [kind]: false }));
+    }
   };
-  const saveRequest = async (payload) => {
-    setSaving((s) => ({ ...s, request: true }));
-    try {
-      if (requestDialog.item?.id) await api.patch(`/api/lgpd/requests/${requestDialog.item.id}`, payload);
-      else await api.post('/api/lgpd/requests', payload);
-      await load(); setRequestDialog({ open: false, item: null });
-    } finally { setSaving((s) => ({ ...s, request: false })); }
-  };
-  const saveIncident = async (payload) => {
-    setSaving((s) => ({ ...s, incident: true }));
-    try {
-      if (incidentDialog.item?.id) await api.patch(`/api/lgpd/incidents/${incidentDialog.item.id}`, payload);
-      else await api.post('/api/lgpd/incidents', payload);
-      await load(); setIncidentDialog({ open: false, item: null });
-    } finally { setSaving((s) => ({ ...s, incident: false })); }
-  };
+  const saveProgram = (payload) => persist('program', () => api.post('/api/lgpd/program-settings', payload), () => setProgramDialog(false), 'Estrutura institucional salva.');
+  const saveProcessing = (payload) => persist(
+    'processing',
+    () => (processingDialog.item?.id ? api.patch(`/api/lgpd/processing-activities/${processingDialog.item.id}`, payload) : api.post('/api/lgpd/processing-activities', payload)),
+    () => setProcessingDialog({ open: false, item: null }),
+    'Atividade de tratamento salva.',
+  );
+  const saveRequest = (payload) => persist(
+    'request',
+    () => (requestDialog.item?.id ? api.patch(`/api/lgpd/requests/${requestDialog.item.id}`, payload) : api.post('/api/lgpd/requests', payload)),
+    () => setRequestDialog({ open: false, item: null }),
+    'Solicitação salva.',
+  );
+  const saveIncident = (payload) => persist(
+    'incident',
+    () => (incidentDialog.item?.id ? api.patch(`/api/lgpd/incidents/${incidentDialog.item.id}`, payload) : api.post('/api/lgpd/incidents', payload)),
+    () => setIncidentDialog({ open: false, item: null }),
+    'Incidente salvo.',
+  );
 
   const exportInventoryPdf = async () => {
     setPdfLoading(true);
@@ -499,7 +478,7 @@ export default function Lgpd() {
       const a = document.createElement('a');
       a.href = url; a.download = `inventario-lgpd-${new Date().toISOString().slice(0, 10)}.pdf`; a.click();
       URL.revokeObjectURL(url);
-    } catch (e) { toast('Erro ao gerar PDF: ' + e.message, 'danger'); }
+    } catch (e) { toast(`Não foi possível gerar o PDF: ${e.message}`, 'danger'); }
     finally { setPdfLoading(false); }
   };
 
@@ -556,476 +535,328 @@ export default function Lgpd() {
   const highRiskList = useMemo(() => activities.filter((a) => ['alto', 'critico'].includes(a.risk_level)), [activities]);
   const privacyNoticeUrl = program.privacy_notice_url || PRIVACY_NOTICE_URL;
 
+  // ─── Colunas das tabelas ───────────────────────────────────────────────────
+  const inventoryColumns = [
+    { key: 'process_name', label: 'Processo', render: (a) => (
+      <div className="min-w-[200px]">
+        <div className="font-semibold text-on-surface">{a.process_name}</div>
+        {a.purpose ? <div className="mt-0.5 max-w-[320px] truncate text-[12px] text-on-surface/55" title={a.purpose}>{a.purpose}</div> : null}
+      </div>
+    ) },
+    { key: 'legal_basis', label: 'Base legal', render: (a) => <span className="block max-w-[180px] truncate text-on-surface/75" title={a.legal_basis}>{a.legal_basis || '—'}</span> },
+    { key: 'risk_level', label: 'Risco', render: (a) => <Badge tone={RISK_TONE[a.risk_level] || 'neutral'}>{RISK_LABEL[a.risk_level] || a.risk_level || '—'}</Badge> },
+    { key: 'status', label: 'Status', render: (a) => <Badge tone={STATUS_PA_TONE[a.status] || 'neutral'} dot>{STATUS_PA_LABEL[a.status] || a.status || '—'}</Badge> },
+    { key: 'retention_period', label: 'Retenção', render: (a) => a.retention_period || '—' },
+    { key: 'controller_name', label: 'Controlador', render: (a) => a.controller_name || '—' },
+    { key: 'actions', label: '', align: 'right', render: (a) => <Button variant="ghost" onClick={() => setProcessingDialog({ open: true, item: a })}>Editar</Button> },
+  ];
+
+  const requestColumns = [
+    { key: 'requester_name', label: 'Titular', render: (r) => (
+      <div className="min-w-[180px]">
+        <div className="font-semibold text-on-surface">{r.requester_name}</div>
+        {r.requester_email ? <div className="text-[12px] text-on-surface/55">{r.requester_email}</div> : null}
+      </div>
+    ) },
+    { key: 'request_type', label: 'Tipo de direito', render: (r) => rtLabel(r.request_type) },
+    { key: 'status', label: 'Status', render: (r) => <Badge tone={STATUS_REQ_TONE[r.status] || 'neutral'} dot>{STATUS_REQ_LABEL[r.status] || r.status}</Badge> },
+    { key: 'due_date', label: 'Prazo', render: (r) => {
+      const overdue = r.due_date && new Date(r.due_date) < new Date() && !['atendido', 'indeferido', 'encerrado'].includes(r.status);
+      return (
+        <span className={overdue ? 'font-semibold text-danger' : 'text-on-surface/75'}>
+          {r.due_date ? fmtDate(r.due_date) : '—'}
+          {overdue ? ' · vencido' : ''}
+        </span>
+      );
+    } },
+    { key: 'updated_at', label: 'Atualizado', render: (r) => <span className="text-on-surface/55">{fmt(r.updated_at)}</span> },
+    { key: 'actions', label: '', align: 'right', render: (r) => <Button variant="ghost" onClick={() => setRequestDialog({ open: true, item: r })}>Editar</Button> },
+  ];
+
+  const incidentColumns = [
+    { key: 'title', label: 'Título', render: (i) => (
+      <div className="min-w-[200px]">
+        <div className="font-semibold text-on-surface">{i.title}</div>
+        {i.summary ? <div className="mt-0.5 max-w-[300px] truncate text-[12px] text-on-surface/55" title={i.summary}>{i.summary}</div> : null}
+      </div>
+    ) },
+    { key: 'severity', label: 'Severidade', render: (i) => <Badge tone={RISK_TONE[i.severity] || 'neutral'}>{RISK_LABEL[i.severity] || i.severity}</Badge> },
+    { key: 'status', label: 'Status', render: (i) => <Badge tone={STATUS_INC_TONE[i.status] || 'neutral'} dot>{STATUS_INC_LABEL[i.status] || i.status}</Badge> },
+    { key: 'occurred_at', label: 'Ocorrido em', render: (i) => (i.occurred_at ? fmt(i.occurred_at) : '—') },
+    { key: 'affected_subjects_estimate', label: 'Titulares', render: (i) => <span className="tabular font-semibold">{i.affected_subjects_estimate || 0}</span> },
+    { key: 'authority_notified', label: 'Autoridade', render: (i) => <Badge tone={i.authority_notified ? 'success' : 'neutral'}>{i.authority_notified ? 'Comunicado' : 'Não comunicado'}</Badge> },
+    { key: 'actions', label: '', align: 'right', render: (i) => <Button variant="ghost" onClick={() => setIncidentDialog({ open: true, item: i })}>Editar</Button> },
+  ];
+
+  const auditColumns = [
+    { key: 'created_at', label: 'Data e hora', mono: true, render: (ev) => <span className="text-on-surface/65">{fmt(ev.created_at)}</span> },
+    { key: 'entity_type', label: 'Área afetada', render: (ev) => <Badge tone="primary">{auditTypeLabel(ev.entity_type)}</Badge> },
+    { key: 'action', label: 'O que aconteceu', render: (ev) => {
+      const info = auditActionInfo(ev.action, ev.entity_type);
+      return (
+        <div className="min-w-[200px]">
+          <div className="font-semibold text-on-surface">{info.label}</div>
+          <div className="mt-0.5 max-w-[360px] text-[12px] leading-5 text-on-surface/60">{ev.message || info.description}</div>
+        </div>
+      );
+    } },
+    { key: 'actor_username', label: 'Operador', render: (ev) => <div><div>{ev.actor_username || 'sistema'}</div><div className="tabular text-[11.5px] text-on-surface/50">{ev.actor_ip || '—'}</div></div> },
+    { key: 'success', label: 'Resultado', render: (ev) => <Badge tone={ev.success !== false ? 'success' : 'danger'} dot>{ev.success !== false ? 'Registrado' : 'Falhou'}</Badge> },
+  ];
+
+  const accessColumns = [
+    { key: 'created_at', label: 'Data e hora', mono: true, render: (ev) => <span className="text-on-surface/65">{fmt(ev.created_at)}</span> },
+    { key: 'username', label: 'Usuário', render: (ev) => <span className="font-semibold">{ev.username || 'anônimo'}</span> },
+    { key: 'action', label: 'Evento', render: (ev) => authActionLabel(ev.action) },
+    { key: 'ip_address', label: 'IP', mono: true, render: (ev) => <span className="text-on-surface/65">{ev.ip_address || '—'}</span> },
+    { key: 'route', label: 'Rota', render: (ev) => <span className="block max-w-[220px] truncate text-on-surface/55" title={ev.route}>{ev.route || '—'}</span> },
+    { key: 'success', label: 'Resultado', render: (ev) => <Badge tone={ev.success ? 'success' : 'danger'} dot>{ev.success ? 'Autorizado' : 'Recusado'}</Badge> },
+  ];
+
+  const rightsTiles = [
+    { key: 'confirmacao', label: 'Confirmação' },
+    { key: 'acesso', label: 'Acesso' },
+    { key: 'correcao', label: 'Correção' },
+    { key: 'anonimizacao', label: 'Anonimização' },
+    { key: 'eliminacao', label: 'Eliminação' },
+    { key: 'portabilidade', label: 'Portabilidade' },
+    { key: 'informacao_compartilhamento', label: 'Compartilhamento' },
+    { key: 'revogacao_consentimento', label: 'Revogação' },
+    { key: 'oposicao', label: 'Oposição' },
+  ];
+
+  const attention = [
+    { label: 'Áreas sem responsabilidade completa', value: s.processing?.missing_safeguards ?? 0, desc: 'Falta responsável, retenção ou segurança declarada.', tone: 'danger' },
+    { label: 'Pedidos fora do prazo', value: s.requests?.overdue ?? 0, desc: 'Demandas de pessoas aguardando resposta.', tone: 'danger' },
+    { label: 'Incidentes graves pendentes', value: s.incidents?.pending_notification ?? 0, desc: 'Precisam de decisão sobre comunicação formal.', tone: 'warning' },
+  ];
+
+  const openProcessing = () => setProcessingDialog({ open: true, item: null });
+  const openRequest = () => setRequestDialog({ open: true, item: null });
+  const openIncident = () => setIncidentDialog({ open: true, item: null });
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6 pb-12 animate-in fade-in duration-500">
-      {/* Dialogs */}
-      <ProgramDialog    open={programDialog}           item={program}              saving={saving.program}    onClose={() => setProgramDialog(false)}                           onSubmit={saveProgram} />
-      <ProcessingDialog open={processingDialog.open}   item={processingDialog.item} saving={saving.processing} onClose={() => setProcessingDialog({ open: false, item: null })} onSubmit={saveProcessing} />
-      <RequestDialog    open={requestDialog.open}      item={requestDialog.item}   saving={saving.request}   onClose={() => setRequestDialog({ open: false, item: null })}     onSubmit={saveRequest} />
-      <IncidentDialog   open={incidentDialog.open}     item={incidentDialog.item}  saving={saving.incident}  onClose={() => setIncidentDialog({ open: false, item: null })}    onSubmit={saveIncident} />
+    <div className="space-y-4">
+      <ProgramDialog    open={programDialog}         item={program}               saving={saving.program}    onClose={() => setProgramDialog(false)}                            onSubmit={saveProgram} />
+      <ProcessingDialog open={processingDialog.open} item={processingDialog.item} saving={saving.processing} onClose={() => setProcessingDialog({ open: false, item: null })} onSubmit={saveProcessing} />
+      <RequestDialog    open={requestDialog.open}    item={requestDialog.item}    saving={saving.request}    onClose={() => setRequestDialog({ open: false, item: null })}    onSubmit={saveRequest} />
+      <IncidentDialog   open={incidentDialog.open}   item={incidentDialog.item}   saving={saving.incident}   onClose={() => setIncidentDialog({ open: false, item: null })}   onSubmit={saveIncident} />
 
-      {/* Header */}
-      <ModuleHeader
-        eyebrow="Governança"
-        title="Proteção de Dados e Responsabilidade Pública"
-        description="Visão de gestão sobre os dados pessoais sob responsabilidade da Prefeitura: onde existem dados, quais pedidos precisam de resposta, quais riscos exigem providência e quais evidências comprovam a atuação institucional."
-        badges={<>
-          <StatusChip label="Gestão governamental" tone="primary" />
-          <StatusChip label="Dados pessoais" tone="success" />
-          <StatusChip label="Risco e resposta" tone="warning" />
-          <StatusChip label="Evidência auditável" tone="danger" />
-        </>}
-        actions={<>
-          <ActionButton tone="ghost" icon={RefreshCcw} onClick={() => load().catch(() => null)}>Atualizar</ActionButton>
-          <ActionButton tone="ghost" icon={FileCheck2} onClick={() => setProgramDialog(true)}>Estrutura de governança</ActionButton>
-        </>}
+      <PageHeader
+        title="Proteção de Dados (LGPD)"
+        description="Quais dados pessoais a Prefeitura guarda, quais pedidos precisam de resposta, quais riscos exigem providência e quais evidências comprovam a atuação institucional."
+        actions={(
+          <>
+            <Button icon={RefreshCw} onClick={() => load().catch(() => null)} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</Button>
+            <Button icon={FileCheck2} onClick={() => setProgramDialog(true)}>Estrutura de governança</Button>
+          </>
+        )}
       />
 
-      {/* Legal support */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-outline/12 bg-surface-high/70 px-4 py-3 shadow-sm">
-        <div className="flex items-center gap-2 text-on-surface">
-          <Shield size={14} className="shrink-0 text-primary" />
-          <span className="text-[11px] font-bold uppercase tracking-wider">Base legal de sustentação</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {LGPD_REFS.map((r) => (
-            <span key={r.art} className="rounded-full border border-primary/20 bg-primary/8 px-2.5 py-0.5 text-[10px] font-medium text-on-surface">
-              <span className="font-bold text-primary">{r.art}</span>: {r.desc}
-            </span>
-          ))}
-        </div>
-        <div className="ml-auto flex items-center gap-1.5 text-[10px] text-on-surface/60">
-          <Lock size={10} />
-          Evidências preservadas para controle interno
-        </div>
+      {error ? <Notice tone="warning" title="Carregamento incompleto">{error} Os demais dados continuam disponíveis.</Notice> : null}
+
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-outline bg-container px-3 py-2 text-[12.5px] text-on-surface/70">
+        <span className="inline-flex items-center gap-1.5 font-semibold text-on-surface"><Shield size={14} className="text-primary" />Base legal</span>
+        {LGPD_REFS.map((r) => <Badge key={r.art} tone="primary">{r.art} · {r.desc}</Badge>)}
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="flex items-center gap-2 rounded-xl border border-danger/20 bg-danger/8 px-4 py-3 text-sm text-danger">
-          <AlertTriangle size={14} /> {error}
-        </div>
-      )}
+      <Tabs tabs={TABS} value={activeTab} onChange={setActiveTab} />
 
-      {/* Tab navigation */}
-      <SegmentedTabs tabs={TABS} value={activeTab} onChange={setActiveTab} />
+      {activeTab === 'painel' ? (
+        <div className="space-y-4">
+          <KpiRow>
+            <Kpi icon={ClipboardList} label="Áreas com dados pessoais" value={s.processing?.total ?? 0} sub={`${s.processing?.approved ?? 0} com responsabilidade validada`} />
+            <Kpi icon={ShieldAlert} label="Riscos relevantes" value={s.processing?.high_risk ?? 0} tone={s.processing?.high_risk > 0 ? 'danger' : 'neutral'} sub="Precisam de acompanhamento" />
+            <Kpi icon={UserRoundSearch} label="Pedidos em andamento" value={s.requests?.open ?? 0} tone={s.requests?.overdue > 0 ? 'danger' : 'neutral'} sub={`${s.requests?.overdue ?? 0} fora do prazo`} />
+            <Kpi icon={AlertTriangle} label="Incidentes em aberto" value={s.incidents?.open ?? 0} tone={s.incidents?.open > 0 ? 'warning' : 'neutral'} sub={`${s.incidents?.pending_notification ?? 0} graves sem comunicação`} />
+          </KpiRow>
 
-      {/* ── PAINEL ──────────────────────────────────────────────────────────── */}
-      {activeTab === 'painel' && (
-        <div className="space-y-6">
-          {/* KPIs */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <KpiCard icon={ClipboardList}  label="Áreas com dados pessoais" value={s.processing?.total ?? 0} sub={`${s.processing?.approved ?? 0} com responsabilidade validada`} />
-            <KpiCard icon={ShieldAlert}    label="Riscos relevantes" value={s.processing?.high_risk ?? 0} sub="Precisam de acompanhamento gestor" tone="danger" alert />
-            <KpiCard icon={UserRoundSearch} label="Pedidos em andamento" value={s.requests?.open ?? 0} sub={`${s.requests?.overdue ?? 0} fora do prazo`} tone={s.requests?.overdue > 0 ? 'danger' : 'primary'} alert={s.requests?.overdue > 0} />
-            <KpiCard icon={AlertTriangle}   label="Incidentes em aberto" value={s.incidents?.open ?? 0} sub={`${s.incidents?.pending_notification ?? 0} graves sem comunicação`} tone="warning" alert />
-          </div>
-
-          {!hasGovernanceData && !loading && (
-            <Surface stripe={false} className="p-6">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="max-w-3xl">
-                  <div className="text-sm font-bold text-on-surface">Painel ainda sem registros de gestão</div>
-                  <p className="mt-2 text-sm leading-6 text-on-surface/62">
-                    O painel não deve parecer quebrado quando está vazio: ele está aguardando o cadastro das áreas que tratam dados pessoais, pedidos de pessoas ou incidentes. Comece pelo mapa de responsabilidades.
-                  </p>
-                </div>
+          {!hasGovernanceData && !loading ? (
+            <Notice
+              tone="primary"
+              title="Painel ainda sem registros"
+              action={(
                 <div className="flex flex-wrap gap-2">
-                  <ActionButton tone="primary" icon={Plus} onClick={() => { setActiveTab('inventario'); setProcessingDialog({ open: true, item: null }); }}>Mapear dados</ActionButton>
-                  <ActionButton tone="ghost" icon={UserRoundSearch} onClick={() => { setActiveTab('titulares'); setRequestDialog({ open: true, item: null }); }}>Registrar pedido</ActionButton>
+                  <Button variant="primary" icon={Plus} onClick={() => { setActiveTab('inventario'); openProcessing(); }}>Mapear dados</Button>
+                  <Button icon={UserRoundSearch} onClick={() => { setActiveTab('titulares'); openRequest(); }}>Registrar pedido</Button>
                 </div>
-              </div>
-            </Surface>
-          )}
-
-          {/* Program + Compliance */}
-          <div className="grid gap-4 xl:grid-cols-3">
-            {/* Program card */}
-            <Surface stripe={false} className="xl:col-span-2 p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-primary/16 bg-primary/10 text-primary">
-                    <Building2 size={18} />
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold uppercase tracking-wider text-on-surface/50">Responsabilidade institucional</div>
-                    <div className="mt-0.5 text-lg font-bold text-on-surface">{program.controller_name || 'Controlador não definido'}</div>
-                  </div>
-                </div>
-                <ActionButton tone="ghost" icon={FileCheck2} onClick={() => setProgramDialog(true)}>Editar</ActionButton>
-              </div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {[
-                  { label: 'Unidade responsável', value: program.controller_unit || '—' },
-                  { label: 'E-mail do controlador', value: program.controller_email || '—' },
-                  { label: 'Responsável por dados', value: program.dpo_name || 'Não definido' },
-                  { label: 'Contato do responsável', value: program.dpo_email || '—' },
-                  { label: 'Canal de atendimento', value: program.data_subject_channel || '—' },
-                  { label: 'Revisão da governança', value: `A cada ${program.review_frequency_days || 180} dias` },
-                ].map((item) => (
-                  <div key={item.label} className="rounded-xl border border-outline/10 bg-surface p-3">
-                    <div className="text-[10px] font-semibold uppercase tracking-wider text-on-surface/45">{item.label}</div>
-                    <div className="mt-1 text-sm font-semibold text-on-surface">{item.value}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 rounded-xl border border-primary/12 bg-primary/6 px-4 py-2.5 text-sm text-on-surface/70">
-                Aviso de privacidade publicado:{' '}
-                <a href={privacyNoticeUrl} target="_blank" rel="noreferrer" className="font-semibold text-primary underline-offset-4 hover:underline">
-                  {privacyNoticeUrl}
-                </a>
-              </div>
-              {program.last_review_at && (
-                <div className="mt-2 text-xs text-on-surface/45">Última revisão registrada: {fmtDate(program.last_review_at)}</div>
               )}
-            </Surface>
+            >
+              O painel começa a preencher quando houver cadastro das áreas que tratam dados pessoais, pedidos de pessoas ou incidentes. Comece pelo mapa de responsabilidades.
+            </Notice>
+          ) : null}
 
-            {/* Compliance gaps */}
-            <Surface stripe={false} className="p-6">
-              <div className="mb-4 text-sm font-bold text-on-surface">Providências que exigem atenção</div>
-              <div className="space-y-3">
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Panel
+              className="xl:col-span-2"
+              title={program.controller_name || 'Controlador não definido'}
+              description="Responsabilidade institucional"
+              actions={<Button icon={FileCheck2} onClick={() => setProgramDialog(true)}>Editar</Button>}
+            >
+              <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {[
-                  { label: 'Áreas sem responsabilidade completa', value: s.processing?.missing_safeguards ?? 0, desc: 'Falta responsável, retenção ou segurança declarada', tone: 'danger' },
-                  { label: 'Pedidos fora do prazo', value: s.requests?.overdue ?? 0, desc: 'Demandas de pessoas aguardando resposta', tone: 'danger' },
-                  { label: 'Incidentes graves pendentes', value: s.incidents?.pending_notification ?? 0, desc: 'Precisam de decisão sobre comunicação formal', tone: 'warning' },
-                ].map((item) => (
-                  <div key={item.label} className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${item.value > 0 ? 'border-danger/20 bg-danger/6' : 'border-outline/12 bg-surface'}`}>
-                    {item.value > 0
-                      ? <XCircle size={16} className="shrink-0 text-danger" />
-                      : <CheckCircle2 size={16} className="shrink-0 text-info" />}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold text-on-surface">{item.label}</div>
-                      <div className="text-xs text-on-surface/55">{item.desc}</div>
-                    </div>
-                    <div className={`text-2xl font-bold ${item.value > 0 ? 'text-danger' : 'text-info'}`}>{item.value}</div>
+                  ['Unidade responsável', program.controller_unit || '—'],
+                  ['E-mail do controlador', program.controller_email || '—'],
+                  ['Responsável por dados (DPO)', program.dpo_name || 'Não definido'],
+                  ['Contato do responsável', program.dpo_email || '—'],
+                  ['Canal de atendimento', program.data_subject_channel || '—'],
+                  ['Revisão da governança', `A cada ${program.review_frequency_days || 180} dias`],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-lg border border-outline px-3 py-2">
+                    <dt className="text-[11.5px] text-on-surface/50">{label}</dt>
+                    <dd className="mt-0.5 break-words text-[13.5px] font-semibold text-on-surface">{value}</dd>
                   </div>
                 ))}
-              </div>
-            </Surface>
+              </dl>
+              <p className="mt-3 text-[13px] text-on-surface/70">
+                Aviso de privacidade publicado:{' '}
+                <a href={privacyNoticeUrl} target="_blank" rel="noreferrer" className="font-semibold text-primary underline-offset-4 hover:underline">{privacyNoticeUrl}</a>
+              </p>
+              {program.last_review_at ? <p className="mt-1 text-[12px] text-on-surface/50">Última revisão registrada: {fmtDate(program.last_review_at)}</p> : null}
+            </Panel>
+
+            <Panel title="Providências que exigem atenção">
+              <ul className="space-y-2">
+                {attention.map((item) => (
+                  <li key={item.label} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${item.value > 0 ? (item.tone === 'warning' ? 'border-warning/30 bg-warning/8' : 'border-danger/30 bg-danger/8') : 'border-outline'}`}>
+                    {item.value > 0
+                      ? <XCircle size={16} className={`shrink-0 ${item.tone === 'warning' ? 'text-warning' : 'text-danger'}`} />
+                      : <CheckCircle2 size={16} className="shrink-0 text-success" />}
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px] font-semibold text-on-surface">{item.label}</div>
+                      <div className="text-[12px] text-on-surface/55">{item.desc}</div>
+                    </div>
+                    <div className={`tabular text-xl font-bold ${item.value > 0 ? (item.tone === 'warning' ? 'text-warning' : 'text-danger') : 'text-success'}`}>{item.value}</div>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
           </div>
 
-          {/* Direitos do Titular summary */}
-          <Surface stripe={false} className="p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <div className="text-sm font-bold text-on-surface">Pedidos de pessoas</div>
-                <div className="mt-0.5 text-xs text-on-surface/50">Que tipo de demanda a Prefeitura está recebendo sobre dados pessoais</div>
-              </div>
-              <ActionButton tone="ghost" icon={Plus} onClick={() => { setActiveTab('titulares'); setRequestDialog({ open: true, item: null }); }}>Nova solicitação</ActionButton>
-            </div>
-            <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 lg:grid-cols-9">
-              {[
-                { key: 'confirmacao', label: 'Confirmação' },
-                { key: 'acesso', label: 'Acesso' },
-                { key: 'correcao', label: 'Correção' },
-                { key: 'anonimizacao', label: 'Anonimização' },
-                { key: 'eliminacao', label: 'Eliminação' },
-                { key: 'portabilidade', label: 'Portabilidade' },
-                { key: 'informacao_compartilhamento', label: 'Compartilh.' },
-                { key: 'revogacao_consentimento', label: 'Revogação' },
-                { key: 'oposicao', label: 'Oposição' },
-              ].map((d) => (
-                <div key={d.key} className="rounded-xl border border-outline/10 bg-surface p-3 text-center">
-                  <div className="text-2xl font-bold text-on-surface">{(s.rights || {})[d.key] ?? 0}</div>
-                  <div className="mt-1 text-[10px] leading-tight text-on-surface/50">{d.label}</div>
+          <Panel
+            title="Pedidos de pessoas"
+            description="Que tipo de demanda a Prefeitura está recebendo sobre dados pessoais."
+            actions={<Button icon={Plus} onClick={() => { setActiveTab('titulares'); openRequest(); }}>Nova solicitação</Button>}
+          >
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-9">
+              {rightsTiles.map((d) => (
+                <div key={d.key} className="rounded-lg border border-outline px-2 py-2.5 text-center">
+                  <div className="tabular text-xl font-bold text-on-surface">{(s.rights || {})[d.key] ?? 0}</div>
+                  <div className="mt-0.5 text-[11px] leading-tight text-on-surface/55">{d.label}</div>
                 </div>
               ))}
             </div>
-          </Surface>
+          </Panel>
 
-          {/* High risk quick list */}
-          {highRiskList.length > 0 && (
-            <Surface stripe={false} className="p-6" tone="danger">
-              <div className="mb-3 flex items-center gap-2 text-sm font-bold text-danger">
-                <ShieldAlert size={15} /> Tratamentos de Alto Risco / Crítico ({highRiskList.length})
-              </div>
-              <div className="flex flex-wrap gap-2">
+          {highRiskList.length > 0 ? (
+            <Notice tone="danger" title={`Tratamentos de risco alto ou crítico (${highRiskList.length})`}>
+              <div className="mt-2 flex flex-wrap gap-2">
                 {highRiskList.map((a) => (
-                  <span key={a.id} className="inline-flex items-center gap-1.5 rounded-full border border-danger/20 bg-danger/8 px-3 py-1 text-xs font-semibold text-danger">
-                    <StatusChip label={RISK_LABEL[a.risk_level] || a.risk_level} tone="danger" />
-                    {a.process_name}
+                  <span key={a.id} className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-on-surface">
+                    <Badge tone="danger">{RISK_LABEL[a.risk_level] || a.risk_level}</Badge>{a.process_name}
                   </span>
                 ))}
               </div>
-            </Surface>
-          )}
+            </Notice>
+          ) : null}
         </div>
-      )}
+      ) : null}
 
-      {/* ── INVENTÁRIO ──────────────────────────────────────────────────────── */}
-      {activeTab === 'inventario' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-base font-bold text-on-surface">Inventário de Operações de Tratamento</div>
-              <div className="text-xs text-on-surface/50">Art. 37, Lei nº 13.709/2018 (LGPD) — registro obrigatório de finalidade, base legal, retenção e medidas de segurança</div>
+      {activeTab === 'inventario' ? (
+        <Panel
+          title="Inventário de operações de tratamento"
+          description="Art. 37 da LGPD: registro de finalidade, base legal, retenção e medidas de segurança."
+          actions={(
+            <>
+              <Button icon={Download} onClick={exportInventoryPdf} disabled={pdfLoading}>{pdfLoading ? 'Gerando…' : 'Exportar PDF (Art. 37)'}</Button>
+              <Button variant="primary" icon={Plus} onClick={openProcessing}>Nova atividade</Button>
+            </>
+          )}
+          padded={false}
+        >
+          <FilterBar count={filteredActivities.length} total={activities.length}>
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/40" />
+              <input aria-label="Buscar processo" placeholder="Buscar processo…" value={invSearch} onChange={(e) => setInvSearch(e.target.value)} className={`${filterCls} pl-9`} />
             </div>
-            <div className="flex gap-2">
-              <ActionButton tone="ghost" icon={Download} onClick={exportInventoryPdf} disabled={pdfLoading}>
-                {pdfLoading ? 'Gerando...' : 'Exportar PDF (Art. 37)'}
-              </ActionButton>
-              <ActionButton tone="primary" icon={Plus} onClick={() => setProcessingDialog({ open: true, item: null })}>Nova atividade</ActionButton>
-            </div>
-          </div>
-
-          <FilterBar>
-            <Search size={13} className="text-on-surface/40" />
-            <input placeholder="Buscar processo..." value={invSearch} onChange={(e) => setInvSearch(e.target.value)} className={filterInputCls} />
-            <select value={invRisk} onChange={(e) => setInvRisk(e.target.value)} className={filterSelectCls}>
+            <select aria-label="Filtrar por risco" value={invRisk} onChange={(e) => setInvRisk(e.target.value)} className={filterCls}>
               <option value="">Todos os riscos</option>
               {Object.entries(RISK_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <select value={invStatus} onChange={(e) => setInvStatus(e.target.value)} className={filterSelectCls}>
+            <select aria-label="Filtrar por status" value={invStatus} onChange={(e) => setInvStatus(e.target.value)} className={filterCls}>
               <option value="">Todos os status</option>
               {Object.entries(STATUS_PA_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <span className="ml-auto text-xs text-on-surface/40">{filteredActivities.length} de {activities.length}</span>
           </FilterBar>
+          <DataTable columns={inventoryColumns} rows={filteredActivities} empty={fillerNote(loading, activities.length ? 'Nenhuma atividade neste filtro.' : 'Nenhuma atividade cadastrada. Use "Nova atividade" para começar o inventário formal.')} />
+        </Panel>
+      ) : null}
 
-          {loading ? <Spinner /> : filteredActivities.length === 0
-            ? <EmptyState icon={ClipboardList} title="Nenhuma atividade de tratamento" description="Cadastre a primeira atividade para começar o inventário formal." action={<ActionButton tone="primary" icon={Plus} onClick={() => setProcessingDialog({ open: true, item: null })}>Nova atividade</ActionButton>} />
-            : (
-              <TableWrap minW="860px">
-                <thead>
-                  <tr className="border-b border-outline/10 bg-surface">
-                    <Th>Processo</Th><Th>Base Legal</Th><Th>Risco</Th><Th>Status</Th><Th>Retenção</Th><Th>Controlador</Th><Th>Ações</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredActivities.map((a, i) => (
-                    <tr key={a.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                      <Td>
-                        <div className="font-semibold text-on-surface">{a.process_name}</div>
-                        {a.purpose && <div className="mt-0.5 max-w-[260px] truncate text-[11px] text-on-surface/50" title={a.purpose}>{a.purpose}</div>}
-                      </Td>
-                      <Td className="max-w-[160px]">
-                        <span className="block truncate text-xs text-on-surface/70" title={a.legal_basis}>{a.legal_basis || '—'}</span>
-                      </Td>
-                      <Td><StatusChip label={RISK_LABEL[a.risk_level] || a.risk_level || '—'} tone={RISK_TONE[a.risk_level] || 'neutral'} /></Td>
-                      <Td><StatusChip label={STATUS_PA_LABEL[a.status] || a.status || '—'} tone={STATUS_PA_TONE[a.status] || 'neutral'} /></Td>
-                      <Td className="text-xs text-on-surface/70">{a.retention_period || '—'}</Td>
-                      <Td className="text-xs text-on-surface/70">{a.controller_name || '—'}</Td>
-                      <Td><ActionButton tone="ghost" onClick={() => setProcessingDialog({ open: true, item: a })}>Editar</ActionButton></Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </TableWrap>
-            )}
-        </div>
-      )}
-
-      {/* ── TITULARES ───────────────────────────────────────────────────────── */}
-      {activeTab === 'titulares' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-base font-bold text-on-surface">Direitos do Titular</div>
-              <div className="text-xs text-on-surface/50">Art. 18, Lei nº 13.709/2018 (LGPD) — prazo de atendimento: 15 dias úteis</div>
+      {activeTab === 'titulares' ? (
+        <Panel
+          title="Pedidos de pessoas (direitos do titular)"
+          description="Art. 18 da LGPD. Prazo de atendimento: 15 dias úteis."
+          actions={<Button variant="primary" icon={Plus} onClick={openRequest}>Nova solicitação</Button>}
+          padded={false}
+        >
+          <FilterBar count={filteredRequests.length} total={requests.length}>
+            <div className="relative">
+              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-on-surface/40" />
+              <input aria-label="Buscar titular" placeholder="Buscar titular…" value={reqSearch} onChange={(e) => setReqSearch(e.target.value)} className={`${filterCls} pl-9`} />
             </div>
-            <ActionButton tone="primary" icon={Plus} onClick={() => setRequestDialog({ open: true, item: null })}>Nova solicitação</ActionButton>
-          </div>
-
-          <FilterBar>
-            <Search size={13} className="text-on-surface/40" />
-            <input placeholder="Buscar titular..." value={reqSearch} onChange={(e) => setReqSearch(e.target.value)} className={filterInputCls} />
-            <select value={reqType} onChange={(e) => setReqType(e.target.value)} className={filterSelectCls}>
+            <select aria-label="Filtrar por tipo de direito" value={reqType} onChange={(e) => setReqType(e.target.value)} className={filterCls}>
               <option value="">Todos os tipos</option>
               {REQUEST_TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            <select value={reqStatus} onChange={(e) => setReqStatus(e.target.value)} className={filterSelectCls}>
+            <select aria-label="Filtrar por status" value={reqStatus} onChange={(e) => setReqStatus(e.target.value)} className={filterCls}>
               <option value="">Todos os status</option>
               {Object.entries(STATUS_REQ_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <span className="ml-auto text-xs text-on-surface/40">{filteredRequests.length} de {requests.length}</span>
           </FilterBar>
+          <DataTable columns={requestColumns} rows={filteredRequests} empty={fillerNote(loading, requests.length ? 'Nenhuma solicitação neste filtro.' : 'Nenhuma solicitação cadastrada. Registre formalmente os pedidos dos titulares.')} />
+        </Panel>
+      ) : null}
 
-          {loading ? <Spinner /> : filteredRequests.length === 0
-            ? <EmptyState icon={UserRoundSearch} title="Nenhuma solicitação cadastrada" description="Registre formalmente as solicitações dos titulares de dados pessoais." action={<ActionButton tone="primary" icon={Plus} onClick={() => setRequestDialog({ open: true, item: null })}>Nova solicitação</ActionButton>} />
-            : (
-              <TableWrap minW="780px">
-                <thead>
-                  <tr className="border-b border-outline/10 bg-surface">
-                    <Th>Titular</Th><Th>Tipo de direito</Th><Th>Status</Th><Th>Prazo</Th><Th>Atualizado</Th><Th>Ações</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRequests.map((r, i) => {
-                    const overdue = r.due_date && new Date(r.due_date) < new Date() && !['atendido', 'indeferido', 'encerrado'].includes(r.status);
-                    return (
-                      <tr key={r.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                        <Td>
-                          <div className="font-semibold text-on-surface">{r.requester_name}</div>
-                          {r.requester_email && <div className="text-[11px] text-on-surface/50">{r.requester_email}</div>}
-                        </Td>
-                        <Td className="text-xs text-on-surface/70">{rtLabel(r.request_type)}</Td>
-                        <Td><StatusChip label={STATUS_REQ_LABEL[r.status] || r.status} tone={STATUS_REQ_TONE[r.status] || 'neutral'} /></Td>
-                        <Td>
-                          <span className={`text-xs font-semibold ${overdue ? 'text-danger' : 'text-on-surface/70'}`}>
-                            {r.due_date ? fmtDate(r.due_date) : '—'}
-                            {overdue && ' ⚠ vencido'}
-                          </span>
-                        </Td>
-                        <Td className="text-xs text-on-surface/50">{fmt(r.updated_at)}</Td>
-                        <Td><ActionButton tone="ghost" onClick={() => setRequestDialog({ open: true, item: r })}>Editar</ActionButton></Td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </TableWrap>
-            )}
-        </div>
-      )}
-
-      {/* ── INCIDENTES ──────────────────────────────────────────────────────── */}
-      {activeTab === 'incidentes' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <div className="text-base font-bold text-on-surface">Incidentes de Proteção de Dados</div>
-              <div className="text-xs text-on-surface/50">Art. 48, Lei nº 13.709/2018 (LGPD) — comunicação à ANPD obrigatória em incidentes graves</div>
-            </div>
-            <ActionButton tone="primary" icon={Plus} onClick={() => setIncidentDialog({ open: true, item: null })}>Novo incidente</ActionButton>
-          </div>
-
-          <FilterBar>
-            <select value={incSeverity} onChange={(e) => setIncSeverity(e.target.value)} className={filterSelectCls}>
+      {activeTab === 'incidentes' ? (
+        <Panel
+          title="Incidentes de proteção de dados"
+          description="Art. 48 da LGPD: comunicação à ANPD é obrigatória em incidentes graves."
+          actions={<Button variant="primary" icon={Plus} onClick={openIncident}>Novo incidente</Button>}
+          padded={false}
+        >
+          <FilterBar count={filteredIncidents.length} total={incidents.length}>
+            <select aria-label="Filtrar por severidade" value={incSeverity} onChange={(e) => setIncSeverity(e.target.value)} className={filterCls}>
               <option value="">Toda severidade</option>
               {Object.entries(RISK_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <select value={incStatus} onChange={(e) => setIncStatus(e.target.value)} className={filterSelectCls}>
+            <select aria-label="Filtrar por status" value={incStatus} onChange={(e) => setIncStatus(e.target.value)} className={filterCls}>
               <option value="">Todos os status</option>
               {Object.entries(STATUS_INC_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
-            <span className="ml-auto text-xs text-on-surface/40">{filteredIncidents.length} de {incidents.length}</span>
           </FilterBar>
+          <DataTable columns={incidentColumns} rows={filteredIncidents} empty={fillerNote(loading, incidents.length ? 'Nenhum incidente neste filtro.' : 'Nenhum incidente registrado. Registre aqui os que envolvam dados pessoais (Art. 48).')} />
+        </Panel>
+      ) : null}
 
-          {loading ? <Spinner /> : filteredIncidents.length === 0
-            ? <EmptyState icon={AlertTriangle} title="Nenhum incidente registrado" description="Registre formalmente incidentes que envolvam dados pessoais, conforme Art. 48 da LGPD." action={<ActionButton tone="primary" icon={Plus} onClick={() => setIncidentDialog({ open: true, item: null })}>Novo incidente</ActionButton>} />
-            : (
-              <TableWrap minW="880px">
-                <thead>
-                  <tr className="border-b border-outline/10 bg-surface">
-                    <Th>Título</Th><Th>Severidade</Th><Th>Status</Th><Th>Ocorrido em</Th><Th>Titulares</Th><Th>Autoridade</Th><Th>Ações</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredIncidents.map((inc, i) => (
-                    <tr key={inc.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                      <Td>
-                        <div className="font-semibold text-on-surface">{inc.title}</div>
-                        {inc.summary && <div className="mt-0.5 max-w-[240px] truncate text-[11px] text-on-surface/50" title={inc.summary}>{inc.summary}</div>}
-                      </Td>
-                      <Td><StatusChip label={RISK_LABEL[inc.severity] || inc.severity} tone={RISK_TONE[inc.severity] || 'neutral'} /></Td>
-                      <Td><StatusChip label={STATUS_INC_LABEL[inc.status] || inc.status} tone={STATUS_INC_TONE[inc.status] || 'neutral'} /></Td>
-                      <Td className="text-xs text-on-surface/70">{inc.occurred_at ? fmt(inc.occurred_at) : '—'}</Td>
-                      <Td className="text-xs font-semibold text-on-surface">{inc.affected_subjects_estimate || 0}</Td>
-                      <Td>
-                        {inc.authority_notified
-                          ? <StatusChip label="Comunicado" tone="success" />
-                          : <StatusChip label="Não comunicado" tone="neutral" />}
-                      </Td>
-                      <Td><ActionButton tone="ghost" onClick={() => setIncidentDialog({ open: true, item: inc })}>Editar</ActionButton></Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </TableWrap>
-            )}
-        </div>
-      )}
-
-      {/* ── AUDITORIA ───────────────────────────────────────────────────────── */}
-      {activeTab === 'auditoria' && (
+      {activeTab === 'auditoria' ? (
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            {[
-              { key: 'lgpd',   label: 'Evidências de gestão' },
-              { key: 'acesso', label: 'Acessos ao sistema' },
-            ].map((t) => (
-              <button key={t.key} onClick={() => setAudSubTab(t.key)}
-                className={`rounded-full border px-4 py-1.5 text-xs font-semibold transition-all ${audSubTab === t.key ? 'border-primary/18 bg-primary text-on-primary' : 'border-outline/16 text-on-surface/60 hover:text-on-surface'}`}>
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          {audSubTab === 'lgpd' && (
-            <>
-              <div className="text-xs text-on-surface/50">Evidência de gestão: mostra quem mexeu, qual área foi afetada e o que mudou em linguagem operacional.</div>
-              {loading ? <Spinner /> : auditLogs.length === 0
-                ? <EmptyState icon={ScrollText} title="Nenhuma evidência registrada" description="Quando uma responsabilidade, pedido ou incidente for criado ou revisado, a evidência aparecerá aqui." />
-                : (
-                  <TableWrap minW="980px">
-                    <thead>
-                      <tr className="border-b border-outline/10 bg-surface">
-                        <Th>Data / Hora</Th><Th>Área afetada</Th><Th>O que aconteceu</Th><Th>Detalhes</Th><Th>Operador</Th><Th>IP</Th><Th>Resultado</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {auditLogs.map((ev, i) => {
-                        const action = auditActionInfo(ev.action, ev.entity_type);
-                        return (
-                          <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                            <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
-                            <Td><StatusChip label={auditTypeLabel(ev.entity_type)} tone="primary" /></Td>
-                            <Td>
-                              <div className="text-xs font-bold text-on-surface">{action.label}</div>
-                              <div className="mt-0.5 text-[11px] text-on-surface/48">Código: {ev.action || '—'}</div>
-                            </Td>
-                            <Td className="max-w-[300px]">
-                              <div className="text-xs text-on-surface/70">{ev.message || action.description}</div>
-                            </Td>
-                            <Td className="text-xs text-on-surface/70">{ev.actor_username || 'sistema'}</Td>
-                            <Td className="font-mono text-xs text-on-surface/50">{ev.actor_ip || '—'}</Td>
-                            <Td>
-                              <StatusChip label={ev.success !== false ? 'Registrado' : 'Falhou'} tone={ev.success !== false ? 'success' : 'danger'} />
-                            </Td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </TableWrap>
-                )}
-            </>
-          )}
-
-          {audSubTab === 'acesso' && (
-            <>
-              <div className="text-xs text-on-surface/50">Evidência complementar de acesso ao sistema: entradas, recusas e rotas sensíveis com autoria e IP.</div>
-              {loading ? <Spinner /> : authEvents.length === 0
-                ? <EmptyState icon={KeyRound} title="Nenhuma evidência de acesso" description="Os acessos ao sistema aparecerão aqui conforme são realizados." />
-                : (
-                  <TableWrap minW="760px">
-                    <thead>
-                      <tr className="border-b border-outline/10 bg-surface">
-                        <Th>Data / Hora</Th><Th>Usuário</Th><Th>Evento</Th><Th>IP</Th><Th>Rota</Th><Th>Resultado</Th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {authEvents.map((ev, i) => (
-                        <tr key={ev.id || i} className="border-b border-outline/5 hover:bg-surface transition-colors">
-                          <td className="px-3 py-2 font-mono text-xs text-on-surface/60">{fmt(ev.created_at)}</td>
-                          <Td className="text-xs font-semibold text-on-surface">{ev.username || 'anônimo'}</Td>
-                          <Td>
-                            <div className="text-xs font-semibold text-on-surface">{authActionLabel(ev.action)}</div>
-                            <div className="mt-0.5 text-[11px] text-on-surface/45">Código: {ev.action || '—'}</div>
-                          </Td>
-                          <Td className="font-mono text-xs text-on-surface/50">{ev.ip_address || '—'}</Td>
-                          <Td className="max-w-[180px]">
-                            <span className="block truncate text-xs text-on-surface/50" title={ev.route}>{ev.route || '—'}</span>
-                          </Td>
-                          <Td>
-                            <StatusChip label={ev.success ? 'Autorizado' : 'Recusado'} tone={ev.success ? 'success' : 'danger'} />
-                          </Td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </TableWrap>
-                )}
-            </>
+          <Tabs
+            tabs={[{ key: 'lgpd', label: 'Evidências de gestão', icon: ScrollText, count: auditLogs.length }, { key: 'acesso', label: 'Acessos ao sistema', icon: KeyRound, count: authEvents.length }]}
+            value={audSubTab}
+            onChange={setAudSubTab}
+          />
+          {audSubTab === 'lgpd' ? (
+            <Panel title="Evidências de gestão" description="Quem mexeu, qual área foi afetada e o que mudou, em linguagem operacional." padded={false}>
+              <DataTable columns={auditColumns} rows={auditLogs} empty={fillerNote(loading, 'Nenhuma evidência registrada. Quando uma responsabilidade, pedido ou incidente for criado ou revisado, ela aparece aqui.')} />
+            </Panel>
+          ) : (
+            <Panel title="Acessos ao sistema" description="Entradas, recusas e rotas sensíveis, com autoria e IP." padded={false}>
+              <DataTable columns={accessColumns} rows={authEvents} empty={fillerNote(loading, 'Nenhum acesso registrado ainda.')} />
+            </Panel>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
