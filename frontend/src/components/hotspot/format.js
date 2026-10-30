@@ -54,10 +54,27 @@ export function formatPersonName(value) {
     .join(' ');
 }
 
-export function sessionState(status, expiresAt) {
+// Há quanto tempo, em texto curto ("agora", "há 5 min", "há 2 h").
+export function agoText(value) {
+  if (!value) return '—';
+  const diff = Math.max(0, Date.now() - new Date(value).getTime());
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return `há ${min} min`;
+  const h = Math.floor(min / 60);
+  return h < 24 ? `há ${h} h` : `há ${Math.floor(h / 24)} d`;
+}
+
+// Situação da sessão. "Conectada" exige sinal real do aparelho (DNS ou resposta na rede) nos últimos 5 minutos;
+// sem isso a sessão segue autorizada até expirar, mas o aparelho provavelmente saiu.
+export function sessionState(status, expiresAt, lastSeenAt) {
   if (status === 'revoked') return { label: 'Revogada', tone: 'neutral' };
   if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return { label: 'Expirada', tone: 'neutral' };
-  if (status === 'active') return { label: 'Conectada', tone: 'success' };
+  if (status === 'active') {
+    const quietMin = lastSeenAt ? (Date.now() - new Date(lastSeenAt).getTime()) / 60000 : Infinity;
+    if (quietMin <= 5) return { label: 'Conectada', tone: 'success' };
+    return { label: `Sem sinal ${agoText(lastSeenAt)}`, tone: 'warning' };
+  }
   return { label: status || '—', tone: 'neutral' };
 }
 

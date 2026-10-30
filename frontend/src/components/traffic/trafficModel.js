@@ -27,6 +27,7 @@ export const F_MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, 
 
 export const fmt = (v) => {
   const n = Number(v || 0);
+  if (n > 0 && n < 0.1) return '<0,1';
   return n >= 100 ? n.toFixed(0) : n.toFixed(1).replace('.', ',');
 };
 export const pct = (v, total) => (total ? Math.round((v / total) * 100) : 0);
@@ -150,10 +151,10 @@ export function buildModel(data, mode) {
         total: down + up,
         inet,
         val: inet + intDown + intUp,
-        rawFlows: (d.flows || []).filter((f) => (f.down || 0) + (f.up || 0) > 0.001),
+        rawFlows: (d.flows || []).filter((f) => (f.down || 0) + (f.up || 0) > 0),
       };
     })
-    .filter((d) => d.total > 0.005);
+    .filter((d) => d.total > 0);
 
   // Destinos: soma por site; os maiores ficam, o resto vira "Outros".
   const siteMap = new Map();

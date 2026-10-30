@@ -164,6 +164,12 @@ app.listen(PORT, '0.0.0.0', () => {
         });
     }, 60 * 1000);
     hotspotSessionSweeper.unref?.();
+    const hotspotActivityTracker = setInterval(() => {
+        hotspotSchemaService.touchActiveSessions().catch((error) => {
+            console.error('[HOTSPOT] Falha ao registrar o último sinal das sessões:', error);
+        });
+    }, 60 * 1000);
+    hotspotActivityTracker.unref?.();
     let hotspotCleanupRunning = false;
     const hotspotStaleCleanupSweeper = setInterval(() => {
         if (hotspotCleanupRunning) return;

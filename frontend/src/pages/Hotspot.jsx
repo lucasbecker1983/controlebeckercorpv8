@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, Trash2, Users, Wifi } from 'lucide-react';
 import { api } from '../services/api';
 import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Tabs, askConfirm, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
-import { authMethodLabel, dateTimeBR, formatCpf, formatMac, formatPersonName, formatPhone, matchesText, sessionState } from '../components/hotspot/format';
+import { agoText, authMethodLabel, dateTimeBR, formatCpf, formatMac, formatPersonName, formatPhone, matchesText, sessionState } from '../components/hotspot/format';
 import PortalUsage from '../components/portal/PortalUsage';
 import PortalReport, { HOTSPOT_REPORT } from '../components/portal/PortalReport';
 
@@ -152,6 +152,7 @@ export default function Hotspot() {
 
   const suggestions = useMemo(() => [...new Set(visitors.flatMap((v) => [formatPersonName(v.full_name), v.cpf, v.phone, v.mac_address]).filter(Boolean))].slice(0, 80), [visitors]);
   const activeSessions = sessions.filter((s) => s.status === 'active' && (!s.expires_at || new Date(s.expires_at).getTime() > Date.now()));
+  const withSignal = activeSessions.filter((s) => s.last_seen_at && Date.now() - new Date(s.last_seen_at).getTime() <= 5 * 60 * 1000);
 
   const openEditor = async (visitor = null) => {
     if (!visitor) { setDrawer({ open: true, item: null }); return; }
@@ -208,7 +209,7 @@ export default function Hotspot() {
       <KpiRow>
         <Kpi label="Visitantes cadastrados" value={Number(overview.totals?.visitors || 0).toLocaleString('pt-BR')} />
         <Kpi label="Aparelhos associados" value={Number(overview.totals?.devices || 0).toLocaleString('pt-BR')} />
-        <Kpi label="Conectados agora" value={overview.totals?.active_sessions ?? 0} tone={overview.totals?.active_sessions ? 'success' : 'neutral'} />
+        <Kpi label="Conectados agora" value={overview.totals?.connected_now ?? 0} tone={overview.totals?.connected_now ? 'success' : 'neutral'} sub={`${overview.totals?.active_sessions ?? 0} autorizado(s) no total`} />
         <Kpi label="Liberados no portal" value={enforcement.authorized_count ?? 0} sub={`interface ${enforcement.interface || 'enp6s0.70'}`} />
       </KpiRow>
       {error ? <Notice tone="danger" action={<Button onClick={load}>Tentar de novo</Button>}>{error}</Notice> : null}
@@ -283,7 +284,7 @@ export default function Hotspot() {
           </Panel>
           <Panel
             title={`Sessões recentes (${sessions.length})`}
-            description={`${activeSessions.length} conectada(s) agora.`}
+            description={`${withSignal.length} com sinal agora e ${activeSessions.length - withSignal.length} autorizada(s) sem sinal nos últimos 5 minutos.`}
             actions={<Button variant="ghost" icon={Trash2} onClick={cleanup} disabled={busy}>Ocultar encerradas</Button>}
             padded={false}
           >
@@ -294,7 +295,8 @@ export default function Hotspot() {
                 { key: 'v', label: 'Visitante', render: (s) => <div><div className="font-semibold">{formatPersonName(s.full_name || 'não identificado')}</div><div className="tabular text-[11.5px] text-on-surface/50">{s.cpf || '—'}</div></div> },
                 { key: 'ip', label: 'Aparelho', render: (s) => <div className="tabular text-[12px]"><div>{s.client_ip || '—'}</div><div className="text-on-surface/50">{s.mac_address || 'MAC não capturado'}</div></div> },
                 { key: 'm', label: 'Entrada', render: (s) => authMethodLabel(s.auth_method) },
-                { key: 'st', label: 'Situação', render: (s) => { const st = sessionState(s.status, s.expires_at); return <Badge tone={st.tone} dot={st.tone === 'success'}>{st.label}</Badge>; } },
+                { key: 'st', label: 'Situação', render: (s) => { const st = sessionState(s.status, s.expires_at, s.last_seen_at); return <Badge tone={st.tone} dot={st.tone === 'success'}>{st.label}</Badge>; } },
+                { key: 'ls', label: 'Último sinal', render: (s) => <span className="tabular text-[12px] text-on-surface/70">{s.status === 'active' ? agoText(s.last_seen_at) : '—'}</span> },
                 { key: 'e', label: 'Expira', render: (s) => <span className="tabular text-[12px]">{dateTimeBR(s.expires_at)}</span> },
                 {
                   key: 'a', label: '', align: 'right', render: (s) => (s.status === 'active' && (!s.expires_at || new Date(s.expires_at).getTime() > Date.now())

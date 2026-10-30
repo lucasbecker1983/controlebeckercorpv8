@@ -126,16 +126,16 @@ export default function TrafficCanvas({
         const v = vlans.find((x) => x.id === dv.vlan);
         if (v) edges.push({ a: dv, b: v, w: dv.val, col: vcol(dv.vlan), kind: 'd', dev: dv, vlan: dv.vlan });
       });
-      vlans.forEach((v) => { if (v.inet > 0.01) edges.push({ a: v, b: wan, w: v.inet, col: vcol(v.id), kind: 'v', vlan: v.id }); });
+      vlans.forEach((v) => { if (v.inet > 0) edges.push({ a: v, b: wan, w: v.inet, col: vcol(v.id), kind: 'v', vlan: v.id }); });
       sites.forEach((t) => {
         if (!t.internal) {
-          if (t.val > 0.005 || t.down + t.up > 0.005) edges.push({ a: wan, b: t, w: t.val, col: T.accent, kind: 's', site: t.key });
+          if (t.val > 0 || t.down + t.up > 0) edges.push({ a: wan, b: t, w: t.val, col: T.accent, kind: 's', site: t.key });
           return;
         }
         // Interno: da VLAN de origem direto ao destino, sem passar pelo link.
         vlans.forEach((v) => {
           const w = devices.filter((d) => d.vlan === v.id).reduce((acc, d) => acc + d.flows.filter((f) => f.site === t.key).reduce((a2, f) => a2 + f.v, 0), 0);
-          if (w > 0.005) edges.push({ a: v, b: t, w, col: vcol(v.id), kind: 'i', site: t.key, vlan: v.id });
+          if (w > 0) edges.push({ a: v, b: t, w, col: vcol(v.id), kind: 'i', site: t.key, vlan: v.id });
         });
       });
 
@@ -233,7 +233,7 @@ export default function TrafficCanvas({
       });
 
       vlans.forEach((v) => {
-        const idle = v.val <= 0.005;
+        const idle = v.val <= 0;
         const on = !s || (s.t === 'vlan' && s.id === v.id) || (s.t === 'dev' && selDev?.vlan === v.id) || (s.t === 'site' && devices.some((d) => d.vlan === v.id && usesSite(d, s.key)));
         circle(v.x, v.y, v.r, vcol(v.id), on && !idle, hv === `vlan:${v.id}`);
         if (v.limit && !idle) {

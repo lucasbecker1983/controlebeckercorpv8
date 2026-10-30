@@ -181,13 +181,16 @@ class MonitorService {
         const dns = setInterval(() => this.refreshDnsMap().catch(() => null), 30000);
         dns.unref?.();
         this.refreshDnsMap().catch(() => null);
+        const clients = setInterval(() => this.refreshRecentDnsClients().catch(() => null), 20000);
+        clients.unref?.();
+        this.refreshRecentDnsClients().catch(() => null);
         // Varredura de presença: todo aparelho ligado responde ARP, mesmo sem tráfego.
         const sweep = setInterval(() => this.sweepPresence().catch(() => null), 120000);
         sweep.unref?.();
         setTimeout(() => this.sweepPresence().catch(() => null), 5000).unref?.();
-        const traffic = setInterval(() => this.collectTraffic().catch(() => null), TRAFFIC_MS);
+        const traffic = setInterval(() => this.collectTraffic().catch((error) => console.error('[MONITOR] Falha na coleta de tráfego:', error?.message || error)), TRAFFIC_MS);
         traffic.unref?.();
-        setTimeout(() => this.collectTraffic().catch(() => null), 6000).unref?.();
+        setTimeout(() => this.collectTraffic().catch((error) => console.error('[MONITOR] Falha na coleta de tráfego:', error?.message || error)), 6000).unref?.();
     }
 
     private listVlanIfaces() {
@@ -330,6 +333,7 @@ class MonitorService {
     private identityNames = new Map<string, string>();
     private activeLeases: Array<{ ip: string; mac: string }> = [];
     private seen = new Map<string, { mac: string | null; at: number }>();
+    private recentDnsClients = new Set<string>();
 
     private async loadHostnames() {
         const names = new Map<string, string>();
@@ -475,6 +479,15 @@ class MonitorService {
         this.services = Object.fromEntries(results);
     }
 
+    // IPs que consultaram o DNS nos últimos 3 minutos: provam que o aparelho está na rede mesmo sem ARP nem DHCP.
+    private async refreshRecentDnsClients() {
+        const { rows } = await pool.query(
+            `SELECT DISTINCT host(client_ip::inet) AS ip FROM dns_policy_events
+              WHERE occurred_at > NOW() - INTERVAL '3 minutes' AND client_ip << '192.168.0.0/16'`,
+        );
+        this.recentDnsClients = new Set(rows.map((row) => String(row.ip)));
+    }
+
     private async refreshDnsMap() {
         const { rows } = await pool.query(
             `SELECT query_name, COUNT(*)::int AS hits
@@ -585,13 +598,12 @@ class MonitorService {
         this.trafficRunning = true;
         this.trafficStartedAt = Date.now();
         try {
-            const ifaces = this.listVlanIfaces().filter(({ id }) => {
-                const vlan = this.vlans.get(id);
-                return vlan && (vlan.down + vlan.up) > 0.02;
-            });
+            // Todas as VLANs entram na coleta: um aparelho com poucos bytes de tráfego também precisa aparecer no mapa.
+            const ifaces = this.listVlanIfaces().filter(({ id }) => this.vlans.has(id));
             const outputs = await Promise.all(ifaces.map(async ({ iface, id }) => ({
                 id,
-                text: await execCmd(`sudo iftop -i ${iface} -t -s 3 -n -N -L 500 -B 2>/dev/null`),
+                // O iftop não termina sozinho numa VLAN sem pacotes; o timeout evita que uma VLAN parada trave a coleta de todas.
+                text: await execCmd(`timeout 8 sudo iftop -i ${iface} -t -s 3 -n -N -L 500 -B 2>/dev/null`),
             })));
             const devices = new Map<string, Device>();
             for (const { id, text } of outputs) {
@@ -603,7 +615,7 @@ class MonitorService {
                     const remote = aLocal ? pair.b : pair.a;
                     const up = aLocal ? pair.ab : pair.ba;
                     const down = aLocal ? pair.ba : pair.ab;
-                    if (up + down < 0.01) continue;
+                    if (up + down <= 0) continue;
                     const device = devices.get(local) || {
                         ip: local,
                         vlan: id,
@@ -630,7 +642,7 @@ class MonitorService {
                         domain = name ? registrableDomain(name) : null;
                         label = name ? friendlyName(name) : remote;
                     }
-                    device.flows.push({ remote, label, domain, kind: internal ? 'internal' : 'internet', remoteVlan, down: round(down), up: round(up) });
+                    device.flows.push({ remote, label, domain, kind: internal ? 'internal' : 'internet', remoteVlan, down: round(down, 5), up: round(up, 5) });
                     device.down += down;
                     device.up += up;
                     if (internal) {
@@ -648,6 +660,7 @@ class MonitorService {
                 if (n.iface.startsWith(`${env.lanInterface}.`)) this.seen.set(n.ip, { mac: n.mac, at: now });
             }
             for (const l of this.activeLeases) this.seen.set(l.ip, { mac: l.mac, at: now });
+            for (const ip of this.recentDnsClients) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
             for (const ip of devices.keys()) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
             for (const [ip, info] of this.seen) {
                 if (now - info.at > 10 * 60 * 1000) { this.seen.delete(ip); continue; }
@@ -659,10 +672,10 @@ class MonitorService {
             }
             const list = Array.from(devices.values()).map((device) => ({
                 ...device,
-                down: round(device.down),
-                up: round(device.up),
-                internalDown: round(device.internalDown),
-                internalUp: round(device.internalUp),
+                down: round(device.down, 5),
+                up: round(device.up, 5),
+                internalDown: round(device.internalDown, 5),
+                internalUp: round(device.internalUp, 5),
                 filterVip: this.filterVips.has(device.ip),
                 flows: device.flows.sort((x, y) => (y.down + y.up) - (x.down + x.up)),
             }));

@@ -312,7 +312,7 @@ async function ensureHotspotAuthSetExists() {
 async function revokeLegacyAutoSessions() {
     const result = await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+            SET status = 'revoked', revoked_at = NOW()
           WHERE status = 'active'
             AND auth_method = 'mac_auto'
           RETURNING host(client_ip) AS client_ip`,
@@ -340,10 +340,34 @@ async function pruneUnauthorizedHotspotIps() {
     return staleIps.length;
 }
 
+// O "último sinal" de cada sessão ativa vem de atividade real do aparelho: consulta de DNS nos últimos 2 minutos ou
+// resposta na rede (vizinho REACHABLE, DELAY ou PROBE). Antes ficava igual ao horário de entrada e nunca mudava.
+async function touchActiveSessions() {
+    const active = await pool.query(
+        `SELECT id, host(client_ip) AS ip FROM hotspot_sessions WHERE status = 'active' AND client_ip IS NOT NULL AND (expires_at IS NULL OR expires_at > NOW())`,
+    ).catch(() => ({ rows: [] as Array<{ id: number; ip: string }> }));
+    if (!active.rows.length) return 0;
+    const ips = Array.from(new Set(active.rows.map((row) => row.ip)));
+    const dns = await pool.query(
+        `SELECT DISTINCT host(client_ip::inet) AS ip FROM dns_policy_events WHERE occurred_at > NOW() - INTERVAL '2 minutes' AND host(client_ip::inet) = ANY($1::text[])`,
+        [ips],
+    ).catch(() => ({ rows: [] as Array<{ ip: string }> }));
+    const alive = new Set<string>(dns.rows.map((row) => row.ip));
+    for (const ip of ips) {
+        if (alive.has(ip) || !/^192\.168\.70\.\d{1,3}$/.test(ip)) continue;
+        const neigh = await execCmd(`ip neigh show ${ip}`).catch(() => '');
+        if (/\b(REACHABLE|DELAY|PROBE)\b/.test(neigh)) alive.add(ip);
+    }
+    const ids = active.rows.filter((row) => alive.has(row.ip)).map((row) => row.id);
+    if (!ids.length) return 0;
+    await pool.query(`UPDATE hotspot_sessions SET last_seen_at = NOW() WHERE id = ANY($1::bigint[]) AND status = 'active'`, [ids]).catch(() => null);
+    return ids.length;
+}
+
 async function expireExpiredSessions() {
     const result = await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'expired', revoked_at = COALESCE(revoked_at, NOW()), last_seen_at = NOW()
+            SET status = 'expired', revoked_at = COALESCE(revoked_at, NOW())
           WHERE status = 'active'
             AND expires_at <= NOW()
           RETURNING host(client_ip) AS client_ip`,
@@ -504,7 +528,7 @@ async function revokeRuntimeIps(rows: Array<{ client_ip?: string | null }>) {
 async function revokeActiveSessionsByDeviceMacOrIp(deviceId: number | null, mac: string | null, ip: string | null, reason: string) {
     const result = await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+            SET status = 'revoked', revoked_at = NOW()
           WHERE status = 'active'
             AND (
                 ($1::bigint IS NOT NULL AND device_id = $1::bigint)
@@ -927,7 +951,7 @@ router.post('/public/continue', async (req, res) => {
     const visitor = { id: row.visitor_id, full_name: row.full_name, cpf: row.cpf, mac_address: row.mac_address };
     await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+            SET status = 'revoked', revoked_at = NOW()
           WHERE status = 'active'
             AND (
                 device_id = $1
@@ -1188,9 +1212,11 @@ router.get('/overview', requireJwt, async (_req: AuthenticatedRequest, res) => {
     const [visitors, devices, sessions, recent, enforcement] = await Promise.all([
         pool.query('SELECT COUNT(*)::int AS total FROM hotspot_visitors WHERE active = TRUE'),
         pool.query('SELECT COUNT(*)::int AS total FROM hotspot_devices WHERE active = TRUE'),
-        pool.query(`SELECT COUNT(*)::int AS total FROM hotspot_sessions WHERE status = 'active' AND expires_at > NOW()`),
+        pool.query(`SELECT COUNT(*)::int AS total,
+                           COUNT(*) FILTER (WHERE last_seen_at > NOW() - INTERVAL '5 minutes')::int AS with_signal
+                      FROM hotspot_sessions WHERE status = 'active' AND expires_at > NOW()`),
         pool.query(`
-            SELECT s.id, s.client_ip::text, s.mac_address, s.vlan_id, s.auth_method, s.status, s.started_at, s.expires_at,
+            SELECT s.id, s.client_ip::text, s.mac_address, s.vlan_id, s.auth_method, s.status, s.started_at, s.last_seen_at, s.expires_at,
                    v.full_name, v.cpf
               FROM hotspot_sessions s
               LEFT JOIN hotspot_visitors v ON v.id = s.visitor_id
@@ -1205,6 +1231,7 @@ router.get('/overview', requireJwt, async (_req: AuthenticatedRequest, res) => {
             visitors: visitors.rows[0].total,
             devices: devices.rows[0].total,
             active_sessions: sessions.rows[0].total,
+            connected_now: sessions.rows[0].with_signal,
         },
         enforcement,
         recent_sessions: recent.rows.map((row) => ({ ...row, cpf: row.cpf ? maskCpf(row.cpf) : null })),
@@ -1355,7 +1382,7 @@ router.put('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res) =
             await pool.query(`UPDATE hotspot_devices SET active = FALSE WHERE visitor_id = $1`, [id]);
             const sessions = await pool.query(
                 `UPDATE hotspot_sessions
-                    SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+                    SET status = 'revoked', revoked_at = NOW()
                   WHERE visitor_id = $1 AND status = 'active'
                   RETURNING host(client_ip) AS client_ip`,
                 [id],
@@ -1384,7 +1411,7 @@ router.delete('/visitors/:id', requireJwt, async (req: AuthenticatedRequest, res
     await pool.query(`UPDATE hotspot_devices SET active = FALSE WHERE visitor_id = $1`, [id]);
     const sessions = await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+            SET status = 'revoked', revoked_at = NOW()
           WHERE visitor_id = $1 AND status = 'active'
           RETURNING host(client_ip) AS client_ip`,
         [id],
@@ -1427,7 +1454,7 @@ router.post('/sessions/:id/revoke', requireJwt, async (req: AuthenticatedRequest
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Sessão inválida.' });
     const result = await pool.query(
         `UPDATE hotspot_sessions
-            SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+            SET status = 'revoked', revoked_at = NOW()
           WHERE id = $1
           RETURNING id, visitor_id, device_id, mac_address, host(client_ip) AS client_ip, vlan_id`,
         [id],
@@ -1438,7 +1465,7 @@ router.post('/sessions/:id/revoke', requireJwt, async (req: AuthenticatedRequest
         const session = result.rows[0];
         const related = await pool.query(
             `UPDATE hotspot_sessions
-                SET status = 'revoked', revoked_at = NOW(), last_seen_at = NOW()
+                SET status = 'revoked', revoked_at = NOW()
               WHERE id <> $1
                 AND status = 'active'
                 AND (
@@ -1844,5 +1871,5 @@ router.get('/report', requireJwt, async (req: AuthenticatedRequest, res) => {
     }
 });
 
-export const hotspotSchemaService = { ensureSchema, ensureHotspotEnforcement, ensureAccessLogSchema, expireExpiredSessions, cleanupStaleSessions };
+export const hotspotSchemaService = { ensureSchema, ensureHotspotEnforcement, ensureAccessLogSchema, expireExpiredSessions, cleanupStaleSessions, touchActiveSessions };
 export default router;
