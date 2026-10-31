@@ -25,6 +25,9 @@ export function VlanChip({ id, label, muted = false, small = false }) {
   );
 }
 
+// Sufixos de governo ficam por fora das regras (DNS público, ver GOV_SUFFIXES em scripts/update_govbr_allowlist.py).
+export const isGovDomain = (value) => /(^|\.)(gov|jus|leg|mp|mil|def)\.br$/i.test(String(value || '').trim().replace(/^[a-z]+:\/\//i, '').split(/[/:?#]/)[0].replace(/\.$/, ''));
+
 // Pornografia nunca pode ser liberada (mesma trava do backend).
 export const mentionsPornography = (...values) => /porn|xxx|sexo|adult|nsfw|hentai/i.test(values.flat().join(' '));
 

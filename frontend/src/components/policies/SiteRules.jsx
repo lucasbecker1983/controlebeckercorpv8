@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Ban, Check, Copy, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { Badge, Button, Drawer, Field, Notice, Switch, askConfirm, inputCls } from '../ui/kit';
-import { VlanChip, applyRules, brSend, mentionsPornography, vlanName } from './shared';
+import { VlanChip, applyRules, brSend, mentionsPornography, isGovDomain, vlanName } from './shared';
 
 /*
  * Regras de sites: lista legível (o que faz, onde vale, quantos sites) e editor lateral.
@@ -18,6 +18,7 @@ function RuleRow({ rule, busy, onEdit, onToggle, onDuplicate, onDelete }) {
   const block = rule.policy_type === 'block';
   const global = rule.scope_type === 'global';
   const domains = rule.domains || [];
+  const govCount = block ? domains.filter(isGovDomain).length : 0;
   return (
     <li className={`flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center ${rule.enabled ? '' : 'bg-on-surface/[0.02]'}`}>
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -29,6 +30,7 @@ function RuleRow({ rule, busy, onEdit, onToggle, onDuplicate, onDelete }) {
             <button type="button" onClick={() => onEdit(rule)} className="text-left text-[14px] font-semibold text-on-surface hover:text-primary">{rule.name}</button>
             <Badge tone={block ? 'danger' : 'success'}>{block ? 'Bloqueia' : 'Libera'}</Badge>
             {rule.enabled ? null : <Badge>Desligada</Badge>}
+            {govCount ? <Badge tone="warning">{govCount} de governo sem efeito</Badge> : null}
           </div>
           {rule.description ? <p className="mt-0.5 line-clamp-1 text-[12.5px] text-on-surface/55">{String(rule.description).split('\n[Governanca]')[0]}</p> : null}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-on-surface/55">
@@ -84,6 +86,7 @@ function RuleEditor({ open, rule, vlans, busy, onClose, onSave }) {
   const domains = form.domainsText.split(/[\n,;\s]+/).map((d) => d.trim()).filter(Boolean);
   const uniqueDomains = Array.from(new Set(domains.map((d) => d.toLowerCase())));
   const block = form.policy_type === 'block';
+  const govDomains = uniqueDomains.filter(isGovDomain);
 
   const submit = () => {
     if (!form.name.trim()) return setError('Dê um nome para a regra.');
@@ -165,6 +168,7 @@ function RuleEditor({ open, rule, vlans, busy, onClose, onSave }) {
         <Switch checked={form.enabled} onChange={(v) => set({ enabled: v })} label="Regra ligada" /> Regra ligada
       </label>
 
+      {block && govDomains.length ? <Notice tone="warning">{govDomains.length === 1 ? 'Este site é de governo' : `${govDomains.length} sites são de governo`} ({govDomains.slice(0, 3).join(', ')}{govDomains.length > 3 ? '...' : ''}). Domínios gov.br, jus.br, leg.br, mp.br, def.br e mil.br usam DNS público e ficam por fora das regras: o bloqueio não terá efeito neles.</Notice> : null}
       {block && form.enabled ? <Notice tone="primary">Bloqueios novos derrubam as conexões já abertas para estes sites nas VLANs marcadas.</Notice> : null}
       {error ? <Notice tone="danger">{error}</Notice> : null}
     </Drawer>
