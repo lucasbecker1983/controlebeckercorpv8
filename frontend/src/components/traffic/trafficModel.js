@@ -25,8 +25,8 @@ export const F_DISPLAY = '"Archivo", "Arial Narrow", system-ui, sans-serif';
 export const F_BODY = '"Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif';
 export const F_MONO = '"JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace';
 
-// Abaixo de 1 kbps é ruído de fundo (keepalive de celular parado) e não conta como "trafegando".
-export const MIN_ACTIVE = 0.001;
+// Abaixo de 10 kbps é ruído de fundo (keepalive de celular parado) e não conta como "trafegando".
+export const MIN_ACTIVE = 0.01;
 
 export const fmt = (v) => {
   const n = Number(v || 0);
