@@ -15,6 +15,7 @@ import { getLinkSentinelSnapshot } from '../connectivity/downtime-monitor';
 const SAMPLE_MS = 5000;
 const RING_SIZE = 720; // 1 hora de amostras de 5 s
 const TRAFFIC_MS = 10000;
+const PRESENCE_TTL_MS = 4 * 60 * 1000;
 const MIN_ACTIVE_MBPS = 0.01;
 const LINK_MBPS = Number(process.env.WAN_CAPACITY_MBPS || 300);
 
@@ -42,6 +43,7 @@ type VlanRuntime = {
     drops: number;
     overlimits: number;
     neighbors: number;
+    infra: number;
     exempt: boolean;
     internalExempt: boolean;
 };
@@ -139,7 +141,7 @@ class MonitorService {
     private resolvedDomains = new Map<string, number>();
     private reverseCache = new Map<string, { name: string | null; at: number }>();
     private hostnames = new Map<string, string>();
-    private neighborList: Array<{ ip: string; mac: string; iface: string }> = [];
+    private neighborList: Array<{ ip: string; mac: string; iface: string; state: string }> = [];
     private filterVips = new Set<string>();
     private serverIps = new Set<string>();
     private qosVips = new Set<string>();
@@ -159,14 +161,14 @@ class MonitorService {
         sampler.unref?.();
         const slow = setInterval(() => {
             this.readTc().catch(() => null);
-            this.readNeighbors();
+            this.readNeighbors().catch(() => null);
             this.readDisk();
             this.readInternet().catch(() => null);
         }, 15000);
         this.readInternet().catch(() => null);
         slow.unref?.();
         this.readTc().catch(() => null);
-        this.readNeighbors();
+        this.readNeighbors().catch(() => null);
         this.readDisk();
         const svc = setInterval(() => this.readServices().catch(() => null), 30000);
         svc.unref?.();
@@ -295,6 +297,7 @@ class MonitorService {
             drops: 0,
             overlimits: 0,
             neighbors: 0,
+            infra: 0,
             exempt: meta?.exempt || false,
             internalExempt: false,
         };
@@ -417,22 +420,59 @@ class MonitorService {
         }));
     }
 
-    private readNeighbors() {
+    // Presença comprovada: o kernel confirmou o aparelho há pouco (REACHABLE, DELAY ou PROBE), ele respondeu à varredura
+    // ARP, consultou o DNS ou teve tráfego. Entrada STALE na tabela ARP só significa "já vi esse aparelho" e NÃO conta:
+    // ela fica por horas depois que o aparelho sai da rede.
+    private async readNeighbors() {
         try {
-            const counts = new Map<string, number>();
-            const list: Array<{ ip: string; mac: string; iface: string }> = [];
-            const lines = fs.readFileSync('/proc/net/arp', 'utf-8').split('\n').slice(1);
-            for (const line of lines) {
-                const cols = line.trim().split(/\s+/);
-                if (cols.length < 6) continue;
-                if (cols[2] === '0x0' || cols[3] === '00:00:00:00:00:00') continue;
-                counts.set(cols[5], (counts.get(cols[5]) || 0) + 1);
-                list.push({ ip: cols[0], mac: cols[3].toLowerCase(), iface: cols[5] });
+            const text = await execCmd('ip -4 neigh show');
+            const now = Date.now();
+            const list: Array<{ ip: string; mac: string; iface: string; state: string }> = [];
+            for (const line of text.split('\n')) {
+                const m = line.match(/^(\d+\.\d+\.\d+\.\d+) dev (\S+)(?: lladdr ([0-9a-f:]{17}))?.*?\b(REACHABLE|STALE|DELAY|PROBE|FAILED|INCOMPLETE|PERMANENT|NOARP)\b/i);
+                if (!m || !m[3]) continue;
+                const state = m[4].toUpperCase();
+                list.push({ ip: m[1], mac: m[3].toLowerCase(), iface: m[2], state });
+                if (['REACHABLE', 'DELAY', 'PROBE'].includes(state) && m[2].startsWith(`${env.lanInterface}.`)) {
+                    this.seen.set(m[1], { mac: m[3].toLowerCase(), at: now });
+                }
             }
             this.neighborList = list;
             this.serverIps = new Set(Object.values(os.networkInterfaces()).flat().filter((a: any) => a && a.family === 'IPv4').map((a: any) => a.address));
-            for (const vlan of this.vlans.values()) vlan.neighbors = counts.get(vlan.iface) || 0;
+            this.recountPresence();
         } catch {}
+    }
+
+    // Quem está presente agora = com evidência nos últimos PRESENCE_TTL_MS. Equipamentos de rede (switch, ponto de acesso)
+    // são contados à parte para não inflar "dispositivos": o final .2 de cada VLAN, o mesmo MAC em mais de uma VLAN
+    // e nomes de ap/switch/roteador.
+    private isInfra(ip: string, mac: string | null, macVlans: Map<string, Set<number>>) {
+        if (ip.endsWith('.2')) return true;
+        if (mac && (macVlans.get(mac)?.size || 0) > 1) return true;
+        return /^(ap|sw|switch|roteador|router|olt)[-_ ]?\d*/i.test(this.nameFor(ip) || '');
+    }
+
+    private recountPresence() {
+        const now = Date.now();
+        const macVlans = new Map<string, Set<number>>();
+        const present: Array<{ ip: string; mac: string | null; vlan: number }> = [];
+        for (const [ip, info] of this.seen) {
+            if (now - info.at > PRESENCE_TTL_MS) continue;
+            const vlan = vlanOfIp(ip);
+            if (!vlan || ip.endsWith('.1')) continue;
+            present.push({ ip, mac: info.mac, vlan });
+            if (info.mac) {
+                const set = macVlans.get(info.mac) || new Set<number>();
+                set.add(vlan);
+                macVlans.set(info.mac, set);
+            }
+        }
+        for (const vlan of this.vlans.values()) { vlan.neighbors = 0; vlan.infra = 0; }
+        for (const item of present) {
+            const vlan = this.vlans.get(item.vlan);
+            if (!vlan) continue;
+            if (this.isInfra(item.ip, item.mac, macVlans)) vlan.infra += 1; else vlan.neighbors += 1;
+        }
     }
 
     private sweeping = false;
@@ -456,6 +496,7 @@ class MonitorService {
                 const mac = line.match(/MAC Address: ([0-9A-F:]{17})/i)?.[1];
                 if (mac && current && !current.endsWith('.1')) this.seen.set(current, { mac: mac.toLowerCase(), at: now });
             }
+            this.recountPresence();
         } finally {
             this.sweeping = false;
         }
@@ -654,18 +695,16 @@ class MonitorService {
                     devices.set(local, device);
                 }
             }
-            // Todos os dispositivos conectados: tabela ARP, IPs ativos no DHCP e quem teve tráfego.
-            // Quem para de responder sai da lista depois de 10 minutos (desligou ou saiu da rede).
+            // Aparelhos presentes: só com evidência (ARP confirmado, resposta à varredura, DNS ou tráfego). Entrada antiga
+            // da tabela ARP e lease do DHCP não provam presença. Quem fica 4 minutos sem evidência sai da lista.
             const now = Date.now();
             const managed = new Set(this.listVlanIfaces().map((v) => v.id));
-            for (const n of this.neighborList) {
-                if (n.iface.startsWith(`${env.lanInterface}.`)) this.seen.set(n.ip, { mac: n.mac, at: now });
-            }
-            for (const l of this.activeLeases) this.seen.set(l.ip, { mac: l.mac, at: now });
-            for (const ip of this.recentDnsClients) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
-            for (const ip of devices.keys()) this.seen.set(ip, { mac: this.seen.get(ip)?.mac || null, at: now });
+            const macOf = (ip: string) => this.seen.get(ip)?.mac || this.neighborList.find((n) => n.ip === ip)?.mac || this.activeLeases.find((l) => l.ip === ip)?.mac || null;
+            for (const ip of this.recentDnsClients) this.seen.set(ip, { mac: macOf(ip), at: now });
+            for (const ip of devices.keys()) this.seen.set(ip, { mac: macOf(ip), at: now });
+            this.recountPresence();
             for (const [ip, info] of this.seen) {
-                if (now - info.at > 10 * 60 * 1000) { this.seen.delete(ip); continue; }
+                if (now - info.at > PRESENCE_TTL_MS) { this.seen.delete(ip); continue; }
                 const id = vlanOfIp(ip);
                 if (!id || !managed.has(id) || ip.endsWith('.1')) continue;
                 const existing = devices.get(ip);
@@ -711,6 +750,7 @@ class MonitorService {
                 drops_total: vlan.drops,
                 drops_5m: drops5m,
                 neighbors: vlan.neighbors,
+                infra_devices: vlan.infra,
                 exempt: vlan.exempt,
                 internal_down: round(internal.down),
                 internal_up: round(internal.up),

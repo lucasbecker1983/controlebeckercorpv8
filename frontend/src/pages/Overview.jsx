@@ -256,7 +256,7 @@ function VlanBoard({ vlans }) {
               return (
                 <tr key={v.id}>
                   <td className="py-1.5 font-medium text-on-surface">{v.id} · {v.name}</td>
-                  <td className="py-1.5">{v.neighbors}</td>
+                  <td className="py-1.5">{v.neighbors}{v.infra_devices ? <span className="ml-1.5 text-[11px] font-normal text-on-surface/50" title="Switch ou ponto de acesso na VLAN. Não é aparelho de usuário.">+{v.infra_devices} equip. de rede</span> : null}</td>
                   <td className="py-1.5">{fmt(v.down)}</td>
                   <td className="py-1.5">{fmt(v.up)}</td>
                   <td className={`py-1.5 font-semibold ${status.cls}`}>{status.label}</td>

@@ -42,7 +42,7 @@ export default function VlanTable({ live }) {
         columns={[
           { key: 'vlan', label: 'VLAN', render: (v) => <div className="flex items-center gap-2"><VlanDot id={v.id} /><div><div className="font-medium text-on-surface">{v.id} · {v.name}</div><div className="tabular text-[11.5px] text-on-surface/50">{v.interface} · {v.ip}</div></div></div> },
           { key: 'state', label: 'Situação', render: (v) => (!v.up_state ? <Badge tone="danger" dot>Interface desligada</Badge> : v.neighbors === 0 ? <Badge tone="warning" dot>Sem dispositivos</Badge> : v.drops_5m > 200 ? <Badge tone="danger" dot>No limite</Badge> : v.exempt ? <Badge dot>Fora dos filtros</Badge> : <Badge tone="success" dot>Normal</Badge>) },
-          { key: 'neighbors', label: 'Dispositivos', mono: true, render: (v) => v.neighbors },
+          { key: 'neighbors', label: 'Dispositivos', mono: true, render: (v) => <span>{v.neighbors}{v.infra_devices ? <span className="ml-1.5 text-[11px] text-on-surface/50" title="Switch ou ponto de acesso na VLAN. Não é aparelho de usuário.">+{v.infra_devices} equip. de rede</span> : null}</span> },
           { key: 'traffic', label: '↓ / ↑ Mbps', mono: true, render: (v) => `${fmt(v.down)} / ${fmt(v.up)}` },
           { key: 'limit', label: 'Limite ↓ / ↑', mono: true, render: (v) => (v.limit_down ? `${v.limit_down} / ${v.limit_up ?? '—'}` : 'Sem limite') },
           { key: 'use', label: 'Uso do limite', render: (v) => (v.limit_down ? <UseBar value={v.use_down} /> : <span className="text-on-surface/40">—</span>) },
