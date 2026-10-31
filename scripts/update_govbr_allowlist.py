@@ -47,8 +47,19 @@ def _load_db_url() -> str:
 DATABASE_URL = _load_db_url()
 FORWARDERS = ["1.1.1.1", "1.0.0.1"]
 
+# Domínios de governo: qualquer nome sob estes sufixos vai pelo DNS público, passa por fora das listas de bloqueio
+# (passthru na zona de maior prioridade) e tem os IPs liberados no firewall. gov.br (União, estados e municípios),
+# jus.br (Judiciário), leg.br (Legislativo), mp.br (Ministério Público), def.br (Defensoria) e mil.br (Forças Armadas).
+GOV_SUFFIXES = ["gov.br", "jus.br", "leg.br", "mp.br", "def.br", "mil.br"]
+SECURITY_ALLOW_FILE = "/etc/unbound/becker/security-allow.rpz"
+
 FORWARD_ZONE_DOMAINS = [
     "gov.br",
+    "jus.br",
+    "leg.br",
+    "mp.br",
+    "def.br",
+    "mil.br",
     "acesso.gov.br",
     "sistema.gov.br",
     "servicos.gov.br",
@@ -266,6 +277,16 @@ def fetch_recent_related_domains() -> set[str]:
                      OR query_name ILIKE '%%go-mpulse%%'
                      OR query_name ILIKE '%%sebrae%%'
                      OR query_name ILIKE '%%pgfn%%'
+                     OR query_name ILIKE '%%.jus.br'
+                     OR query_name ILIKE '%%.leg.br'
+                     OR query_name ILIKE '%%.mp.br'
+                     OR query_name ILIKE '%%.def.br'
+                     OR query_name ILIKE '%%.mil.br'
+                     OR query_name ILIKE '%%.jus.br.'
+                     OR query_name ILIKE '%%.leg.br.'
+                     OR query_name ILIKE '%%.mp.br.'
+                     OR query_name ILIKE '%%.def.br.'
+                     OR query_name ILIKE '%%.mil.br.'
                    )
                  GROUP BY 1
                  ORDER BY max(created_at) DESC
@@ -391,6 +412,17 @@ def ensure_rpz_passthru(domains: set[str]) -> bool:
         if os.path.exists(path):
             changed = ensure_line_file(path, records) or changed
     return changed
+
+
+def ensure_security_allow() -> bool:
+    """Libera os sufixos de governo na zona de maior prioridade, antes da lista de segurança e de qualquer política."""
+    if not os.path.exists(SECURITY_ALLOW_FILE):
+        return False
+    records: list[str] = []
+    for suffix in GOV_SUFFIXES:
+        records.append(f"{suffix} CNAME rpz-passthru.")
+        records.append(f"*.{suffix} CNAME rpz-passthru.")
+    return ensure_line_file(SECURITY_ALLOW_FILE, records)
 
 
 def ensure_institutional_dns_rows() -> None:
@@ -562,6 +594,7 @@ def main() -> None:
     ensure_institutional_dns_rows()
     config_changed = ensure_unbound_custom_zones()
     config_changed = ensure_rpz_passthru(set(policy_domains)) or config_changed
+    config_changed = ensure_security_allow() or config_changed
     count = refresh_members()
     ensure_firewall_rules()
     reload_unbound_if_needed(config_changed)
