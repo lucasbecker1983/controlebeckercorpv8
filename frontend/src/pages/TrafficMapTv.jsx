@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import TrafficCanvas from '../components/traffic/TrafficCanvas';
+import LinkStatusTags, { LinkAlert } from '../components/traffic/LinkStatusTags';
 import { TM_CSS } from '../components/traffic/trafficStyles';
 import { F_BODY, F_DISPLAY, F_MONO, buildModel, fmt, layoutModel, limitDevices, pct, slotsOf, useFonts, useTrafficData } from '../components/traffic/trafficModel';
 
@@ -345,6 +346,7 @@ export default function TrafficMapTv() {
         <span className="tv-title">Mapa de Tráfego em Camadas</span>
         {noConn ? <span className="tv-tag down">sem conexão com o servidor há {Math.round((now - lastOkAt) / 1000)} s</span> : <span className="tv-tag live">ao vivo</span>}
         {lateCollector ? <span className="tv-tag warn">coletor atrasado há {Math.round(dataAgeS / 60)} min</span> : null}
+        {data ? <LinkStatusTags link={data.link} prefix="tv" now={now} /> : null}
         {model ? <span className="tv-tag">{model.devices.length} IP{model.devices.length === 1 ? '' : 's'} com tráfego</span> : null}
         {topDev ? <span className="tv-tag top"><span className="tv-dot" />maior consumo: {topDev.ip}</span> : null}
         <span className="tv-spacer" />
@@ -355,6 +357,8 @@ export default function TrafficMapTv() {
         </div>
         <div className="tv-clock"><b>{new Date(now).toLocaleTimeString('pt-BR')}</b><span>{new Date(now).toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })}</span></div>
       </header>
+
+      {data ? <LinkAlert link={data.link} prefix="tv" now={now} /> : null}
 
       <div className="tv-body">
         <div className="tv-stage" ref={stageRef}>

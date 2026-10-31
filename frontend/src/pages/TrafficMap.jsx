@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Tv } from 'lucide-react';
+import LinkStatusTags, { LinkAlert } from '../components/traffic/LinkStatusTags';
 import { DataTable, PageHeader } from '../components/ui/kit';
 import { VlanChip } from '../components/policies/shared';
 import TrafficCanvas from '../components/traffic/TrafficCanvas';
@@ -71,6 +72,7 @@ export default function TrafficMap() {
           <span className="tm-title">Mapa de Tráfego</span>
           <span className={`tm-tag ${paused ? 'paused' : 'live'}`}>{paused ? 'pausado' : 'ao vivo'}</span>
           {data?.updated_at ? <span className={`tm-tag ${stale ? 'late' : ''}`}>{stale ? 'coletor atrasado · ' : ''}{new Date(Number(data.updated_at)).toLocaleTimeString('pt-BR')}</span> : null}
+          {data ? <LinkStatusTags link={data.link} prefix="tm" /> : null}
           {model ? <span className="tm-tag">{model.devices.length} IP{model.devices.length === 1 ? '' : 's'} com tráfego</span> : null}
           {topDev ? <span className="tm-tag top"><span className="tm-dot" style={{ marginRight: 6, verticalAlign: 'middle' }} />maior consumo: {topDev.ip}</span> : null}
           <div className="tm-seg" role="group" aria-label="Sentido do tráfego">
@@ -79,6 +81,7 @@ export default function TrafficMap() {
           </div>
           <button type="button" className="tm-btn" onClick={() => setPaused((p) => !p)}>{paused ? 'Retomar' : 'Pausar'}</button>
         </div>
+        {data ? <LinkAlert link={data.link} prefix="tm" /> : null}
         <div className="tm-body">
           <div className="tm-canvas" ref={wrapRef}>
             {error && !data ? <div className="tm-hint" style={{ color: 'var(--md-danger)' }}>Não foi possível ler o tráfego. Verifique se o backend está no ar.</div> : null}

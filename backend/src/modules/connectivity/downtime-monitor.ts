@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import { execCmd } from '../../utils/sys';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
@@ -44,6 +45,61 @@ const targets: ProbeState[] = [
         lastCheckedAt: null,
     },
 ];
+
+// Segundo alvo de internet (Cloudflare): só para o estado em tempo real. Se o Google não responder ping mas este sim,
+// a internet está de pé (evita falso "internet fora"). Não abre incidente nem manda Telegram.
+const EXTERNAL2_IP = process.env.EXTERNAL_PING_IP_2 || '1.1.1.1';
+const EXTERNAL2_LABEL = process.env.EXTERNAL_PING_LABEL_2 || 'Cloudflare DNS';
+// Quantas falhas seguidas (a cada INTERVAL_MS) para o estado em tempo real mudar para "fora" (~6 s); voltar é imediato.
+const LIVE_FAIL_AFTER = 3;
+
+export type LinkState = 'checking' | 'ok' | 'no_world' | 'no_gateway';
+type LiveProbe = { ip: string; label: string; online: boolean; rtt_ms: number | null; failures: number };
+
+let ex2Failures = 0;
+let liveStatus: {
+    state: LinkState;
+    since: number;
+    checked_at: number;
+    gateway: LiveProbe;
+    world: { online: boolean; rtt_ms: number | null; targets: LiveProbe[] };
+} | null = null;
+
+// Ping único sem shell; devolve o tempo de resposta em ms (null = sem resposta).
+const pingRtt = (ip: string): Promise<number | null> => new Promise((resolve) => {
+    execFile('ping', ['-4', '-c', '1', '-W', '1', '-I', WAN_IFACE, ip], { timeout: 3000 }, (err, stdout) => {
+        if (err) return resolve(null);
+        const m = String(stdout).match(/time=([\d.]+)/);
+        resolve(m ? Math.round(Number(m[1]) * 10) / 10 : 0);
+    });
+});
+
+const updateLiveStatus = (gw: ProbeState, ex: ProbeState, gwRtt: number | null, exRtt: number | null, ex2Rtt: number | null) => {
+    if (ex2Rtt === null) ex2Failures += 1; else ex2Failures = 0;
+    const gateway: LiveProbe = { ip: gw.ip, label: gw.label, online: gw.consecutiveFailures < LIVE_FAIL_AFTER, rtt_ms: gwRtt, failures: gw.consecutiveFailures };
+    const t1: LiveProbe = { ip: ex.ip, label: ex.label, online: ex.consecutiveFailures < LIVE_FAIL_AFTER, rtt_ms: exRtt, failures: ex.consecutiveFailures };
+    const t2: LiveProbe = { ip: EXTERNAL2_IP, label: EXTERNAL2_LABEL, online: ex2Failures < LIVE_FAIL_AFTER, rtt_ms: ex2Rtt, failures: ex2Failures };
+    const worldOnline = t1.online || t2.online;
+    const rtts = [t1, t2].filter((t) => t.online && t.rtt_ms !== null).map((t) => t.rtt_ms as number);
+    const state: LinkState = !gateway.online ? 'no_gateway' : !worldOnline ? 'no_world' : 'ok';
+    const now = Date.now();
+    liveStatus = {
+        state,
+        since: liveStatus && liveStatus.state === state ? liveStatus.since : now,
+        checked_at: now,
+        gateway,
+        world: { online: worldOnline, rtt_ms: rtts.length ? Math.min(...rtts) : null, targets: [t1, t2] },
+    };
+};
+
+// Estado em tempo real do link (último ciclo da sentinela, sem pingar de novo).
+// no_gateway: a Secretaria não alcança o gateway do provedor; no_world: o gateway responde, mas a internet além dele não.
+export const getLinkStatus = () => ({
+    provider: env.wanProviderName,
+    interface: WAN_IFACE,
+    interval_ms: INTERVAL_MS,
+    ...(liveStatus || { state: 'checking' as LinkState, since: Date.now(), checked_at: 0, gateway: { ip: GATEWAY_IP, label: `${env.wanProviderName} gateway`, online: true, rtt_ms: null, failures: 0 }, world: { online: true, rtt_ms: null, targets: [] } }),
+});
 
 let started = false;
 
@@ -125,10 +181,15 @@ export const startLinkMonitor = async () => {
     await ensureSchema();
     await hydrateOpenIncidents();
 
+    let ticking = false;
     const tick = async () => {
+        if (ticking) return;
+        ticking = true;
         try {
-            for (const target of targets) {
-                const isOnline = await pingCheck(target.ip);
+            const [gwRtt, exRtt, ex2Rtt] = await Promise.all([pingRtt(targets[0].ip), pingRtt(targets[1].ip), pingRtt(EXTERNAL2_IP)]);
+            const rttOf = [gwRtt, exRtt];
+            for (const [idx, target] of targets.entries()) {
+                const isOnline = rttOf[idx] !== null;
                 target.lastOnline = isOnline;
                 target.lastCheckedAt = new Date();
 
@@ -175,8 +236,11 @@ export const startLinkMonitor = async () => {
                     target.consecutiveFailures = 0;
                 }
             }
+            updateLiveStatus(targets[0], targets[1], gwRtt, exRtt, ex2Rtt);
         } catch (e) {
             console.error('[LINK-SENTINEL] Falha na sentinela de link:', e);
+        } finally {
+            ticking = false;
         }
     };
 

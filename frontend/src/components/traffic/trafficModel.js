@@ -68,6 +68,8 @@ export function readTheme() {
     crit: v('--md-danger', '#c62828'),
     warn: v('--md-warning', '#b45309'),
     ok: v('--md-success', '#1b7f4b'),
+    // Verde de "no ar" do link (o verde de sucesso do tema escuro puxa para azul): claro sobre fundo escuro, escuro sobre fundo claro.
+    green: parseColor(((bgc) => (0.299 * bgc.r + 0.587 * bgc.g + 0.114 * bgc.b < 110 ? '#34d399' : '#15803d'))(v('--map-bg', '#f7fafb'))),
     accent: v('--vlan-80', '#0a737c'),
     vlan,
   };
@@ -228,6 +230,7 @@ export function buildModel(data, mode) {
     wanDown: Number(data.wan?.down || 0),
     wanUp: Number(data.wan?.up || 0),
     topIp: top?.ip || null,
+    link: data.link || null,
   };
 }
 

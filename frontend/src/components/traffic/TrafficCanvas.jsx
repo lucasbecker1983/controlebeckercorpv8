@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { F_BODY, F_DISPLAY, F_MONO, fmt, pct, readTheme, rgba } from './trafficModel';
+import { linkStateOf } from './LinkStatusTags';
 
 /*
  * Desenho do mapa em camadas no <canvas> (curvas de Bézier, partículas, nós e anéis de uso).
@@ -311,8 +312,25 @@ export default function TrafficCanvas({
       ctx.arc(wan.x, wan.y, wan.r, 0, Math.PI * 2);
       ctx.fillStyle = rgba(T.surface);
       ctx.fill();
-      ctx.lineWidth = 1;
-      ctx.strokeStyle = rgba(T.line);
+      // Borda do link: verde com a internet no ar, vermelha pulsante quando cai (o gateway do provedor ou a internet além dele).
+      const linkState = linkStateOf(m.link, Date.now());
+      if (linkState === 'ok') {
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = rgba(T.green);
+      } else if (linkState === 'checking') {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = rgba(T.line);
+      } else {
+        ctx.beginPath();
+        ctx.arc(wan.x, wan.y, wan.r + 3 + blink * 7, 0, Math.PI * 2);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = rgba(T.crit, 0.15 + blink * 0.4);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(wan.x, wan.y, wan.r, 0, Math.PI * 2);
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = rgba(T.crit, 0.45 + blink * 0.55);
+      }
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(wan.x, wan.y, wan.r - 4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, u));

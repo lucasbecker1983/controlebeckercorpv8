@@ -4,7 +4,7 @@ import { promises as dnsPromises } from 'dns';
 import { env } from '../../config/env';
 import { pool } from '../../config/db';
 import { execCmd } from '../../utils/sys';
-import { getLinkSentinelSnapshot } from '../connectivity/downtime-monitor';
+import { getLinkStatus } from '../connectivity/downtime-monitor';
 
 /*
  * Coletor único de métricas do SGCG.
@@ -502,14 +502,19 @@ class MonitorService {
         }
     }
 
-    private async readInternet() {
-        const snapshot: any = await getLinkSentinelSnapshot();
-        this.internet = {
-            gateway: Boolean(snapshot?.gateway?.online),
-            external: Boolean(snapshot?.external?.online),
-            checked_at: Date.now(),
+    // Vem do último ciclo da sentinela do link (a cada 2 s), sem pingar de novo.
+    private internetNow() {
+        const link = getLinkStatus();
+        return {
+            gateway: link.state === 'checking' ? true : link.gateway.online,
+            external: link.state === 'checking' ? true : link.state === 'ok',
+            checked_at: link.checked_at || 0,
             provider: env.wanProviderName || 'Provedor',
         };
+    }
+
+    private async readInternet() {
+        this.internet = this.internetNow();
     }
 
     private async readServices() {
@@ -771,7 +776,8 @@ class MonitorService {
             disk: this.disk,
             uptime: Number((fs.readFileSync('/proc/uptime', 'utf-8').split(' ')[0]) || 0),
             services: this.services,
-            internet: this.internet,
+            internet: this.internetNow(),
+            link: getLinkStatus(),
             vlans: this.vlanList(),
         };
     }
@@ -832,6 +838,7 @@ class MonitorService {
             updated_at: this.traffic.updatedAt,
             link_mbps: LINK_MBPS,
             wan: this.getLive().wan,
+            link: getLinkStatus(),
             vlans: this.vlanList(),
             devices,
             sites: siteList,
@@ -962,8 +969,9 @@ class MonitorService {
 
         const linkDown = live.wan.down / live.link_mbps;
         const linkUp = live.wan.up / live.link_mbps;
-        if (this.internet.checked_at && !this.internet.external) {
-            alerts.push({ severity: 'critical', title: this.internet.gateway ? 'Sem internet além do provedor' : 'Link do provedor fora do ar', detail: this.internet.gateway ? 'O gateway do provedor responde, mas a internet externa não.' : 'O gateway do provedor não responde.', link: '/rede?tab=link' });
+        const net = this.internetNow();
+        if (net.checked_at && !net.external) {
+            alerts.push({ severity: 'critical', title: net.gateway ? 'Sem internet além do provedor' : 'Link do provedor fora do ar', detail: net.gateway ? 'O gateway do provedor responde, mas a internet externa não.' : 'O gateway do provedor não responde.', link: '/rede?tab=link' });
         }
         if (linkDown > 0.85 || linkUp > 0.85) {
             alerts.push({ severity: 'warning', title: 'Link de internet perto do limite', detail: `Download ${Math.round(linkDown * 100)}% e upload ${Math.round(linkUp * 100)}% de ${live.link_mbps} Mbps.`, link: '/mapa-trafego' });
