@@ -188,6 +188,15 @@ export default function TrafficCanvas({
       const hv = hoverRef.current;
       const blink = reduce ? 1 : 0.5 + 0.5 * Math.sin(((ts || 0) / 1000) * Math.PI * 2 * 1.1);
       const compact = st.geo.compact;
+      // Faixa compacta: colunas fixas (nome | IP | velocidades) para os aparelhos ficarem alinhados.
+      let colSpeeds = 0;
+      let colIp = 0;
+      if (compact) {
+        ctx.font = `10px ${F_MONO}`;
+        colSpeeds = Math.max(0, ...devices.map((dv) => ctx.measureText(`↓${fmt(dv.down)} ↑${fmt(dv.up)}`).width));
+        ctx.font = `500 11px ${F_MONO}`;
+        colIp = Math.max(0, ...devices.map((dv) => ctx.measureText(dv.ip).width));
+      }
 
       devices.forEach((dv) => {
         const on = !s || (s.t === 'dev' && s.ip === dv.ip) || (s.t === 'vlan' && s.id === dv.vlan) || (s.t === 'site' && usesSite(dv, s.key));
@@ -209,15 +218,23 @@ export default function TrafficCanvas({
         const ipColor = isTop ? rgba(T.crit) : on ? rgba(T.ink) : muted(0.5);
         ctx.textAlign = 'right';
         if (compact) {
-          // Uma linha só: IP e velocidades (poucas linhas por IP, como no Modo TV com muitos aparelhos).
+          // Uma linha só: nome do aparelho (quando existe), IP e velocidades, em colunas alinhadas.
           const speeds = `↓${fmt(dv.down)} ↑${fmt(dv.up)}`;
           ctx.font = `10px ${F_MONO}`;
           ctx.fillStyle = on ? muted() : muted(0.5);
           ctx.fillText(speeds, edge, dv.y + 3.5);
-          const sw = ctx.measureText(speeds).width;
+          const ipRight = edge - colSpeeds - 10;
           ctx.font = ipFont;
           ctx.fillStyle = ipColor;
-          ctx.fillText(fitText(dv.ip, room - sw - 8), edge - sw - 8, dv.y + 3.5);
+          ctx.fillText(fitText(dv.ip, Math.max(0, room - colSpeeds - 10)), ipRight, dv.y + 3.5);
+          const name = dv.agg ? '' : String(dv.hostname || '').split(' · ')[0].trim();
+          const nameRight = ipRight - colIp - 12;
+          const nameRoom = room - colSpeeds - 10 - colIp - 12;
+          if (name && nameRoom > 36) {
+            ctx.font = `11px ${F_BODY}`;
+            ctx.fillStyle = on ? muted(0.9) : muted(0.45);
+            ctx.fillText(fitText(name, nameRoom), nameRight, dv.y + 3.5);
+          }
         } else {
           ctx.font = ipFont;
           ctx.fillStyle = ipColor;
@@ -248,13 +265,17 @@ export default function TrafficCanvas({
         if (compact) {
           // Uma linha só embaixo do nó (faixas curtas): nome e números lado a lado, sem invadir a faixa vizinha.
           const nameTxt = `${v.id} · ${v.name}`;
-          const vals = idle ? (v.neighbors ? `sem tráfego · ${v.neighbors} disp.` : 'sem tráfego') : `${fmt(v.inet)}${v.limit ? `/${v.limit}` : ''}${inner}`;
+          const baseVals = `${fmt(v.inet)}${v.limit ? `/${v.limit}` : ''}`;
           ctx.font = `700 11px ${F_BODY}`;
           const w1 = ctx.measureText(nameTxt).width;
           ctx.font = `10px ${F_MONO}`;
+          // Se o texto inteiro não cabe entre a coluna dos aparelhos e o link, o trecho "interno" sai (fica no painel).
+          const fits = w1 + 8 + ctx.measureText(`${baseVals}${inner}`).width <= (wan.x - wan.r - 10) - (xs.dev + 14);
+          const vals = idle ? (v.neighbors ? `sem tráfego · ${v.neighbors} disp.` : 'sem tráfego') : `${baseVals}${fits ? inner : ''}`;
           const w2 = ctx.measureText(vals).width;
           // VLAN parada não tem ligações saindo: o rótulo vai ao lado do nó e não encosta na faixa de baixo.
-          const x0 = idle ? v.x + v.r + 10 : v.x - (w1 + 8 + w2) / 2;
+          // Sem passar do círculo do link (nem entrar na coluna dos aparelhos).
+          const x0 = idle ? v.x + v.r + 10 : Math.max(xs.dev + 14, Math.min(v.x - (w1 + 8 + w2) / 2, wan.x - wan.r - 10 - (w1 + 8 + w2)));
           const ly = idle ? v.y + 3.5 : v.y + v.r + 14;
           ctx.textAlign = 'left';
           ctx.font = `700 11px ${F_BODY}`;

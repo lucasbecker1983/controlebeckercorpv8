@@ -10,8 +10,8 @@ import { api } from '../../services/api';
 export const BASE_W = 860;
 export const BASE_H = 560;
 export const COLS = { dev: 170, vlan: 350, wan: 500, site: 660 };
-// Com poucas linhas por IP (TV), as colunas se afastam um pouco para caber o rótulo numa linha só.
-const COMPACT_COLS = { dev: 0.25, vlan: 0.43, wan: 0.58, site: 0.74 };
+// Com poucas linhas por IP (TV), as colunas se afastam um pouco para caber o rótulo numa linha só (nome, IP e velocidades).
+const COMPACT_COLS = { dev: 0.34, vlan: 0.49, wan: 0.63, site: 0.77 };
 export const MIN_W = 760; // abaixo disso o mapa rola na horizontal (celular)
 export const ROW = 30;
 export const MAX_SITES = 12; // os demais destinos viram "Outros"

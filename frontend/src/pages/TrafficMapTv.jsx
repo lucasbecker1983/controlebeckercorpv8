@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Maximize2, Minimize2, X } from 'lucide-react';
 import TrafficCanvas from '../components/traffic/TrafficCanvas';
 import { TM_CSS } from '../components/traffic/trafficStyles';
-import { F_BODY, F_DISPLAY, F_MONO, MIN_W, buildModel, fmt, layoutModel, limitDevices, pct, slotsOf, useFonts, useTrafficData } from '../components/traffic/trafficModel';
+import { F_BODY, F_DISPLAY, F_MONO, buildModel, fmt, layoutModel, limitDevices, pct, slotsOf, useFonts, useTrafficData } from '../components/traffic/trafficModel';
 
 /*
  * Modo TV do Mapa de Tráfego: só o "quadrado" do mapa em camadas, ocupando a tela inteira, para uma TV de 65" ou 75".
@@ -19,6 +19,8 @@ const ROTATE_MS = 20000;
 const SELECT_TIMEOUT_MS = 45000; // sem mexer por este tempo, o detalhe fecha e a TV volta ao painel normal
 const selKey = (x) => (x ? (x.t === 'site' ? `site:${x.key}` : x.key) : null);
 const MIN_STEP = 16; // altura mínima, em px lógicos, de cada linha de IP
+const TV_MIN_W = 940; // largura lógica mínima do desenho (mais larga que a da página normal: cabem nome, IP e velocidades)
+const MAX_ZOOM = 1.4; // ampliação máxima do desenho: acima disso a letra fica maior que a do painel lateral e o mapa perde espaço
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 const TV_CSS = `
@@ -309,12 +311,12 @@ export default function TrafficMapTv() {
   const slots = Math.max(slotsOf(view), 14);
   // Em telas que informam mais de 1920 px (TV 4K sem escala), a ampliação cresce junto: a letra tem o mesmo tamanho visual.
   const screenScale = Math.max(1, window.innerWidth / 1920);
-  const k = clamp(Math.min(size.w / MIN_W, size.h / (slots * MIN_STEP + 60), 2.1 * screenScale), 0.7 * screenScale, 2.1 * screenScale);
+  const k = clamp(Math.min(size.w / TV_MIN_W, size.h / (slots * MIN_STEP + 60), MAX_ZOOM * screenScale), 0.7 * screenScale, MAX_ZOOM * screenScale);
   const LW = size.w / k;
   const geo = useMemo(() => layoutModel(view, LW, { fixedH: size.h / k }), [view, LW, size.h, k]);
   const dprMax = clamp(2400 / size.w, 1, 2);
 
-  const u = clamp(Math.min(window.innerWidth * 0.0105, window.innerHeight * 0.019), 13, 30 * screenScale);
+  const u = clamp(Math.min(window.innerWidth * 0.0092, window.innerHeight * 0.0172), 12, 27 * screenScale);
   const listN = clamp(Math.floor((size.h - u * 11) / 2 / (u * 2.3)), 3, 9);
   const topIps = model ? [...model.devices].sort((a, b) => b.total - a.total).slice(0, listN) : [];
   const topSites = model ? model.sites.filter((t) => !t.internal && t.key !== '__outros__').slice(0, listN) : [];
