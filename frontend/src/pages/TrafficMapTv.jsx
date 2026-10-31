@@ -71,7 +71,7 @@ const TV_CSS = `
 .tv-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.8em; font-size:.78em; align-items:baseline; }
 .tv-close { position:absolute; right:0; top:.5em; width:1.9em; height:1.9em; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--md-outline); border-radius:.45em; background:var(--md-container); color:var(--md-on-surface); cursor:pointer; }
 .tv-more { font-size:.65em; color:color-mix(in srgb, var(--md-on-surface) 55%, transparent); }
-.tv-legend { display:flex; flex-wrap:wrap; gap:.25em 1.1em; padding:.5em 1em; border-top:1px solid var(--md-outline); font-size:.62em; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
+.tv-legend { display:flex; flex-wrap:wrap; gap:.2em 1.3em; padding:.45em 1em; border-top:1px solid var(--md-outline); font-size:.76em; line-height:1.3; color:color-mix(in srgb, var(--md-on-surface) 62%, transparent); }
 .tv-legend span { display:inline-flex; align-items:center; gap:.45em; }
 .tv-legend i { width:.8em; height:.8em; border-radius:50%; display:inline-block; }
 .tv-dot { display:inline-block; width:.6em; height:.6em; border-radius:50%; background:var(--md-danger); animation:tm-blink 1s ease-in-out infinite; margin-right:.4em; }

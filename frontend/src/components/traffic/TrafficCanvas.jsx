@@ -221,8 +221,8 @@ export default function TrafficCanvas({
           // IP e velocidades na mesma linha, com folga entre eles e do nó; o nome fica embaixo do IP, em letra menor.
           // Sem altura para duas linhas, o nome vai à esquerda do IP.
           const name = dv.agg ? '' : String(dv.hostname || '').split(' · ')[0].trim();
-          const stacked = Boolean(name) && st.geo.step >= 21;
-          const lineY = dv.y + (stacked ? 0.5 : 3.5);
+          const stacked = Boolean(name) && st.geo.step >= 23;
+          const lineY = dv.y + (stacked ? -1.5 : 3.5);
           const speeds = `↓${fmt(dv.down)} ↑${fmt(dv.up)}`;
           const speedsRight = edge - (isTop ? 7 : 3);
           const ipRight = speedsRight - colSpeeds - 16;
@@ -235,7 +235,7 @@ export default function TrafficCanvas({
           if (name && stacked) {
             ctx.font = `9px ${F_BODY}`;
             ctx.fillStyle = on ? muted(0.9) : muted(0.45);
-            ctx.fillText(fitText(name, Math.max(0, ipRight - 6)), ipRight, dv.y + 10.5);
+            ctx.fillText(fitText(name, Math.max(0, ipRight - 6)), ipRight, dv.y + 11);
           } else if (name) {
             const nameRoom = ipRight - colIp - 12 - 6;
             if (nameRoom > 36) {
@@ -247,14 +247,14 @@ export default function TrafficCanvas({
         } else {
           ctx.font = ipFont;
           ctx.fillStyle = ipColor;
-          ctx.fillText(fitText(dv.ip, room), edge, dv.y - 1);
+          ctx.fillText(fitText(dv.ip, room), edge, dv.y - 3);
           // Download e upload sempre aparecem; o tipo do aparelho é encurtado para caber.
           ctx.font = `10px ${F_BODY}`;
           ctx.fillStyle = on ? muted() : muted(0.5);
           const speeds = `↓${fmt(dv.down)} ↑${fmt(dv.up)} Mbps`;
           const kindRoom = room - ctx.measureText(` · ${speeds}`).width;
           const kind = kindRoom > 18 ? fitText(dv.kind, kindRoom) : '';
-          ctx.fillText(kind ? `${kind} · ${speeds}` : speeds, edge, dv.y + 11);
+          ctx.fillText(kind ? `${kind} · ${speeds}` : speeds, edge, dv.y + 12);
         }
       });
 
@@ -270,6 +270,7 @@ export default function TrafficCanvas({
           ctx.lineWidth = 2.5;
           ctx.stroke();
         }
+        const VGAP = 16; // folga entre o nome da VLAN e os números ao lado
         const inner = v.internal > 0.05 ? ` · ${fmt(v.internal)} interno` : '';
         if (compact) {
           // Uma linha só embaixo do nó (faixas curtas): nome e números lado a lado, sem invadir a faixa vizinha.
@@ -279,12 +280,12 @@ export default function TrafficCanvas({
           const w1 = ctx.measureText(nameTxt).width;
           ctx.font = `10px ${F_MONO}`;
           // Se o texto inteiro não cabe entre a coluna dos aparelhos e o link, o trecho "interno" sai (fica no painel).
-          const fits = w1 + 8 + ctx.measureText(`${baseVals}${inner}`).width <= (wan.x - wan.r - 10) - (xs.dev + 14);
+          const fits = w1 + VGAP + ctx.measureText(`${baseVals}${inner}`).width <= (wan.x - wan.r - 10) - (xs.dev + 14);
           const vals = idle ? (v.neighbors ? `sem tráfego · ${v.neighbors} disp.` : 'sem tráfego') : `${baseVals}${fits ? inner : ''}`;
           const w2 = ctx.measureText(vals).width;
           // VLAN parada não tem ligações saindo: o rótulo vai ao lado do nó e não encosta na faixa de baixo.
           // Sem passar do círculo do link (nem entrar na coluna dos aparelhos).
-          const x0 = idle ? v.x + v.r + 10 : Math.max(xs.dev + 14, Math.min(v.x - (w1 + 8 + w2) / 2, wan.x - wan.r - 10 - (w1 + 8 + w2)));
+          const x0 = idle ? v.x + v.r + 10 : Math.max(xs.dev + 14, Math.min(v.x - (w1 + VGAP + w2) / 2, wan.x - wan.r - 10 - (w1 + VGAP + w2)));
           const ly = idle ? v.y + 3.5 : v.y + v.r + 14;
           ctx.textAlign = 'left';
           ctx.font = `700 11px ${F_BODY}`;
@@ -292,7 +293,7 @@ export default function TrafficCanvas({
           ctx.fillText(nameTxt, x0, ly);
           ctx.font = `10px ${F_MONO}`;
           ctx.fillStyle = on ? muted() : muted(0.5);
-          ctx.fillText(vals, x0 + w1 + 8, ly);
+          ctx.fillText(vals, x0 + w1 + VGAP, ly);
         } else {
           ctx.textAlign = 'center';
           ctx.font = `700 11px ${F_BODY}`;
@@ -300,7 +301,7 @@ export default function TrafficCanvas({
           ctx.fillText(`${v.id} · ${v.name}`, v.x, v.y + v.r + 17);
           ctx.font = `10px ${F_MONO}`;
           ctx.fillStyle = on ? muted() : muted(0.5);
-          ctx.fillText(idle ? `sem tráfego · ${v.neighbors} disp.` : `${fmt(v.inet)}${v.limit ? `/${v.limit}` : ''}${inner}`, v.x, v.y + v.r + 29);
+          ctx.fillText(idle ? `sem tráfego · ${v.neighbors} disp.` : `${fmt(v.inet)}${v.limit ? `/${v.limit}` : ''}${inner}`, v.x, v.y + v.r + 33);
         }
       });
 
@@ -323,16 +324,16 @@ export default function TrafficCanvas({
       ctx.textAlign = 'center';
       ctx.fillStyle = rgba(T.ink);
       ctx.font = `800 17px ${F_DISPLAY}`;
-      ctx.fillText(`${Math.round(u * 100)}%`, wan.x, wan.y + 2);
+      ctx.fillText(`${Math.round(u * 100)}%`, wan.x, wan.y - 1);
       ctx.font = `10px ${F_MONO}`;
       ctx.fillStyle = muted();
-      ctx.fillText(`de ${st.LINK} Mbps`, wan.x, wan.y + 16);
+      ctx.fillText(`de ${st.LINK} Mbps`, wan.x, wan.y + 19);
       ctx.font = `700 11px ${F_BODY}`;
       ctx.fillStyle = rgba(T.ink);
       ctx.fillText('Link WAN', wan.x, wan.y + wan.r + 18);
       ctx.font = `10px ${F_MONO}`;
       ctx.fillStyle = muted();
-      ctx.fillText(`↓${fmt(m.wanDown)} ↑${fmt(m.wanUp)} Mbps`, wan.x, wan.y + wan.r + 31);
+      ctx.fillText(`↓${fmt(m.wanDown)} ↑${fmt(m.wanUp)} Mbps`, wan.x, wan.y + wan.r + 35);
 
       sites.forEach((t) => {
         const on = !s || (s.t === 'site' && s.key === t.key) || (s.t === 'dev' && selDev && usesSite(selDev, t.key)) || (s.t === 'vlan' && devices.some((d) => d.vlan === s.id && usesSite(d, t.key)));
@@ -342,11 +343,11 @@ export default function TrafficCanvas({
         ctx.textAlign = 'left';
         ctx.font = `600 11.5px ${F_BODY}`;
         ctx.fillStyle = on ? rgba(T.ink) : muted(0.5);
-        ctx.fillText(fitText(t.name, room), t.x + t.r + 8, t.y - 1);
+        ctx.fillText(fitText(t.name, room), t.x + t.r + 8, t.y - 3.5);
         ctx.font = `10px ${F_MONO}`;
         ctx.fillStyle = on ? muted() : muted(0.5);
         const sub = t.internal ? `${fmt(t.val)} Mbps · interno` : `${fmt(t.val)} Mbps · ${pct(t.val, st.LINK)}%`;
-        ctx.fillText(fitText(sub, room), t.x + t.r + 8, t.y + 11);
+        ctx.fillText(fitText(sub, room), t.x + t.r + 8, t.y + 13);
       });
 
       if (!devices.length) {
