@@ -4,6 +4,7 @@ import { execCmd } from '../../utils/sys';
 import { ensureSmtpSchema, getStoredSmtpConfig, saveSmtpConfig, testConnection } from '../../utils/mailer';
 import { AuthenticatedRequest, requireJwt } from './auth';
 import { env } from '../../config/env';
+import { sendTelegram, telegramConfigured } from '../../utils/telegram';
 
 const router = Router();
 const UFW_BIN = '/usr/sbin/ufw';
@@ -185,6 +186,18 @@ router.post('/smtp/test', requireJwt, async (req: AuthenticatedRequest, res) => 
         console.error('[SMTP] Falha no teste:', error);
         res.status(500).json({ error: error?.message || 'Erro ao testar SMTP.' });
     }
+});
+
+// Telegram do Sentinela: token e chat ficam só no .env (scripts/sgcg-telegram-setup.sh). Aqui só o estado e um teste.
+router.get('/telegram', requireJwt, (_req, res) => {
+    res.json({ configured: telegramConfigured() });
+});
+
+router.post('/telegram/test', requireJwt, async (_req: AuthenticatedRequest, res) => {
+    if (!telegramConfigured()) return res.status(400).json({ error: 'Telegram não configurado. Rode scripts/sgcg-telegram-setup.sh no servidor.' });
+    const sent = await sendTelegram('🧪 Teste do SGCG: os alertas do Sentinela chegam por aqui.');
+    if (!sent) return res.status(502).json({ error: 'O Telegram não aceitou a mensagem. Confira o token e o chat no servidor.' });
+    return res.json({ success: true, message: 'Mensagem de teste enviada ao Telegram.' });
 });
 
 const IP_RE = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;

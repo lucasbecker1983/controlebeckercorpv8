@@ -1,5 +1,9 @@
+import dns from 'dns';
 import os from 'os';
 import '../config/env';
+
+// O servidor não tem rota IPv6: o api.telegram.org resolve para IPv6 primeiro e a conexão falhava às vezes. Prefere IPv4.
+dns.setDefaultResultOrder('ipv4first');
 
 // Canal Telegram do Sentinela. Token e chat ficam só no backend/.env (TELEGRAM_BOT_TOKEN e TELEGRAM_CHAT_ID);
 // sem eles o envio é ignorado e o e-mail segue como antes.
@@ -32,7 +36,8 @@ export const sendTelegram = async (text: string): Promise<boolean> => {
         console.log('[TELEGRAM] Mensagem enviada.');
         return true;
     } catch (error) {
-        console.error('[TELEGRAM] Falha no envio:', error instanceof Error ? error.message.replace(token, '***') : 'erro desconhecido');
+        const cause = (error as any)?.cause?.code || (error as any)?.cause?.message || '';
+        console.error('[TELEGRAM] Falha no envio:', error instanceof Error ? error.message.replace(token, '***') : 'erro desconhecido', cause ? `(${String(cause).replace(token, '***')})` : '');
         return false;
     }
 };
