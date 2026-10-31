@@ -43,7 +43,7 @@ export const SHELL_ALLOWLIST: Array<{ name: string; pattern: RegExp }> = [
     { name: 'cron-sync', pattern: new RegExp(`^sudo ${env.projectRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\/backend\\/(999_sync_cron|999_vlan_scheduler)\\.sh .+$`) },
     { name: 'background-script', pattern: /^bash .+ > \/dev\/null 2>&1 &$/ },
     { name: 'ip-neigh-all', pattern: /^ip -4 neigh show$/ },
-    { name: 'monitor-iftop', pattern: /^(timeout \d{1,2} )?sudo iftop -i [a-z0-9]+\.\d{1,4} -t -s 3 -n -N -L \d{2,3} -B 2>\/dev\/null$/ },
+    { name: 'monitor-iftop', pattern: /^(timeout \d{1,2} )?sudo iftop -i [a-z0-9]+\.\d{1,4} -t -s 3 -n -N -L \d{2,3} -B 2>\/dev\/null( \|\| true)?$/ },
     { name: 'monitor-vnstat', pattern: /^vnstat --json [hd] \d{1,3} -i [a-z0-9]+(\.\d{1,4})?$/ },
     { name: 'misc-safe', pattern: /^(sync|sudo sysctl -w vm\.drop_caches=3)$/ },
     { name: 'nmap-scan', pattern: /^sudo nmap -sn -n --min-rate 1000 .+$/ },

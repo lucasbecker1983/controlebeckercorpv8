@@ -645,7 +645,7 @@ class MonitorService {
             const outputs = await Promise.all(ifaces.map(async ({ iface, id }) => ({
                 id,
                 // O iftop não termina sozinho numa VLAN sem pacotes; o timeout evita que uma VLAN parada trave a coleta de todas.
-                text: await execCmd(`timeout 8 sudo iftop -i ${iface} -t -s 3 -n -N -L 500 -B 2>/dev/null`),
+                text: await execCmd(`timeout 8 sudo iftop -i ${iface} -t -s 3 -n -N -L 500 -B 2>/dev/null || true`),
             })));
             const devices = new Map<string, Device>();
             for (const { id, text } of outputs) {
