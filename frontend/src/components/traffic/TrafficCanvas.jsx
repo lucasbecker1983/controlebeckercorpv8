@@ -218,22 +218,31 @@ export default function TrafficCanvas({
         const ipColor = isTop ? rgba(T.crit) : on ? rgba(T.ink) : muted(0.5);
         ctx.textAlign = 'right';
         if (compact) {
-          // Uma linha só: nome do aparelho (quando existe), IP e velocidades, em colunas alinhadas.
+          // IP e velocidades na mesma linha, com folga entre eles e do nó; o nome fica embaixo do IP, em letra menor.
+          // Sem altura para duas linhas, o nome vai à esquerda do IP.
+          const name = dv.agg ? '' : String(dv.hostname || '').split(' · ')[0].trim();
+          const stacked = Boolean(name) && st.geo.step >= 21;
+          const lineY = dv.y + (stacked ? 0.5 : 3.5);
           const speeds = `↓${fmt(dv.down)} ↑${fmt(dv.up)}`;
+          const speedsRight = edge - (isTop ? 7 : 3);
+          const ipRight = speedsRight - colSpeeds - 16;
           ctx.font = `10px ${F_MONO}`;
           ctx.fillStyle = on ? muted() : muted(0.5);
-          ctx.fillText(speeds, edge, dv.y + 3.5);
-          const ipRight = edge - colSpeeds - 10;
+          ctx.fillText(speeds, speedsRight, lineY);
           ctx.font = ipFont;
           ctx.fillStyle = ipColor;
-          ctx.fillText(fitText(dv.ip, Math.max(0, room - colSpeeds - 10)), ipRight, dv.y + 3.5);
-          const name = dv.agg ? '' : String(dv.hostname || '').split(' · ')[0].trim();
-          const nameRight = ipRight - colIp - 12;
-          const nameRoom = room - colSpeeds - 10 - colIp - 12;
-          if (name && nameRoom > 36) {
-            ctx.font = `11px ${F_BODY}`;
+          ctx.fillText(fitText(dv.ip, Math.max(0, ipRight - 6 + 0)), ipRight, lineY);
+          if (name && stacked) {
+            ctx.font = `9px ${F_BODY}`;
             ctx.fillStyle = on ? muted(0.9) : muted(0.45);
-            ctx.fillText(fitText(name, nameRoom), nameRight, dv.y + 3.5);
+            ctx.fillText(fitText(name, Math.max(0, ipRight - 6)), ipRight, dv.y + 10.5);
+          } else if (name) {
+            const nameRoom = ipRight - colIp - 12 - 6;
+            if (nameRoom > 36) {
+              ctx.font = `11px ${F_BODY}`;
+              ctx.fillStyle = on ? muted(0.9) : muted(0.45);
+              ctx.fillText(fitText(name, nameRoom), ipRight - colIp - 12, lineY);
+            }
           }
         } else {
           ctx.font = ipFont;
