@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { pool } from '../config/db';
 import { env } from '../config/env';
+import { runCommand } from '../utils/process';
 import { filterOperationalVlans, isManagedBlockingIp } from './blocking-release-scope';
 
 export type EnforcementMode = 'acl-only' | 'acl-plus-dns' | 'intercept-selective';
@@ -826,6 +827,9 @@ export class PolicyCompilerService {
         };
 
         this.writeRawFile(this.manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+        // Compilar apaga as liberações dinâmicas do gov.br/hCaptcha das listas de DNS e o timer só as repõe a cada 10
+        // minutos: dispara a atualização agora, qualquer que seja o caminho que recompilou (aplicar, rollback, reinício).
+        await runCommand('systemctl', ['start', '--no-block', 'sgcg-govbr-allowlist.service'], { elevated: true, allowFailure: true }).catch(() => null);
         return manifest;
     }
 

@@ -228,9 +228,11 @@ export const sendAlert = async (subject: string, message: string, isReminder = f
 
 export const testConnection = async (payload: Partial<SmtpConfig> & { to_email?: string }) => {
     const current = await getStoredSmtpConfig();
+    // Campo que não veio no pedido (undefined) mantém o valor salvo; antes ele apagava o valor e o teste dava "SMTP desativado".
+    const sent = Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== undefined)) as Partial<SmtpConfig>;
     const conf: SmtpConfig = {
         ...current,
-        ...payload,
+        ...sent,
         port: Number(payload.port || current.port || DEFAULT_SMTP_CONFIG.port),
         password: payload.password !== undefined && payload.password !== '' ? payload.password : current.password,
         to_email: payload.to_email?.trim() || payload.username?.trim() || current.to_email || current.username,

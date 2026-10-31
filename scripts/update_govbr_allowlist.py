@@ -232,9 +232,24 @@ def fetch_recent_related_domains() -> set[str]:
     conn = psycopg2.connect(DATABASE_URL)
     try:
         with conn.cursor() as cur:
+            # Sem ORDER BY, o LIMIT sorteava 1500 nomes entre milhares que contêm "gov": os nomes do hCaptcha (que o login do
+            # gov.br precisa) entravam e saíam da lista a cada execução. Agora o hCaptcha tem consulta própria e as duas
+            # ordenam pelos nomes mais recentes.
             cur.execute(
                 """
-                SELECT DISTINCT lower(query_name)
+                SELECT lower(query_name) AS q
+                  FROM dns_policy_events
+                 WHERE created_at > now() - interval '24 hours'
+                   AND query_name ILIKE '%%hcaptcha%%'
+                 GROUP BY 1
+                 ORDER BY max(created_at) DESC
+                 LIMIT 2000
+                """
+            )
+            hcaptcha_rows = cur.fetchall()
+            cur.execute(
+                """
+                SELECT lower(query_name) AS q
                   FROM dns_policy_events
                  WHERE created_at > now() - interval '24 hours'
                    AND (
@@ -249,14 +264,15 @@ def fetch_recent_related_domains() -> set[str]:
                      OR query_name ILIKE '%%receita%%'
                      OR query_name ILIKE '%%fazenda%%'
                      OR query_name ILIKE '%%go-mpulse%%'
-                     OR query_name ILIKE '%%hcaptcha%%'
                      OR query_name ILIKE '%%sebrae%%'
                      OR query_name ILIKE '%%pgfn%%'
                    )
+                 GROUP BY 1
+                 ORDER BY max(created_at) DESC
                  LIMIT 1500
                 """
             )
-            for (query_name,) in cur.fetchall():
+            for (query_name,) in hcaptcha_rows + cur.fetchall():
                 domain = normalize_domain(str(query_name or ""))
                 if is_related_domain(domain):
                     domains.add(domain)

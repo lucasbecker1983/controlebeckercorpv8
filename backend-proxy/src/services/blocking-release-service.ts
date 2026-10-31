@@ -3603,6 +3603,8 @@ class BlockingReleaseService {
 
             const mode = (engineState.enforcement_mode || 'acl-plus-dns') as EnforcementMode;
             const validation = await this.validateCompiledState(mode);
+            // O snapshot restaurado não traz as liberações dinâmicas do gov.br/hCaptcha: repõe na hora (o timer só roda a cada 10 min).
+            await runCommand('systemctl', ['start', '--no-block', 'sgcg-govbr-allowlist.service'], { elevated: true, allowFailure: true }).catch(() => null);
             await this.updateEngineState({
                 last_rollback_at: new Date().toISOString(),
                 last_rollback_by: requestedBy,

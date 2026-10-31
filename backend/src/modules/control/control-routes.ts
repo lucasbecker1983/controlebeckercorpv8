@@ -815,7 +815,8 @@ router.post('/service-action', async (req, res) => {
 router.post('/tactical', async (req, res) => {
     const { action } = req.body;
     try {
-        if (action === 'firewall_reset') { await execCmd('sudo ufw --force reset'); await execCmd('sudo ufw enable'); }
+        // O console não zera o UFW: isso derruba o filtro e o acesso remoto. A tela nunca ofereceu essa ação.
+        if (action === 'firewall_reset') return res.status(403).json({ error: 'Redefinir o firewall não é permitido pelo console.' });
         if (action === 'fail2ban_unlock') await execCmd('sudo fail2ban-client unban --all');
         if (action === 'dhcp_restart') await execCmd('sudo systemctl restart isc-dhcp-server');
         if (action === 'db_restart') await execCmd('sudo systemctl restart postgresql');
