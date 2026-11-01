@@ -68,7 +68,8 @@ const openRouterCandidates = (data: any): Candidate[] => {
         const inputs: string[] = item?.architecture?.input_modalities || [];
         if (outputs.length && !outputs.includes('text')) continue;
         if (inputs.length && !inputs.includes('text')) continue;
-        if (/(embed|moderation|guard|safeguard|tts|whisper|image-gen)/i.test(id)) continue;
+        // Classificadores de segurança, moderação, áudio e imagem não conversam: ficam fora do catálogo.
+        if (/(embed|moderation|guard|safeguard|safety|tts|whisper|image-gen)/i.test(id)) continue;
         const sp: string[] = item?.supported_parameters || [];
         out.push({
             model_id: id,
