@@ -15,6 +15,27 @@ const SERVICE_LABELS = { unbound: 'DNS (Unbound)', squid: 'Proxy (Squid)', 'isc-
 // Bytes em GB (decimal, como o fabricante do disco), sem casas e com ponto de milhar: 1.832
 const gb = (bytes) => Math.round(Number(bytes || 0) / 1e9).toLocaleString('pt-BR');
 
+// Swap (área de troca em disco) dentro do card Memória: cheia não é falha de agora, mas tira a reserva da memória.
+function SwapLine({ swap }) {
+  if (!swap || !swap.total_mb) return null;
+  const level = swap.percent >= 95 ? 'danger' : swap.percent >= 80 ? 'warning' : 'ok';
+  const color = { danger: 'text-danger', warning: 'text-warning', ok: 'text-on-surface/55' }[level];
+  const bar = { danger: 'bg-danger', warning: 'bg-warning', ok: 'bg-primary/70' }[level];
+  const g = (mb) => (mb / 1024).toFixed(1).replace('.', ',');
+  return (
+    <div className={`mt-1.5 border-t border-outline pt-2 ${color}`} title="Swap é a área do disco que o sistema usa quando a memória acaba. Cheia, não sobra reserva.">
+      <div className="flex items-baseline justify-between gap-2 text-[12.5px]">
+        <span className="font-medium">Swap {swap.percent}%</span>
+        <span className="tabular">{g(swap.used_mb)} de {g(swap.total_mb)} GB</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-on-surface/10" role="progressbar" aria-valuenow={swap.percent} aria-valuemin={0} aria-valuemax={100} aria-label="Uso do swap">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, swap.percent)}%` }} />
+      </div>
+      {level !== 'ok' ? <div className="mt-1 text-[11.5px] font-semibold">{level === 'danger' ? 'Swap esgotado: sem reserva se a memória apertar' : 'Swap quase cheio'}</div> : null}
+    </div>
+  );
+}
+
 export default function Server() {
   const theme = useChartTheme();
   const [hw, setHw] = useState(null);
@@ -54,7 +75,9 @@ export default function Server() {
       <PageHeader title="Servidor" description="Uso de processador, memória e disco, hardware e serviços do servidor do SGCG." />
       <KpiRow>
         <Kpi icon={Cpu} label="Processador" value={live ? `${live.cpu}%` : '—'} sub={hw?.cpu ? `${hw.cpu.cores} núcleos` : null} tone={live?.cpu > 85 ? 'danger' : 'neutral'} />
-        <Kpi icon={MemoryStick} label="Memória" value={live ? `${live.ram.percent}%` : '—'} sub={live ? `${(live.ram.used_mb / 1024).toFixed(1)} de ${(live.ram.total_mb / 1024).toFixed(1)} GB` : null} tone={live?.ram.percent > 90 ? 'danger' : 'neutral'} />
+        <Kpi icon={MemoryStick} label="Memória" value={live ? `${live.ram.percent}%` : '—'} sub={live ? `${(live.ram.used_mb / 1024).toFixed(1)} de ${(live.ram.total_mb / 1024).toFixed(1)} GB` : null} tone={live?.ram.percent > 90 ? 'danger' : 'neutral'}>
+          <SwapLine swap={live?.swap} />
+        </Kpi>
         <Kpi icon={HardDrive} label="Disco do sistema" value={live ? `${live.disk.percent}%` : '—'} sub={live ? `${gb(live.disk.used)} de ${gb(live.disk.total)} GB` : null} tone={live?.disk.percent > 85 ? 'danger' : 'neutral'} />
         <Kpi icon={Clock} label="Ligado há" value={live ? uptimeText(live.uptime) : '—'} />
       </KpiRow>

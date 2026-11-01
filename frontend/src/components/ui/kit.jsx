@@ -32,7 +32,7 @@ export function PageHeader({ title, description, actions, meta }) {
   );
 }
 
-export function Kpi({ label, value, sub, tone: t = 'neutral', icon: Icon }) {
+export function Kpi({ label, value, sub, tone: t = 'neutral', icon: Icon, children }) {
   const c = tone(t);
   return (
     <div className="sgcg-card flex min-w-0 flex-col gap-1 p-4">
@@ -41,6 +41,7 @@ export function Kpi({ label, value, sub, tone: t = 'neutral', icon: Icon }) {
       </div>
       <div className={`tabular text-2xl font-bold tracking-tight ${t === 'neutral' ? 'text-on-surface' : c.text}`}>{value}</div>
       {sub ? <div className="text-[12.5px] text-on-surface/55">{sub}</div> : null}
+      {children}
     </div>
   );
 }

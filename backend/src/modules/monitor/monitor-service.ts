@@ -252,6 +252,19 @@ class MonitorService {
         }
     }
 
+    // Swap em uso (área de troca em disco). Cheio = sem reserva se a memória apertar.
+    private readSwap() {
+        try {
+            const text = fs.readFileSync('/proc/meminfo', 'utf-8');
+            const total = Number(text.match(/SwapTotal:\s+(\d+)/)?.[1] || 0);
+            const free = Number(text.match(/SwapFree:\s+(\d+)/)?.[1] || 0);
+            if (!total) return { percent: 0, totalMb: 0, usedMb: 0 };
+            return { percent: Math.round(((total - free) / total) * 100), totalMb: Math.round(total / 1024), usedMb: Math.round((total - free) / 1024) };
+        } catch {
+            return { percent: 0, totalMb: 0, usedMb: 0 };
+        }
+    }
+
     private readDisk() {
         try {
             const stat: any = (fs as any).statfsSync('/');
@@ -773,6 +786,7 @@ class MonitorService {
             wan: { interface: env.wanInterface, down: last?.wan.down || 0, up: last?.wan.up || 0 },
             cpu: last?.cpu || 0,
             ram: { percent: ram.percent, used_mb: ram.usedMb, total_mb: ram.totalMb },
+            swap: ((sw) => ({ percent: sw.percent, used_mb: sw.usedMb, total_mb: sw.totalMb }))(this.readSwap()),
             disk: this.disk,
             uptime: Number((fs.readFileSync('/proc/uptime', 'utf-8').split(' ')[0]) || 0),
             services: this.services,
@@ -996,6 +1010,15 @@ class MonitorService {
             if (!active) alerts.push({ severity: 'critical', title: `Serviço ${name} parado`, detail: 'O serviço não está ativo no servidor.', link: '/servidor' });
         }
         if (live.disk.percent >= 85) alerts.push({ severity: 'warning', title: 'Disco quase cheio', detail: `${live.disk.percent}% usado.`, link: '/servidor' });
+        if (live.swap.total_mb > 0 && live.swap.percent >= 80) {
+            const full = live.swap.percent >= 95;
+            alerts.push({
+                severity: full ? 'critical' : 'warning',
+                title: full ? 'Swap esgotado' : 'Swap quase cheio',
+                detail: `${live.swap.percent}% da área de troca em uso (${(live.swap.used_mb / 1024).toFixed(1)} de ${(live.swap.total_mb / 1024).toFixed(1)} GB). ${full ? 'Sem reserva: se a memória apertar, o sistema passa a encerrar programas à força.' : 'A reserva de memória está acabando.'}`,
+                link: '/servidor',
+            });
+        }
         if (live.ram.percent >= 92) alerts.push({ severity: 'warning', title: 'Memória quase esgotada', detail: `${live.ram.percent}% em uso.`, link: '/servidor' });
 
         const openTickets = Number(tickets.rows[0]?.total || 0);
