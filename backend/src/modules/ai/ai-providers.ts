@@ -37,6 +37,14 @@ const classify = (status: number, body: string, headers: Headers): AiError => {
     const message = scrub(body);
     const retry = Number(headers.get('retry-after'));
     const retryAfterMs = Number.isFinite(retry) && retry > 0 ? retry * 1000 : undefined;
+    // Modelo que cobra crédito não é gratuito, mesmo que a listagem diga preço zero: fica fora do catálogo.
+    if (status === 402 || /insufficient credits|payment required|requires? (a )?(paid|credit)|add credits/i.test(message)) {
+        return new AiError('gone', `Exige crédito (HTTP ${status}): fora do plano gratuito. ${message.slice(0, 100)}`, status);
+    }
+    // Modelo gratuito liberado só para agentes de código aprovados (OpenRouter): inutilizável aqui, como um modelo aposentado.
+    if (/only available on (agentic|agent)|agentic harness/i.test(message)) {
+        return new AiError('gone', `Modelo restrito a agentes de código (HTTP ${status}). ${message.slice(0, 120)}`, status);
+    }
     // Modelo que o provedor aposentou, trocou de nome ou não conhece mais.
     if (status === 404 || /(model|modelo).{0,60}(not found|does not exist|deprecated|decommission|no longer|not supported)|decommission/i.test(message)) {
         return new AiError('gone', `Modelo não existe mais no provedor (HTTP ${status}). ${message}`, status);

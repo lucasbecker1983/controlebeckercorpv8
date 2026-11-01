@@ -183,7 +183,7 @@ export const recordCallResult = async (provider: Provider, modelId: string, ok: 
           WHERE provider = $1 AND model_id = $2`,
         [provider, modelId, status, String(error || '').slice(0, 300)],
     );
-    if (status === 'gone' && before !== 'gone') await logModelEvent(provider, modelId, 'descontinuado', 'o provedor recusou o modelo (não existe mais ou foi aposentado)');
+    if (status === 'gone' && before !== 'gone') await logModelEvent(provider, modelId, 'descontinuado', String(error || '').startsWith('Exige crédito') ? 'exige crédito: não é gratuito, fica fora do catálogo' : 'o provedor recusou o modelo (não existe mais, foi aposentado ou é restrito)');
     else if (status === 'error' && before !== 'error') await logModelEvent(provider, modelId, 'falhou', String(error || '').slice(0, 200));
     else if (status === 'limited' && before !== 'limited') await logModelEvent(provider, modelId, 'sem cota', 'limite do plano gratuito atingido; volta a ser testado depois');
 };

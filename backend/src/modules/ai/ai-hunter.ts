@@ -66,7 +66,8 @@ const openRouterCandidates = (data: any): Candidate[] => {
         if (!free) continue;
         const outputs: string[] = item?.architecture?.output_modalities || [];
         const inputs: string[] = item?.architecture?.input_modalities || [];
-        if (outputs.length && !outputs.includes('text')) continue;
+        // A listagem mostra preço zero para entrada e saída de TEXTO; modelos que geram áudio ou imagem são cobrados por fora (ex.: lyria).
+        if (outputs.length && outputs.some((o) => o !== 'text')) continue;
         if (inputs.length && !inputs.includes('text')) continue;
         // Classificadores de segurança, moderação, áudio e imagem não conversam: ficam fora do catálogo.
         if (/(embed|moderation|guard|safeguard|safety|tts|whisper|image-gen)/i.test(id)) continue;
@@ -143,7 +144,8 @@ const upsert = async (provider: Provider, list: Candidate[]) => {
                 last_seen_at = NOW(), score = EXCLUDED.score,
                 -- Listado mas recusado pelo provedor na chamada: continua descartado por 7 dias (o Google ainda lista modelos aposentados).
                 status = CASE
-                    WHEN ai_models.status = 'gone' AND ai_models.last_error LIKE 'Modelo não existe%' AND ai_models.last_probe_at > NOW() - INTERVAL '7 days' THEN 'gone'
+                    WHEN ai_models.status = 'gone' AND ai_models.last_error LIKE 'Exige crédito%' AND ai_models.last_probe_at > NOW() - INTERVAL '30 days' THEN 'gone'
+                    WHEN ai_models.status = 'gone' AND (ai_models.last_error LIKE 'Modelo não existe%' OR ai_models.last_error LIKE 'Modelo restrito%') AND ai_models.last_probe_at > NOW() - INTERVAL '7 days' THEN 'gone'
                     WHEN ai_models.status = 'gone' THEN 'unverified'
                     ELSE ai_models.status END`,
             [provider, c.model_id, c.display_name, c.context_length, c.params_b, c.free_basis, c.supports_json, c.supports_tools, score],
