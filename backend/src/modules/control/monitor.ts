@@ -8,7 +8,8 @@ import { pool } from '../../config/db';
 const CRITICAL_SERVICES = [
     'squid', 'postgresql@18-main', 'nginx', 'ufw', 'ssh',
     'fail2ban', 'wg-quick@wg0', 'isc-dhcp-server', 'unbound',
-    'clamav-daemon', 'clamav-freshclam', 'clamav-clamonacc',
+    // O clamd roda sob demanda (sobe quando alguém verifica e desliga ocioso): o que vigia é o socket que o acorda.
+    'clamav-daemon.socket', 'clamav-freshclam',
     'redis-server', 'docker', 'tailscaled', 'NetworkManager', 'sgcg-vip-dns',
 ];
 

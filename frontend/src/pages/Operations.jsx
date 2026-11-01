@@ -289,13 +289,12 @@ export default function Operations({ user }) {
     </div>
   );
 
-  const svcState = (state) => (state === 'active' ? 'success' : 'warning');
+  const svcState = (state) => (state === 'active' || state === 'on-demand' ? 'success' : 'warning');
   const antivirusTab = (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={svcState(clamav?.services?.daemon)} dot>Antivírus {clamav?.services?.daemon === 'active' ? 'ativo' : clamav?.services?.daemon || '—'}</Badge>
+        <Badge tone={svcState(clamav?.services?.daemon)} dot>Antivírus {clamav?.services?.daemon === 'active' ? 'ativo' : clamav?.services?.daemon === 'on-demand' ? 'sob demanda (liga ao verificar)' : clamav?.services?.daemon || '—'}</Badge>
         <Badge tone={svcState(clamav?.services?.freshclam)} dot>Assinaturas {clamav?.services?.freshclam === 'active' ? 'atualizando' : clamav?.services?.freshclam || '—'}</Badge>
-        <Badge tone={svcState(clamav?.services?.clamonacc)} dot>Monitor em tempo real {clamav?.services?.clamonacc === 'active' ? 'ativo' : clamav?.services?.clamonacc || '—'}</Badge>
         {clamav?.running_scan ? <Badge tone="warning" dot>Verificação em andamento</Badge> : null}
         <div className="ml-auto flex gap-2">
           <Button icon={RefreshCw} onClick={clamUpdate}>Atualizar assinaturas</Button>

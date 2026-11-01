@@ -1,0 +1,6 @@
+[Unit]
+Description=SGCG - desliga o ClamAV ocioso (volta sob demanda pelo socket)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/controlebeckercorp-v8/scripts/sgcg-clamd-idle-stop.sh

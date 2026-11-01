@@ -296,7 +296,7 @@ const getServiceHealthSnapshot = async () => {
         { name: 'ufw', label: 'Firewall UFW', layer: 'firewall' },
         { name: 'isc-dhcp-server', label: 'Servidor DHCP', layer: 'dhcp' },
         { name: 'unbound', label: 'DNS Unbound', layer: 'dns' },
-        { name: 'clamav-daemon', label: 'ClamAV Daemon', layer: 'security' },
+        { name: 'clamav-daemon.socket', label: 'ClamAV (sob demanda)', layer: 'security' },
         { name: 'clamav-freshclam', label: 'Assinaturas ClamAV', layer: 'security' },
     ];
     const results = await Promise.all(svcs.map(async (svc) => {
@@ -551,9 +551,8 @@ router.get('/services', async (req, res) => {
         { name: env.wireguardService, label: 'VPN WireGuard' },
         { name: 'isc-dhcp-server', label: 'Servidor DHCP' },
         { name: 'unbound', label: 'DNS Unbound' },
-        { name: 'clamav-daemon', label: 'ClamAV Daemon' },
-        { name: 'clamav-freshclam', label: 'Assinaturas ClamAV' },
-        { name: 'clamav-clamonacc', label: 'Monitor de Acesso' }
+        { name: 'clamav-daemon.socket', label: 'ClamAV (sob demanda)' },
+        { name: 'clamav-freshclam', label: 'Assinaturas ClamAV' }
     ];
     
     const result: any[] = [];
@@ -588,7 +587,11 @@ router.get('/services', async (req, res) => {
 router.get('/clamav', async (_req, res) => {
     try {
         await ensureAntimalwareSchema();
-        const daemon = await execCmd('systemctl is-active clamav-daemon || echo "inactive"');
+        // O clamd (1 GB de memória) roda sob demanda: o socket fica de pé e acorda o daemon quando alguém verifica;
+        // um timer (sgcg-clamd-idle) desliga o daemon depois de alguns minutos ocioso.
+        const daemonRaw = (await execCmd('systemctl is-active clamav-daemon || echo "inactive"')).trim();
+        const socketRaw = (await execCmd('systemctl is-active clamav-daemon.socket || echo "inactive"')).trim();
+        const daemon = daemonRaw === 'active' ? 'active' : socketRaw === 'active' ? 'on-demand' : 'inactive';
         const freshclam = await execCmd('systemctl is-active clamav-freshclam || echo "inactive"');
         const clamonacc = await execCmd('systemctl is-active clamav-clamonacc || echo "inactive"');
         const recentRuns = await pool.query(
@@ -607,11 +610,12 @@ router.get('/clamav', async (_req, res) => {
 
         res.json({
             services: {
-                daemon: daemon.trim(),
+                daemon,
                 freshclam: freshclam.trim(),
                 clamonacc: clamonacc.trim(),
             },
-            healthy: [daemon, freshclam, clamonacc].every((item) => item.trim() === 'active'),
+            // O monitor de acesso (clamonacc) não vigia pasta nenhuma (sem OnAccessIncludePath), então não conta para a saúde.
+            healthy: ['active', 'on-demand'].includes(daemon) && freshclam.trim() === 'active',
             coverage: [
                 { label: 'VLAN 10', subnet: '192.168.10.0/24', scope: 'borda e serviços vinculados ao gateway' },
                 { label: 'VLAN 30', subnet: '192.168.30.0/24', scope: 'borda e serviços vinculados ao gateway' },
