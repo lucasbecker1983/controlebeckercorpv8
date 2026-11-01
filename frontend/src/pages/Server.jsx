@@ -12,6 +12,9 @@ const uptimeText = (s) => {
 };
 const SERVICE_LABELS = { unbound: 'DNS (Unbound)', squid: 'Proxy (Squid)', 'isc-dhcp-server': 'DHCP', 'wg-quick@wg0': 'VPN WireGuard', fail2ban: 'Fail2ban', postgresql: 'Banco de dados' };
 
+// Bytes em GB (decimal, como o fabricante do disco), sem casas e com ponto de milhar: 1.832
+const gb = (bytes) => Math.round(Number(bytes || 0) / 1e9).toLocaleString('pt-BR');
+
 export default function Server() {
   const theme = useChartTheme();
   const [hw, setHw] = useState(null);
@@ -52,7 +55,7 @@ export default function Server() {
       <KpiRow>
         <Kpi icon={Cpu} label="Processador" value={live ? `${live.cpu}%` : '—'} sub={hw?.cpu ? `${hw.cpu.cores} núcleos` : null} tone={live?.cpu > 85 ? 'danger' : 'neutral'} />
         <Kpi icon={MemoryStick} label="Memória" value={live ? `${live.ram.percent}%` : '—'} sub={live ? `${(live.ram.used_mb / 1024).toFixed(1)} de ${(live.ram.total_mb / 1024).toFixed(1)} GB` : null} tone={live?.ram.percent > 90 ? 'danger' : 'neutral'} />
-        <Kpi icon={HardDrive} label="Disco do sistema" value={live ? `${live.disk.percent}%` : '—'} sub={live ? `${(live.disk.used / 1e12).toFixed(2)} de ${(live.disk.total / 1e12).toFixed(2)} TB` : null} tone={live?.disk.percent > 85 ? 'danger' : 'neutral'} />
+        <Kpi icon={HardDrive} label="Disco do sistema" value={live ? `${live.disk.percent}%` : '—'} sub={live ? `${gb(live.disk.used)} de ${gb(live.disk.total)} GB` : null} tone={live?.disk.percent > 85 ? 'danger' : 'neutral'} />
         <Kpi icon={Clock} label="Ligado há" value={live ? uptimeText(live.uptime) : '—'} />
       </KpiRow>
 
