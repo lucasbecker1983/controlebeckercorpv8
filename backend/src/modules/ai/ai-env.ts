@@ -25,7 +25,8 @@ const ENV_NAME: Record<Provider, string> = {
 
 // Formato mínimo de cada chave: só para recusar colagem errada (espaços, aspas, texto de outro campo).
 const KEY_SHAPE: Record<Provider, RegExp> = {
-    gemini: /^AIza[0-9A-Za-z_-]{20,}$/,
+    // O Google AI Studio emite dois formatos: o antigo (AIza...) e o novo (AQ.xxxx).
+    gemini: /^(AIza[0-9A-Za-z_-]{20,}|AQ\.[0-9A-Za-z_-]{20,})$/,
     groq: /^gsk_[0-9A-Za-z]{20,}$/,
     openrouter: /^sk-or-[0-9A-Za-z_-]{20,}$/,
 };
@@ -68,9 +69,11 @@ const writeEnvLine = (name: string, value: string) => {
     fs.renameSync(tmp, ENV_FILE);
 };
 
+export const isValidKeyShape = (provider: Provider, rawValue: string) => KEY_SHAPE[provider].test(String(rawValue || '').trim());
+
 export const setKey = (provider: Provider, rawValue: string) => {
     const value = String(rawValue || '').trim();
-    if (!KEY_SHAPE[provider].test(value)) {
+    if (!isValidKeyShape(provider, value)) {
         throw new Error(`A chave não tem o formato esperado do ${PROVIDER_LABEL[provider]}. Cole só a chave, sem espaços, aspas ou quebra de linha.`);
     }
     writeEnvLine(ENV_NAME[provider], value);

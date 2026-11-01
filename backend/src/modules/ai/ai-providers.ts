@@ -28,7 +28,7 @@ const BASE: Record<Provider, string> = {
 
 // Nunca deixa uma chave aparecer em mensagem de erro.
 const scrub = (text: string) => String(text || '')
-    .replace(/(AIza[0-9A-Za-z_-]{20,}|gsk_[0-9A-Za-z]{20,}|sk-or-[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,})/g, '[chave]')
+    .replace(/(AQ\.[0-9A-Za-z_-]{20,}|AIza[0-9A-Za-z_-]{20,}|gsk_[0-9A-Za-z]{20,}|sk-or-[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,})/g, '[chave]')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);

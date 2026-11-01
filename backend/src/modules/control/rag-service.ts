@@ -97,7 +97,7 @@ const maskSensitive = (value: string) => value
     .replace(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/g, '[CNPJ_MASCARADO]')
     .replace(/\b(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)?9?\d{4}[-\s]?\d{4}\b/g, '[TELEFONE_MASCARADO]')
     .replace(/\b(?:[0-9a-f]{2}:){5}[0-9a-f]{2}\b/gi, '[MAC_MASCARADO]')
-    .replace(/\b(AIza[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,}|xox[baprs]-[0-9A-Za-z-]{10,})\b/g, '[SEGREDO_MASCARADO]')
+    .replace(/\b(AQ\.[0-9A-Za-z_-]{20,}|AIza[0-9A-Za-z_-]{20,}|sk-[0-9A-Za-z_-]{20,}|xox[baprs]-[0-9A-Za-z-]{10,})\b/g, '[SEGREDO_MASCARADO]')
     .replace(/(password|passwd|secret|token|api[_-]?key|authorization)\s*[:=]\s*['"]?[^'"\s]+/gi, '$1=[SEGREDO_MASCARADO]');
 
 const excerptAround = (value: string, queryTokens: string[], max = 520) => {
