@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, UserX, Users, Wifi } from 'lucide-react';
+import { BarChart2, Eye, EyeOff, FileText, Pencil, Plus, RefreshCw, Search, Trash2, UserX, Users, Wifi } from 'lucide-react';
 import { api } from '../services/api';
 import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Switch, Tabs, askConfirm, errorMessage, inputCls, toast, useUrlTab } from '../components/ui/kit';
 import { authMethodLabel, dateTimeBR, formatPersonName, matchesText } from '../components/hotspot/format';
@@ -189,6 +189,16 @@ export default function Collaborators() {
     if (!(await askConfirm({ title: `Inativar ${formatPersonName(u.full_name)}?`, description: 'A conta deixa de entrar no portal e os celulares conectados com ela são desconectados. O histórico continua no relatório.', confirmLabel: 'Inativar conta', tone: 'danger' }))) return;
     await act(() => api.delete(`/api/collaborators/users/${u.id}`), 'Conta inativada.');
   };
+  const remove = async (u) => {
+    const quando = u.created_at ? ` Cadastrada em ${dateTimeBR(u.created_at)}.` : '';
+    if (!(await askConfirm({
+      title: `Apagar ${formatPersonName(u.full_name)} de vez?`,
+      description: `Conta "${u.username}"${u.department ? ` (${u.department})` : ''}.${quando} Os celulares dela são desconectados e esquecidos, e a conta some da lista. O histórico de conexões continua no relatório, sem o nome. Não dá para desfazer.`,
+      confirmLabel: 'Apagar conta',
+      tone: 'danger',
+    }))) return;
+    await act(() => api.delete(`/api/collaborators/users/${u.id}`, { params: { permanent: 1 } }), 'Conta apagada.');
+  };
   const revoke = async (s) => {
     if (!(await askConfirm({ title: 'Desconectar este celular?', description: `${formatPersonName(s.full_name || s.username || 'Colaborador')} (${s.client_ip || 'sem IP'}) volta para a página de login do portal.`, confirmLabel: 'Desconectar', tone: 'danger' }))) return;
     await act(() => api.post(`/api/collaborators/sessions/${s.id}/revoke`), 'Celular desconectado.');
@@ -292,6 +302,7 @@ export default function Collaborators() {
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" icon={Pencil} onClick={() => setDrawer({ open: true, item: u })} aria-label={`Editar ${formatPersonName(u.full_name)}`} title="Editar" />
                     <Button variant="ghost" icon={UserX} onClick={() => deactivate(u)} disabled={busy || !u.active} aria-label={`Inativar ${formatPersonName(u.full_name)}`} title={u.active ? 'Inativar' : 'Já inativa'} className="hover:!text-danger" />
+                    <Button variant="ghost" icon={Trash2} onClick={() => remove(u)} disabled={busy} aria-label={`Apagar ${formatPersonName(u.full_name)}`} title="Apagar de vez" className="hover:!text-danger" />
                   </div>
                 ),
               },

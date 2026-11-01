@@ -764,8 +764,12 @@ router.put('/users/:id', requireJwt, async (req: AuthenticatedRequest, res) => {
     return res.json(rows[0]);
 });
 
+// DELETE /users/:id          -> inativa a conta (o celular é desconectado; o cadastro continua e dá para reativar).
+// DELETE /users/:id?permanent=1 -> apaga a conta de vez: os dispositivos dela saem junto; as sessões e os chamados antigos
+//   ficam no histórico sem dono (a chave estrangeira zera o user_id). A trilha de auditoria guarda quem era.
 router.delete('/users/:id', requireJwt, async (req: AuthenticatedRequest, res) => {
     const { id } = req.params;
+    const permanent = ['1', 'true', 'sim'].includes(String(req.query.permanent || '').toLowerCase());
     const { rows: sRows } = await pool.query(
         `UPDATE collab_sessions SET status = 'revoked', revoked_at = NOW(), revoked_by = $1
           WHERE user_id = $2 AND status = 'active'
@@ -774,13 +778,34 @@ router.delete('/users/:id', requireJwt, async (req: AuthenticatedRequest, res) =
     ).catch(() => ({ rows: [] }));
     for (const r of sRows) if (r.ip) await revokeIpRuntimeOnly(r.ip).catch(() => null);
 
-    const { rows } = await pool.query(
-        `UPDATE collab_users SET active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id, username`,
+    if (!permanent) {
+        const { rows } = await pool.query(
+            `UPDATE collab_users SET active = FALSE, updated_at = NOW() WHERE id = $1 RETURNING id, username`,
+            [Number(id)],
+        );
+        if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+        await audit(req, 'collab_user_deactivated', true, { id }, { username: rows[0].username });
+        return res.json({ success: true });
+    }
+
+    const { rows: found } = await pool.query(
+        `SELECT u.id, u.username, u.full_name, u.department, u.created_at,
+                (SELECT count(*)::int FROM collab_devices d WHERE d.user_id = u.id) AS devices,
+                (SELECT count(*)::int FROM collab_sessions s WHERE s.user_id = u.id) AS sessions
+           FROM collab_users u WHERE u.id = $1`,
         [Number(id)],
     );
-    if (!rows.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
-    await audit(req, 'collab_user_deleted', true, { id }, { username: rows[0].username });
-    return res.json({ success: true });
+    if (!found.length) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    const user = found[0];
+    await pool.query('DELETE FROM collab_users WHERE id = $1', [Number(id)]);
+    await audit(
+        req,
+        'collab_user_permanently_deleted',
+        true,
+        { id, username: user.username, full_name: user.full_name, department: user.department, created_at: user.created_at },
+        { devices_removed: user.devices, sessions_kept_without_owner: user.sessions },
+    );
+    return res.json({ success: true, permanent: true, username: user.username, devices_removed: user.devices });
 });
 
 router.get('/sessions', requireJwt, async (_req, res) => {
