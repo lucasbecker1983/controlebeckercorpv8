@@ -4,21 +4,23 @@ import { api } from '../services/api';
 import { storageGet, storageSet } from '../services/browserStorage';
 import { Badge, Button, Notice, PageHeader, Panel } from '../components/ui/kit';
 
-const STORAGE_KEY = 'sgcg_ai_assistant_thread_v1';
+const STORAGE_KEY = 'sgcg_ai_assistant_thread_v2';
 
 const starterPrompts = [
-  'Como esta a saude do Prometheus e Grafana agora?',
-  'A VLAN 70 tem algum sinal de problema?',
-  'Explique o estado atual do RAG operacional.',
-  'Quais evidencias existem sobre o Hotspot?',
+  'Quem parou ou reiniciou serviços do servidor nos últimos 7 dias? Diga serviço, horário e IP.',
+  'Quem cadastrou, inativou ou apagou colaboradores recentemente? De qual IP?',
+  'Quais logins aconteceram no console nos últimos dias e de quais IPs?',
+  'Como está a LGPD? Há incidentes ou solicitações de titulares abertas?',
+  'A memória do servidor preocupa? Qual decisão você recomenda?',
+  'O que mudou nas políticas de acesso e nas exceções esta semana?',
 ];
 
 const initialMessages = [
   {
     id: 'welcome',
     role: 'assistant',
-    content: 'Assistente IA do SGCG pronto. Posso consultar a base local, CODEX, documentacao e sinais vivos do Prometheus.',
-    meta: { provider: 'local', model: 'RAG operacional' },
+    content: 'Assistente IA do SGCG pronto. Pergunte sobre a trilha de auditoria (quem fez o quê, quando e de qual IP), LGPD, cadastros, serviços do servidor, políticas e a situação da memória. Consulto os registros reais e mostro as evidências de cada resposta. Uso só modelos de IA gratuitos e troco de modelo sozinho se um falhar.',
+    meta: { provider: 'local', model: 'Auditoria e RAG' },
   },
 ];
 
@@ -37,6 +39,54 @@ const formatDateTime = (value) => {
   if (Number.isNaN(date.getTime())) return '';
   return date.toLocaleString('pt-BR');
 };
+
+const cell = (value) => {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'sim' : 'não';
+  if (typeof value === 'object') return JSON.stringify(value).slice(0, 120);
+  const text = String(value);
+  return text.length > 110 ? `${text.slice(0, 110)}…` : text;
+};
+
+// Mostra o que cada consulta devolveu (dados reais), para o operador conferir a resposta da IA.
+function Evidence({ steps }) {
+  if (!steps?.length) return null;
+  return (
+    <details className="mt-3 rounded-2xl border border-outline/10 bg-surface/62 px-3 py-2">
+      <summary className="cursor-pointer text-xs font-bold text-on-surface/70">Como cheguei nisso ({steps.length} consulta{steps.length === 1 ? '' : 's'})</summary>
+      <div className="mt-3 space-y-3">
+        {steps.map((step, index) => {
+          const rows = Array.isArray(step.linhas) ? step.linhas.slice(0, 12) : [];
+          const columns = Array.from(new Set(rows.flatMap((row) => Object.keys(row)))).slice(0, 8);
+          return (
+            <div key={`${step.ferramenta}-${index}`} className="rounded-xl border border-outline/10 bg-surface-high/70 p-2">
+              <div className="text-[11px] font-bold text-primary">
+                {step.ferramenta} <span className="font-normal text-on-surface/55">{Object.keys(step.argumentos || {}).length ? JSON.stringify(step.argumentos) : ''}</span>
+              </div>
+              <div className="mt-0.5 text-[11px] text-on-surface/55">
+                {step.erro ? `Erro: ${step.erro}` : `${step.total ?? rows.length} registro(s)${step.nota ? ` · ${step.nota}` : ''}`} · {step.ms} ms
+              </div>
+              {rows.length ? (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="tabular w-full min-w-[420px] text-[11px]">
+                    <thead>
+                      <tr className="text-left text-on-surface/50">{columns.map((c) => <th key={c} className="px-1.5 py-1 font-semibold">{c}</th>)}</tr>
+                    </thead>
+                    <tbody className="divide-y divide-outline/10">
+                      {rows.map((row, i) => (
+                        <tr key={i}>{columns.map((c) => <td key={c} className="px-1.5 py-1 align-top text-on-surface/80">{cell(row[c])}</td>)}</tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+}
 
 // Diagnóstico automático do ambiente (antes ficava em Operações).
 function InsightsPanel() {
@@ -113,12 +163,19 @@ export default function AiAssistant() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [messages, loading]);
 
+  const [aiStatus, setAiStatus] = useState(null);
   const loadStatus = async () => {
     try {
       const response = await api.get('/api/control/ai-rag/status');
       setRagStatus(response.data || null);
     } catch {
       setRagStatus(null);
+    }
+    try {
+      const response = await api.get('/api/ai/status');
+      setAiStatus(response.data || null);
+    } catch {
+      setAiStatus(null);
     }
   };
 
@@ -143,28 +200,30 @@ export default function AiAssistant() {
     setError('');
 
     try {
-      const response = await api.post('/api/control/ai-rag/ask', { question: text });
+      const response = await api.post('/api/ai/ask', { question: text });
       const payload = response.data || {};
+      const failed = (payload.attempts || []).filter((attempt) => !attempt.ok).length;
       const assistantMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: payload.answer || 'Nao houve resposta do RAG operacional.',
-        created_at: payload.generated_at || new Date().toISOString(),
+        content: payload.answer || 'Não houve resposta do assistente.',
+        created_at: new Date().toISOString(),
         meta: {
-          provider: payload.provider || 'local',
-          model: payload.model || payload.mode || 'RAG operacional',
-          mode: payload.mode,
-          confidence: payload.confidence,
-          external_ai_used: Boolean(payload.external_ai_used),
-          external_ai_error: payload.external_ai_error || '',
-          runtime: payload.runtime || null,
+          provider: payload.provider_label || payload.provider,
+          model: payload.model,
+          external_ai_used: true,
+          profile: payload.profile,
+          ms: payload.ms,
+          switched: failed,
+          protected_items: payload.protected_items || 0,
         },
-        sources: Array.isArray(payload.sources) ? payload.sources : [],
+        steps: Array.isArray(payload.steps) ? payload.steps : [],
       };
       setMessages((current) => [...current, assistantMessage]);
       loadStatus();
     } catch (requestError) {
-      const message = requestError?.response?.data?.error || 'Falha ao consultar o assistente IA.';
+      const data = requestError?.response?.data || {};
+      const message = data.error || 'Falha ao consultar o assistente IA.';
       setError(message);
       setMessages((current) => [
         ...current,
@@ -173,7 +232,8 @@ export default function AiAssistant() {
           role: 'assistant',
           content: message,
           created_at: new Date().toISOString(),
-          meta: { provider: 'local', model: 'Erro de consulta' },
+          meta: { provider: 'local', model: 'Sem IA disponível' },
+          sources: (data.fallback_docs || []).map((doc) => ({ source: doc.fonte, line_start: String(doc.linhas || '').split('-')[0], line_end: String(doc.linhas || '').split('-')[1], excerpt: doc.trecho })),
         },
       ]);
     } finally {
@@ -195,7 +255,7 @@ export default function AiAssistant() {
     <div className="flex min-h-[calc(100dvh-8rem)] flex-col gap-5 pb-8">
       <PageHeader
         title="Assistente IA"
-        description="Conversa com o RAG do SGCG usando a base local, as fontes recuperadas e os sinais vivos do ambiente."
+        description="Pergunte sobre auditoria, LGPD, cadastros, serviços e o servidor. A IA consulta os registros reais, mostra as evidências e usa só modelos gratuitos."
         meta={(
           <span className="flex flex-wrap gap-2">
             <Badge tone="primary">{ragStatus?.chunks ?? '—'} trechos</Badge>
@@ -215,7 +275,7 @@ export default function AiAssistant() {
               <div className="min-w-0">
                 <div className="text-sm font-bold text-on-surface">Chat operacional</div>
                 <div className="mt-0.5 text-xs text-on-surface/58">
-                  {latestAssistant?.meta?.external_ai_used ? latestAssistant.meta.model : 'RAG local com fallback'}
+                  {latestAssistant?.meta?.external_ai_used ? `${latestAssistant.meta.provider} · ${latestAssistant.meta.model}` : 'IA gratuita com troca automática de modelo'}
                 </div>
               </div>
             </div>
@@ -244,10 +304,12 @@ export default function AiAssistant() {
                       <div className="whitespace-pre-wrap text-sm leading-7">{message.content}</div>
                       {assistant && message.meta ? (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          <Badge tone={message.meta.external_ai_used ? 'success' : 'warning'}>{message.meta.external_ai_used ? 'Gemini' : 'Local'}</Badge>
+                          <Badge tone={message.meta.external_ai_used ? 'success' : 'warning'}>{message.meta.external_ai_used ? message.meta.provider : 'Local'}</Badge>
                           <Badge tone="primary">{message.meta.model || 'RAG'}</Badge>
+                          {message.meta.profile ? <Badge>{message.meta.profile === 'analise' ? 'Análise' : 'Consulta rápida'}{message.meta.ms ? ` · ${(message.meta.ms / 1000).toFixed(1)} s` : ''}</Badge> : null}
+                          {message.meta.switched ? <Badge tone="warning">Trocou de modelo {message.meta.switched}x até responder</Badge> : null}
+                          {message.meta.protected_items ? <Badge tone="success" title="Nomes, CPFs, e-mails, telefones, MACs e IPs públicos foram trocados por códigos antes de sair para a IA">{message.meta.protected_items} dado(s) pessoal(is) protegido(s)</Badge> : null}
                           {message.meta.confidence ? <Badge>Confiança {message.meta.confidence}</Badge> : null}
-                          {message.meta.runtime?.prometheus_ready ? <Badge tone="success">{message.meta.runtime.prometheus_targets_up} alvos no ar</Badge> : null}
                         </div>
                       ) : null}
                       {assistant && message.meta?.external_ai_error ? (
@@ -255,6 +317,7 @@ export default function AiAssistant() {
                           {message.meta.external_ai_error}
                         </div>
                       ) : null}
+                      {assistant ? <Evidence steps={message.steps} /> : null}
                       {assistant && message.sources?.length ? (
                         <details className="mt-3 rounded-2xl border border-outline/10 bg-surface/62 px-3 py-2">
                           <summary className="cursor-pointer text-xs font-bold text-on-surface/70">Fontes recuperadas</summary>
@@ -287,7 +350,7 @@ export default function AiAssistant() {
                   <div className="inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-primary/16 bg-primary/12 text-primary">
                     <Sparkles size={17} className="animate-pulse" />
                   </div>
-                  Consultando RAG e Gemini...
+                  Consultando a auditoria e a IA...
                 </div>
               ) : null}
               <div ref={scrollRef} />
@@ -310,7 +373,7 @@ export default function AiAssistant() {
                 rows={2}
                 aria-label="Pergunta ao assistente"
                 data-autofocus="true"
-                placeholder="Pergunte sobre VLAN, Hotspot, DNS, Prometheus, Grafana, QoS, bloqueios ou um sintoma operacional."
+                placeholder="Ex.: quem desligou o serviço unbound, quando e de qual IP? Quem cadastrou o colaborador fulano?"
                 className="min-h-[var(--control-height)] flex-1 resize-none rounded-2xl border border-outline/14 bg-surface px-4 py-3 text-sm leading-6 text-on-surface focus:border-primary/45 focus:outline-none"
               />
               <Button type="submit" variant="primary" icon={Send} disabled={loading || !question.trim()} className="self-end">
@@ -334,6 +397,18 @@ export default function AiAssistant() {
                   {prompt}
                 </button>
               ))}
+            </div>
+          </Panel>
+
+          <Panel title="Modelos de IA gratuitos" description="Cada pergunta vai para o melhor modelo disponível; se falhar ou faltar cota, passa para o próximo.">
+            <div className="grid gap-2">
+              {(aiStatus?.providers || []).map((p) => (
+                <div key={p.provider} className="flex items-center justify-between gap-2 text-[12.5px]">
+                  <span className="font-medium text-on-surface/85">{p.label}</span>
+                  {!p.configured ? <Badge>sem chave</Badge> : !p.enabled ? <Badge tone="warning">desligado</Badge> : <Badge tone={p.models_ok ? 'success' : 'warning'} dot>{p.models_ok} de {p.models_total} testados</Badge>}
+                </div>
+              ))}
+              {!aiStatus ? <span className="text-xs text-on-surface/55">Carregando…</span> : null}
             </div>
           </Panel>
 

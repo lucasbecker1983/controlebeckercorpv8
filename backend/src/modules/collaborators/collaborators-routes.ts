@@ -465,9 +465,12 @@ server {
 // ─── Audit ──────────────────────────────────────────────────────────────────
 
 async function audit(req: Request, action: string, success: boolean, payload: any = {}, result: any = {}) {
+    // Rotas do painel têm usuário logado (req.auth): ele é o autor. As públicas (portal) seguem como "collaborators".
+    const who = (req as AuthenticatedRequest).auth;
     await institutionalAuditService.log({
         action,
-        requestedBy: 'collaborators',
+        requestedBy: who?.username || 'collaborators',
+        actorUserId: who?.id ? Number(who.id) : null,
         actorIp: getClientIp(req),
         actorUserAgent: req.headers['user-agent'] || null,
         payload,

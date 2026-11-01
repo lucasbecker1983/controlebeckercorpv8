@@ -3,6 +3,7 @@ import path from 'path';
 import http from 'http';
 import https from 'https';
 import { env } from '../../config/env';
+import { bestGeminiModel } from '../ai/ai-store';
 
 type RagChunk = {
     id: string;
@@ -201,12 +202,14 @@ const requestLocalJson = <T = any>(urlPath: string): Promise<T | null> => new Pr
     req.end();
 });
 
-const requestGemini = (prompt: string): Promise<string> => new Promise((resolve, reject) => {
+const requestGemini = async (prompt: string): Promise<string> => requestGeminiWith(await bestGeminiModel(env.geminiModel || 'gemini-2.5-flash'), prompt);
+
+const requestGeminiWith = (modelName: string, prompt: string): Promise<string> => new Promise((resolve, reject) => {
     if (!env.geminiApiKey) {
         reject(new Error('GEMINI_API_KEY ausente.'));
         return;
     }
-    const model = encodeURIComponent(env.geminiModel || 'gemini-2.5-flash');
+    const model = encodeURIComponent(modelName);
     const payload = JSON.stringify({
         system_instruction: {
             parts: [{
@@ -228,7 +231,7 @@ const requestGemini = (prompt: string): Promise<string> => new Promise((resolve,
         generationConfig: {
             temperature: 0.2,
             topP: 0.8,
-            maxOutputTokens: 1200,
+            maxOutputTokens: 3000,
         },
     });
     const req = https.request({
@@ -436,7 +439,7 @@ const buildAnswer = async (question: string, matches: Array<RagChunk & { score: 
         answer,
         confidence,
         provider,
-        model: provider === 'gemini' ? env.geminiModel : 'local-extractive-rag',
+        model: provider === 'gemini' ? await bestGeminiModel(env.geminiModel) : 'local-extractive-rag',
         external_ai_used: provider === 'gemini',
         ...(externalAiError ? { external_ai_error: externalAiError } : {}),
         sources: matches.slice(0, 6).map((match) => ({
@@ -490,5 +493,24 @@ export const ragService = {
     async reindex() {
         await buildIndex();
         return this.status(false);
+    },
+
+    // Só a busca local nos documentos (sem chamar nenhuma IA externa): usada pelo assistente como ferramenta.
+    async search(question: string, max = 5) {
+        const text = String(question || '').trim();
+        if (text.length < 3) return [];
+        const chunks = await getIndex(false);
+        const queryTokens = unique(tokenize(text));
+        return chunks
+            .map((chunk) => ({ ...chunk, score: scoreChunk(chunk, queryTokens) }))
+            .filter((chunk) => chunk.score > 0)
+            .sort((left, right) => right.score - left.score)
+            .slice(0, max)
+            .map((match) => ({
+                fonte: match.source.startsWith(env.projectRoot) ? path.relative(env.projectRoot, match.source) : match.source,
+                titulo: match.title,
+                linhas: `${match.lineStart}-${match.lineEnd}`,
+                trecho: maskSensitive(excerptAround(match.content, queryTokens, 700)),
+            }));
     },
 };

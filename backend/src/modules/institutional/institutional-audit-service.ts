@@ -15,13 +15,22 @@ export type InstitutionalAuditInput = {
     statusCode?: number | null;
 };
 
-const sanitizePayload = (value: any) => {
-    if (!value || typeof value !== 'object') return value || {};
-    const clone = { ...value };
-    for (const key of ['password', 'password_hash', 'token', 'accessToken', 'refreshToken']) {
-        if (key in clone) clone[key] = '[redacted]';
+// Qualquer campo que pareça segredo (senha, token, chave de API, segredo) é censurado em qualquer nível do corpo da requisição.
+const SECRET_KEY = /(pass|senha|secret|segredo|token|api[_-]?key|apikey|chave|authorization|credential|(^|[_-])key($|[_-]))/i;
+
+const redactSecrets = (value: any, depth = 0): any => {
+    if (depth > 6 || value === null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map((item) => redactSecrets(item, depth + 1));
+    const clone: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+        clone[key] = SECRET_KEY.test(key) ? '[redacted]' : redactSecrets(item, depth + 1);
     }
     return clone;
+};
+
+const sanitizePayload = (value: any) => {
+    if (!value || typeof value !== 'object') return value || {};
+    return redactSecrets(value);
 };
 
 export const institutionalAuditService = {

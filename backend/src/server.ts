@@ -31,6 +31,9 @@ import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/colla
 import supportRoutes, { supportSchemaService } from './modules/support/support-routes';
 import centralAuditRoutes, { centralAuditService } from './modules/central-audit/central-audit-routes';
 import monitorRoutes from './modules/monitor/monitor-routes';
+import aiRoutes from './modules/ai/ai-routes';
+import { startHunter } from './modules/ai/ai-hunter';
+import { ensureSchema as ensureAiSchema } from './modules/ai/ai-store';
 import { monitorService } from './modules/monitor/monitor-service';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
 import { institutionalAuditMiddleware } from './modules/institutional/institutional-audit-middleware';
@@ -125,6 +128,7 @@ app.use('/api/collaborators', collaboratorsRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/central-audit', centralAuditRoutes);
 app.use('/api/monitor', monitorRoutes);
+app.use('/api/ai', aiRoutes);
 
 app.use("/api/vlans", vlanScheduleRoutes);
 
@@ -154,6 +158,9 @@ app.listen(PORT, '0.0.0.0', () => {
     });
     supportSchemaService.ensureSchema().catch((error) => {
         console.error('[SUPPORT] Falha ao garantir schema da central de chamados:', error);
+    });
+    ensureAiSchema().then(() => startHunter()).catch((error) => {
+        console.error('[IA] Falha ao preparar o módulo de IA:', error);
     });
     centralAuditService.ensureSchema().catch((error) => {
         console.error('[CENTRAL-AUDIT] Falha ao garantir schema do centro de auditoria:', error);

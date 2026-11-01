@@ -1,8 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, Moon, Sun } from 'lucide-react';
-import { Bell, Palette } from 'lucide-react';
+import { Bell, Bot, Palette } from 'lucide-react';
+import { api } from '../services/api';
 import { PageHeader, Panel, Tabs, useUrlTab } from '../components/ui/kit';
 import EmailNotifications from '../components/settings/EmailNotifications';
+import AiProviders from '../components/settings/AiProviders';
 
 const TABS = [
   { key: 'aparencia', label: 'Aparência', icon: Palette },
@@ -30,7 +32,15 @@ function Choice({ selected, onClick, children }) {
 }
 
 export default function Settings({ theme, accent, uiStyle, onThemeChange, onAccentChange, onUiStyleChange }) {
-  const [tab, setTab] = useUrlTab(TABS, 'aparencia');
+  // Módulo secreto: só aparece para o GOD (para os outros a rota responde 404 e a aba nem existe).
+  const [god, setGod] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.get('/api/ai/admin/overview').then(() => { if (alive) setGod(true); }).catch(() => null);
+    return () => { alive = false; };
+  }, []);
+  const tabs = useMemo(() => (god ? [...TABS, { key: 'ia', label: 'IA (restrito)', icon: Bot }] : TABS), [god]);
+  const [tab, setTab] = useUrlTab(tabs, 'aparencia');
   // O tema limpo usa só superfícies sólidas; estilos antigos (vidro, minimal, executivo) foram descontinuados.
   useEffect(() => {
     if (uiStyle && uiStyle !== 'solid') onUiStyleChange?.('solid');
@@ -39,8 +49,9 @@ export default function Settings({ theme, accent, uiStyle, onThemeChange, onAcce
   return (
     <div className="space-y-4">
       <PageHeader title="Configurações" description="Aparência do console e envio dos alertas do sistema por e-mail e Telegram." />
-      <Tabs tabs={TABS} value={tab} onChange={setTab} />
+      <Tabs tabs={tabs} value={tab} onChange={setTab} />
       {tab === 'email' ? <EmailNotifications /> : null}
+      {tab === 'ia' && god ? <AiProviders /> : null}
       {tab === 'aparencia' ? (
       <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Tema" description="A escolha fica salva neste navegador.">
