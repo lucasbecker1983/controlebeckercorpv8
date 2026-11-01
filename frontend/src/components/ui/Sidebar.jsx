@@ -1,5 +1,6 @@
 import { ChevronsLeft, ChevronsRight, LogOut, X } from 'lucide-react';
 import { Link, useLocation } from 'react-router-dom';
+import BrandLogo from './BrandLogo';
 
 /*
  * Menu lateral. No computador pode ser recolhido (só ícones, com o nome ao passar o mouse); a escolha é do App
@@ -38,13 +39,10 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose, c
           </button>
         ) : null}
 
-        <div className={`flex h-14 shrink-0 items-center justify-between gap-2 border-b border-outline px-4 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
-          <Link to="/" onClick={onClose} className="flex min-w-0 items-center gap-2.5" title="Visão Geral" aria-label="SGCG, Visão Geral">
-            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-[11px] font-bold tracking-wide text-on-primary">SG</span>
-            <span className={`min-w-0 leading-tight ${collapsed ? 'lg:hidden' : ''}`}>
-              <span className="block text-sm font-bold text-on-surface">SGCG</span>
-              <span className="block truncate text-[11px] text-on-surface/55">Governança e Controle</span>
-            </span>
+        <div className={`flex h-20 shrink-0 items-center justify-between gap-2 border-b border-outline px-4 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+          <Link to="/" onClick={onClose} className="flex min-w-0 items-center" title="Visão Geral" aria-label="SGCG, Visão Geral">
+            <span className={collapsed ? 'lg:hidden' : ''}><BrandLogo height={58} /></span>
+            <span className={`hidden ${collapsed ? 'lg:block' : ''}`}><BrandLogo height={40} iconOnly /></span>
           </Link>
           <button
             type="button"
