@@ -253,8 +253,9 @@ export default function App() {
           />
         )}
         footer={(
-          <a href="https://jmbtecnologia.com.br" target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center text-[11.5px] text-on-surface/65 hover:text-on-surface">
-            Mantido por JMB Tecnologia
+          <a href="https://jmbtecnologia.com.br" target="_blank" rel="noreferrer" aria-label="Mantido por JMB Tecnologia (abre o site)" className="inline-flex min-h-8 items-center gap-2 text-[11.5px] text-on-surface/65 hover:text-on-surface">
+            Mantido por
+            <img src="/jmb-logo-clean.png" alt="JMB Tecnologia" className="h-7 w-auto" />
           </a>
         )}
       >

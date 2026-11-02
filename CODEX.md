@@ -8821,3 +8821,8 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Retenção de 30 dias aplicada pelo próprio script: nada a apagar (ficam o de 30/10 e o novo). Removido o `.sha256` solto de 10/08, cujo backup já não existia.
 - Os timers (backup diário e listas de segurança) continuam por instalar pelo responsável.
 - Menu lateral (`components/ui/Sidebar.jsx`): o logotipo ficava encostado à esquerda; agora fica centralizado (41/42 px de margem com o menu aberto). O botão de fechar do celular passou para o canto direito, por cima, sem empurrar o logotipo.
+
+
+## Rodapé com o logotipo da JMB Tecnologia - 2026-11-02
+
+- Pedido do responsável: no rodapé do console, "Mantido por JMB Tecnologia" virou "Mantido por" + logotipo (`App.jsx`, imagem `/jmb-logo-clean.png`, a mesma do Login e dos portais, 28 px de altura). O link para jmbtecnologia.com.br continua, com nome acessível "Mantido por JMB Tecnologia (abre o site)" e texto alternativo "JMB Tecnologia" na imagem. Conferido nos temas claro e escuro e no celular (sem rolagem lateral, 0 botões sem nome, 0 alvos pequenos).
