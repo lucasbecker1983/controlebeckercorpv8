@@ -508,7 +508,8 @@ def reload_unbound_if_needed(config_changed: bool) -> None:
         return
     run(["unbound-checkconf", "/etc/unbound/unbound.conf"])
     run(["unbound-checkconf", "-f", VIP_CLEAN_CONF])
-    run(["systemctl", "reload", "unbound"], check=False)
+    # O utilitário recarrega só as zonas RPZ pequenas que mudaram e cai no reload completo se mudou configuração.
+    run([os.path.join(os.path.dirname(os.path.abspath(__file__)), "sgcg-unbound-reload.sh")], check=False)
 
 
 def ensure_rule(table: str, chain: str, rule: list[str], insert_pos: str = "1") -> None:

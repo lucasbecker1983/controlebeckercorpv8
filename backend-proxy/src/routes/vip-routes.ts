@@ -6,6 +6,7 @@ import { Router } from 'express';
 import fs from 'fs';
 import { pool } from '../config/db';
 import { execCmd } from '../utils/sys';
+import { runCommand } from '../utils/process';
 import { env } from '../config/env';
 
 const router = Router();
@@ -96,7 +97,7 @@ async function applyVipToRpz(): Promise<void> {
     }
 
     fs.writeFileSync(RPZ_FILE, content);
-    await execCmd('unbound-control reload');
+    await runCommand('/opt/controlebeckercorp-v8/scripts/sgcg-unbound-reload.sh', [], { elevated: true, allowFailure: true });
 }
 
 // ---------------------------------------------------------------------------

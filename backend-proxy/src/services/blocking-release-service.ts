@@ -3,6 +3,7 @@ import path from 'path';
 import { pool } from '../config/db';
 import { env } from '../config/env';
 import { runCommand } from '../utils/process';
+const UNBOUND_RELOAD = '/opt/controlebeckercorp-v8/scripts/sgcg-unbound-reload.sh'; // recarrega só o que mudou (zona RPZ pequena: ~20 ms, sem derrubar o DNS)
 import { proxyEngineService } from './proxy-module';
 import { ensureBlockingReleaseSchema } from './blocking-release-schema-service';
 import {
@@ -3137,7 +3138,7 @@ class BlockingReleaseService {
     async regenerateVipRpz() {
         const manifest = policyCompilerService.readManifest();
         await policyCompilerService.compile((manifest?.enforcementMode || 'acl-plus-dns') as EnforcementMode);
-        await runCommand('unbound-control', ['reload'], { elevated: true, allowFailure: true }).catch(() => undefined);
+        await runCommand(UNBOUND_RELOAD, [], { elevated: true, allowFailure: true }).catch(() => undefined);
     }
 
     async validateUnbound() {
@@ -3148,7 +3149,7 @@ class BlockingReleaseService {
 
     async reloadUnbound() {
         invalidateUnboundCheckconf();
-        await runCommand('systemctl', ['reload', 'unbound'], { elevated: true });
+        await runCommand(UNBOUND_RELOAD, [], { elevated: true });
         const status = await runCommand('systemctl', ['is-active', 'unbound'], { elevated: true, allowFailure: true });
         if ((status.stdout || '').trim() !== 'active') {
             throw new Error('Unbound não ficou ativo após reload');

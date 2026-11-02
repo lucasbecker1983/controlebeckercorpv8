@@ -75,7 +75,8 @@ const syncUnboundCustomZones = async () => {
     });
 
     fs.writeFileSync('/etc/unbound/unbound.conf.d/custom-zones.conf', serverBlock + forwardBlocks);
-    await runCommand('systemctl', ['reload', 'unbound'], { elevated: true, allowFailure: true });
+    // custom-zones.conf é configuração: o utilitário percebe e faz o reload completo.
+    await runCommand('/opt/controlebeckercorp-v8/scripts/sgcg-unbound-reload.sh', [], { elevated: true, allowFailure: true });
 };
 
 const parseUnboundCounter = (raw: string, metric: string) => {

@@ -190,7 +190,8 @@ function ensureRpz(active) {
   }
   if (next === original) return;
   fs.writeFileSync(RPZ_FILE, next);
-  if (run('unbound-checkconf', []).status === 0) run('systemctl', ['reload', 'unbound']);
+  // Só o allowed.rpz mudou: recarrega apenas essa zona (sem os ~4 s de DNS fora do `systemctl reload`).
+  if (run('unbound-checkconf', []).status === 0) run(path.join(__dirname, 'sgcg-unbound-reload.sh'), []);
 }
 
 async function main() {
