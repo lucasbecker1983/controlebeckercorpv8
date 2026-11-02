@@ -304,7 +304,7 @@ const getServiceHealthSnapshot = async () => {
         const state = stdout.trim().toLowerCase();
         return {
             ...svc,
-            status: state === 'active' ? 'active' : 'stopped',
+            status: state === 'active' || state === 'reloading' ? 'active' : 'stopped',
             state,
         };
     }));
@@ -567,7 +567,7 @@ router.get('/services', async (req, res) => {
             console.log(`[TELEMETRIA] systemctl status [${s.name}]: stdout -> '${state}'`);
             
             // Mapeamento do payload. Garantimos as chaves 'status' e 'active' para suportar diferentes schemas de frontend
-            const isActive = state === 'active';
+            const isActive = state === 'active' || state === 'reloading';
             result.push({ 
                 ...s, 
                 status: isActive ? 'active' : 'stopped',

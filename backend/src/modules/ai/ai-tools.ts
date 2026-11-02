@@ -1,3 +1,4 @@
+import { execFile } from 'child_process';
 import fs from 'fs';
 import { pool } from '../../config/db';
 import { execCmd } from '../../utils/sys';
@@ -470,6 +471,65 @@ const estadoDoServidor: ToolDef = {
     },
 };
 
+// ─── histórico de vida de um serviço (journal do systemd) ─────────────────────────────────────────
+const journal = (args: string[]) => new Promise<string>((resolve) => {
+    // Sem shell: os argumentos são fixos ou validados, então nada vindo do modelo vira comando.
+    execFile('journalctl', [...args, '--no-pager', '-o', 'short-iso'], { timeout: 15000, maxBuffer: 24 * 1024 * 1024 }, (err, stdout) => resolve(err ? '' : String(stdout)));
+});
+
+const LIFECYCLE = /(Started |Starting |Stopped |Stopping |Reloading|Reloaded|Failed|failed with|Main process exited|Deactivated successfully|Killed|SIGKILL|SIGTERM|oom-kill|Out of memory|start of service|service stopped|Restart of|Scheduled restart|entered failed state)/i;
+
+const classify = (message: string) => {
+    if (/Reloading/i.test(message)) return 'recarregando (configuração)';
+    if (/Reloaded/i.test(message)) return 'recarregado';
+    if (/service stopped|Stopped |Stopping /i.test(message)) return 'parou';
+    if (/start of service|Started |Starting /i.test(message)) return 'iniciou';
+    if (/Failed|failed with|entered failed|Main process exited/i.test(message)) return 'falhou';
+    if (/oom-kill|Out of memory|Killed|SIGKILL/i.test(message)) return 'encerrado à força';
+    return 'evento';
+};
+
+const localStamp = (iso: string) => {
+    const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})/);
+    return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}` : iso;
+};
+
+const historicoDeServico: ToolDef = {
+    name: 'historico_de_servico',
+    descricao: 'Histórico de vida de um serviço do servidor no journal do sistema: quando iniciou, parou, foi recarregado ou falhou, e qual outra unidade (timer, script) foi iniciada na mesma hora, que é a pista de quem disparou. Use para "por que o serviço X parou/caiu às HH:MM". Um "parou" de poucos segundos junto de "recarregando" é recarga de configuração, não queda.',
+    parametros: '{servico: nome da unidade (ex.: unbound, squid, postgresql, nginx), dias?: 1-30 (padrão 2), desde?: AAAA-MM-DD, ate?: AAAA-MM-DD, limite?: 1-40}',
+    async run(args) {
+        const unit = String(args.servico || '').trim().replace(/\.service$/, '');
+        if (!/^[A-Za-z0-9@._-]{2,64}$/.test(unit)) throw new Error('Informe o nome do serviço, ex.: unbound.');
+        const days = clamp(args.dias, 2, 1, 30);
+        const from = parseDate(args.desde) || new Date(Date.now() - days * 24 * 3600 * 1000);
+        const to = parseDate(args.ate) ? new Date(parseDate(args.ate)!.getTime() + 24 * 3600 * 1000) : new Date();
+        // O journalctl lê --since/--until no horário LOCAL do servidor: formata em Brasília, não em UTC.
+        const fmt = (d: Date) => d.toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+        const raw = await journal(['-u', `${unit}.service`, '--since', fmt(from), '--until', fmt(to)]);
+        const events: Array<{ iso: string; message: string }> = [];
+        for (const line of raw.split('\n')) {
+            const m = line.match(/^(\S+)\s+\S+\s+([^:]+):\s+(.*)$/);
+            if (!m || !LIFECYCLE.test(m[3])) continue;
+            // Só o que o systemd diz sobre a unidade ou o que o próprio serviço diz sobre ligar/desligar (nunca a atividade dele).
+            if (!/^systemd\[1\]$/.test(m[2]) && !/(start of service|service stopped|Restart of)/i.test(m[3])) continue;
+            events.push({ iso: m[1], message: m[3].replace(/\s+/g, ' ').slice(0, 140) });
+        }
+        const newest = events.slice(-Math.min(rowsLimit(args), 40)).reverse();
+        const rows: any[] = [];
+        for (const ev of newest) {
+            const t = new Date(ev.iso).getTime();
+            const w0 = fmt(new Date(t - 9000));
+            const w1 = fmt(new Date(t + 2000));
+            const near = await journal(['--since', w0, '--until', w1, '-g', 'Starting ']);
+            const triggers = Array.from(new Set(near.split('\n').map((l) => l.match(/systemd\[1\]: Starting ([^\s]+\.(?:service|timer))/)?.[1]).filter(Boolean) as string[]))
+                .filter((u) => u !== `${unit}.service` && !/^(user@|session-|systemd-)/.test(u)).slice(0, 3);
+            rows.push({ quando: localStamp(ev.iso), evento: classify(ev.message), mensagem: ev.message, iniciado_na_mesma_hora: triggers.join(', ') || '—' });
+        }
+        return { total: events.length, rows, note: events.length ? 'Horário de Brasília. "iniciado_na_mesma_hora" lista as unidades que o systemd começou até 9 s antes do evento.' : `Nenhum início, parada, recarga ou falha de ${unit} no período.` };
+    },
+};
+
 const buscarConhecimento: ToolDef = {
     name: 'buscar_conhecimento',
     descricao: 'Procura na documentação do projeto (CODEX, resumos técnicos, manuais) como o sistema funciona e o que já foi decidido ou feito.',
@@ -490,7 +550,7 @@ const consultarProjeto: ToolDef = {
 };
 
 export const TOOLS: ToolDef[] = [
-    buscarAuditoria, acoesDeServicos, atividadeDeLogin, cadastros, lgpd, mudancasDePolitica, consultarIp, buscarUsuario, estadoDoServidor, buscarConhecimento, consultarProjeto,
+    buscarAuditoria, acoesDeServicos, atividadeDeLogin, cadastros, lgpd, mudancasDePolitica, consultarIp, buscarUsuario, estadoDoServidor, historicoDeServico, buscarConhecimento, consultarProjeto,
 ];
 
 export const toolByName = (name: string) => TOOLS.find((tool) => tool.name === name);

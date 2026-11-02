@@ -48,7 +48,14 @@ async function checkServices() {
             } else {
                 try {
                     const statusRaw = await execCmd(`systemctl is-active ${svc}`);
-                    currentStatus = statusRaw.trim() === 'active' ? 'running' : 'stopped';
+                    let state = statusRaw.trim();
+                    // "reloading" é recarga de configuração (o Unbound leva ~4 s para recarregar a lista de segurança) e
+                    // "activating" é partida em andamento: não são queda. Se ainda não está de pé, confirma uma vez em 8 s.
+                    if (state === 'reloading' || state === 'activating') {
+                        await new Promise((resolve) => setTimeout(resolve, 8000));
+                        state = (await execCmd(`systemctl is-active ${svc}`).catch(() => 'unknown')).trim();
+                    }
+                    currentStatus = state === 'active' || state === 'reloading' || state === 'activating' ? 'running' : 'stopped';
                 } catch {}
             }
 

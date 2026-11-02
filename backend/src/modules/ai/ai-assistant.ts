@@ -104,7 +104,12 @@ type Parsed = { kind: 'tool'; name: string; args: Record<string, any>; motivo?: 
 
 const parseReply = (text: string): Parsed => {
     const obj = extractJson(text);
-    if (!obj || typeof obj !== 'object') return null;
+    if (!obj || typeof obj !== 'object') {
+        // JSON "quase válido": o modelo pôs quebras de linha reais dentro do texto da resposta. Recupera o texto mesmo assim.
+        const m = stripThink(text).match(/"acao"\s*:\s*"resposta"[\s\S]*?"resposta"\s*:\s*"([\s\S]*)"\s*\}?\s*$/);
+        if (m) return { kind: 'final', answer: m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').trim() };
+        return null;
+    }
     const action = String(obj.acao ?? obj.action ?? '').toLowerCase();
     const name = obj.ferramenta ?? obj.tool ?? obj.name;
     if ((action.startsWith('ferr') || action === 'tool') && name) {
