@@ -475,19 +475,19 @@ export default function Reports() {
               <div className="ml-auto flex gap-1 rounded-lg border border-outline/10 bg-surface p-1">
                 <button
                   onClick={() => setNavView('by_site')}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_site' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
+                  className={`min-h-8 rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_site' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
                 >
                   Por site
                 </button>
                 <button
                   onClick={() => setNavView('events')}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'events' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
+                  className={`min-h-8 rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'events' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
                 >
                   Eventos técnicos
                 </button>
                 <button
                   onClick={() => setNavView('by_ip')}
-                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_ip' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
+                  className={`min-h-8 rounded-md px-3 py-1 text-xs font-medium transition-colors ${navView === 'by_ip' ? 'bg-primary text-on-primary' : 'text-on-surface/60 hover:text-on-surface'}`}
                 >
                   Agrupado por IP
                 </button>
@@ -672,7 +672,7 @@ export default function Reports() {
                             setNavFilters((f) => ({ ...f, domain: row.site_domain }));
                             setNavView('events');
                           }}
-                          className="text-left text-sm font-bold text-on-surface hover:text-primary hover:underline"
+                          className="inline-flex min-h-8 items-center text-left text-sm font-bold text-on-surface hover:text-primary hover:underline"
                         >
                           {row.site_domain || 'sem domínio'}
                         </button>
