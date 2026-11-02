@@ -101,13 +101,13 @@ const SummaryCard = ({ label, value, color = 'primary', icon: Icon }) => (
 
 const Pill = ({ children, color = 'gray' }) => {
   const colors = {
-    red:    'bg-danger text-white',
-    green:  'bg-success text-white',
-    blue:   'bg-primary text-white',
-    purple: 'bg-primary text-white',
-    amber:  'bg-warning text-white',
-    teal:   'bg-success text-white',
-    gray:   'bg-on-surface/15 text-white',
+    red:    'bg-danger/10 text-danger',
+    green:  'bg-success/10 text-success',
+    blue:   'bg-primary/10 text-primary',
+    purple: 'bg-primary/10 text-primary',
+    amber:  'bg-warning/10 text-warning',
+    teal:   'bg-success/10 text-success',
+    gray:   'bg-on-surface/10 text-on-surface/75',
   };
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ${colors[color] || colors.gray}`}>

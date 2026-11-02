@@ -20,6 +20,7 @@
   --color-outline-variant: var(--md-outline-variant);
   --color-danger: var(--md-danger);
   --color-on-danger: var(--md-on-danger);
+  --color-on-success: var(--md-on-success);
   --color-success: var(--md-success);
   --color-warning: var(--md-warning);
   --color-info: var(--md-info);
@@ -465,5 +466,5 @@ a {
 }
 
 /* Texto sobre fundo "danger": branco no claro; no escuro o danger é claro e pede texto escuro. */
-:root { --md-on-danger: #ffffff; }
-[data-theme='dark'] { --md-on-danger: #3a0b0b; }
+:root { --md-on-danger: #ffffff; --md-on-success: #ffffff; }
+[data-theme='dark'] { --md-on-danger: #3a0b0b; --md-on-success: #06281a; }

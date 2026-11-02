@@ -30,14 +30,14 @@ const priorities = [
 ];
 
 function priorityClass(priority) {
-  if (priority === 'critical') return 'border-danger bg-danger text-danger';
-  if (priority === 'high') return 'border-warning bg-warning text-warning';
+  if (priority === 'critical') return 'border-danger/45 bg-container text-danger';
+  if (priority === 'high') return 'border-warning/45 bg-container text-warning';
   if (priority === 'low') return 'border-outline bg-on-surface/5 text-on-surface/60';
-  return 'border-primary bg-primary text-primary';
+  return 'border-primary/40 bg-container text-primary';
 }
 
 function Stat({ icon: Icon, label, value, tone = 'sky' }) {
-  const color = tone === 'red' ? 'bg-danger text-danger' : tone === 'amber' ? 'bg-warning text-warning' : 'bg-primary text-primary';
+  const color = tone === 'red' ? 'bg-danger/10 text-danger' : tone === 'amber' ? 'bg-warning/10 text-warning' : 'bg-primary/10 text-primary';
   return (
     <div className="rounded-lg border border-outline/12 bg-surface-high/80 p-4 shadow-sm">
       <div className="flex items-center gap-3">
@@ -207,8 +207,8 @@ export default function SupportTickets() {
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-bold text-on-surface/50">{ticket.protocol}</span>
                 <span className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${priorityClass(ticket.priority)}`}>{ticket.priority_label}</span>
-                {ticket.admin_unread ? <span className="rounded-full bg-danger px-2.5 py-1 text-[11px] font-bold text-white">Novo</span> : null}
-                {ticket.archived ? <span className="rounded-full bg-container px-2.5 py-1 text-[11px] font-bold text-white">Arquivado</span> : null}
+                {ticket.admin_unread ? <span className="rounded-full bg-danger px-2.5 py-1 text-[11px] font-bold text-on-danger">Novo</span> : null}
+                {ticket.archived ? <span className="rounded-full bg-on-surface/10 px-2.5 py-1 text-[11px] font-bold text-on-surface/75">Arquivado</span> : null}
               </div>
               <h2 className="mt-2 line-clamp-2 text-sm font-bold text-on-surface">{ticket.title}</h2>
               <div className="mt-2 flex items-center gap-2 text-xs font-semibold text-on-surface/55"><UserRound size={14} /> {ticket.requester_name}</div>
@@ -228,7 +228,7 @@ export default function SupportTickets() {
                     <span className="text-xs font-bold text-on-surface/50">{selected.protocol}</span>
                     <span className={`rounded-full border px-2.5 py-1 text-xs font-bold ${priorityClass(selected.priority)}`}>{selected.priority_label}</span>
                     <span className="rounded-full border border-outline/14 bg-surface-low px-2.5 py-1 text-xs font-bold text-on-surface/65">{selected.status_label}</span>
-                    {selected.archived ? <span className="rounded-full bg-container px-2.5 py-1 text-xs font-bold text-white">Arquivado</span> : null}
+                    {selected.archived ? <span className="rounded-full bg-on-surface/10 px-2.5 py-1 text-xs font-bold text-on-surface/75">Arquivado</span> : null}
                   </div>
                   <h2 className="mt-3 text-2xl font-bold text-on-surface">{selected.title}</h2>
                   <p className="mt-2 text-sm font-semibold leading-6 text-on-surface/62">{selected.description}</p>
@@ -264,17 +264,17 @@ export default function SupportTickets() {
 
               <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
                 {closedStatuses.has(selected.status) && selected.resolved_by_name ? (
-                  <div className="rounded-lg border border-success bg-success px-3 py-2 text-sm font-bold text-success">
+                  <div className="rounded-lg border border-success/35 bg-success/10 px-3 py-2 text-sm font-bold text-success">
                     Chamado encerrado por {selected.resolved_by_name}
                     {selected.closed_at ? ` em ${new Date(selected.closed_at).toLocaleString('pt-BR')}` : ''}
                   </div>
                 ) : <div />}
-                <button type="button" onClick={() => updateTicket({ status: 'resolved', resolved_by_name: resolverName })} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-success px-3 text-sm font-bold text-white hover:bg-success"><CheckCircle2 size={17} /> Resolver</button>
+                <button type="button" onClick={() => updateTicket({ status: 'resolved', resolved_by_name: resolverName })} className="flex h-11 items-center justify-center gap-2 rounded-lg bg-success px-3 text-sm font-bold text-on-success hover:brightness-110"><CheckCircle2 size={17} /> Resolver</button>
               </div>
 
               <div className="mt-3 flex flex-wrap gap-2">
                 {selected.archived ? (
-                  <button type="button" onClick={unarchiveTicket} className="flex h-10 items-center gap-2 rounded-lg border border-primary bg-primary px-3 text-sm font-bold text-primary hover:bg-primary"><RotateCcw size={16} /> Restaurar chamado</button>
+                  <button type="button" onClick={unarchiveTicket} className="flex h-10 items-center gap-2 rounded-lg border border-primary/35 bg-primary/10 px-3 text-sm font-bold text-primary hover:bg-primary/15"><RotateCcw size={16} /> Restaurar chamado</button>
                 ) : closedStatuses.has(selected.status) ? (
                   <button type="button" onClick={archiveTicket} className="flex h-10 items-center gap-2 rounded-lg border border-outline bg-white px-3 text-sm font-bold text-on-surface/60 hover:bg-on-surface/5"><Archive size={16} /> Arquivar chamado</button>
                 ) : null}
@@ -282,7 +282,7 @@ export default function SupportTickets() {
               </div>
 
               {selected.category === 'release_request' ? (
-                <div className="mt-5 rounded-lg border border-warning bg-warning p-4 text-sm font-semibold leading-6 text-warning">
+                <div className="mt-5 rounded-lg border border-warning/35 bg-warning/10 p-4 text-sm font-semibold leading-6 text-warning">
                   <div className="flex gap-2 font-bold"><ShieldCheck size={17} /> Solicitação de acesso</div>
                   <p className="mt-1">Este chamado deve passar por autorização antes de virar liberação técnica. Na próxima etapa, este bloco poderá converter o pedido diretamente em política institucional ou exceção temporária.</p>
                 </div>
@@ -295,10 +295,10 @@ export default function SupportTickets() {
                     <div className="mb-1 font-bold">{comment.author_type === 'admin' ? 'Equipe SGCG' : comment.author_name}</div>
                     {comment.body}
                   </div>
-                )) : <div className="rounded-lg border border-outline/12 bg-surface-low p-4 text-sm font-bold text-on-surface/50">Ainda não há respostas.</div>}
+                )) : <div className="rounded-lg border border-outline/12 bg-surface-low p-4 text-sm font-bold text-on-surface/70">Ainda não há respostas.</div>}
                 <div className="flex gap-2">
                   <input value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Responder ao colaborador" className="h-11 min-w-0 flex-1 rounded-lg border border-outline/18 bg-surface-low px-3 text-sm font-semibold outline-none" />
-                  <button type="button" onClick={sendReply} className="flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-bold text-white"><Send size={16} /> Enviar</button>
+                  <button type="button" onClick={sendReply} className="flex h-11 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-bold text-on-primary"><Send size={16} /> Enviar</button>
                 </div>
               </div>
 

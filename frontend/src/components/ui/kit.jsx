@@ -64,7 +64,7 @@ export function Button({ variant = 'secondary', icon: Icon, children, className 
   const styles = {
     primary: 'border-primary bg-primary text-on-primary hover:brightness-110',
     secondary: 'border-outline bg-container text-on-surface/80 hover:border-primary/40 hover:text-primary',
-    danger: 'border-danger bg-danger text-white hover:brightness-110',
+    danger: 'border-danger bg-danger text-on-danger hover:brightness-110',
     'danger-soft': 'border-danger/30 bg-danger/8 text-danger hover:bg-danger hover:text-white',
     ghost: 'border-transparent text-on-surface/65 hover:bg-on-surface/5 hover:text-on-surface',
   };
