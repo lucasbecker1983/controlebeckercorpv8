@@ -39,7 +39,7 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose, c
           </button>
         ) : null}
 
-        <div className={`flex h-20 shrink-0 items-center justify-between gap-2 border-b border-outline px-4 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
+        <div className={`relative flex h-20 shrink-0 items-center justify-center border-b border-outline px-12 lg:px-4 ${collapsed ? 'lg:px-0' : ''}`}>
           <Link to="/" onClick={onClose} className="flex min-w-0 items-center" title="Visão Geral" aria-label="SGCG, Visão Geral">
             <span className={collapsed ? 'lg:hidden' : ''}><BrandLogo height={58} /></span>
             <span className={`hidden ${collapsed ? 'lg:block' : ''}`}><BrandLogo height={40} iconOnly /></span>
@@ -47,7 +47,7 @@ export default function Sidebar({ user, items = [], onLogout, isOpen, onClose, c
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-on-surface/60 hover:bg-on-surface/5 lg:hidden"
+            className="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-on-surface/60 hover:bg-on-surface/5 lg:hidden"
             aria-label="Fechar menu"
           >
             <X size={18} />

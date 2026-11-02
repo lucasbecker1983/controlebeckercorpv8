@@ -8813,3 +8813,11 @@ VIPs                  → ACCEPT antes de qualquer DROP                  ✅ byp
 - Relatórios: 69 alvos de toque abaixo de 32 px no celular (nome do site na tabela com 20 px e os três botões de visão). Agora com altura mínima de 32 px (`min-h-8`); 0 restantes. Rodapé "Mantido por JMB Tecnologia" também passou a 32 px.
 - Conferido e sem defeito: os painéis mostravam 0 bloqueios em 24 h. O DNS bloqueia normalmente (Instagram, YouTube e conteúdo adulto testados pelos gateways das VLANs 30/40/70) e os bloqueios são registrados (`dns_policy_events` -> `access_events`). A queda (de 2.475-14.089 por dia em 28-30/10 para 1-84 em 31/10-02/11) é fim de semana e feriado de Finados: o tráfego restante é de aparelhos automáticos que não procuram sites bloqueados.
 - Nota para testes: a rota `GET /api/auth/activity` recusa credencial com `id` 0 ("Sessão ausente") e a tela sai para a Visão Geral; os scripts de auditoria passaram a usar `id` -1. Usuários reais não são afetados.
+
+
+## Backup pós-refatoração e logotipo centralizado - 2026-11-02
+
+- Backup novo, combinado para o fim da refatoração: `sudo bash scripts/sgcg-backup-daily.sh` gerou `backups/becker_v8_full_2026-11-02T20-35-13-030Z.tar.gz` (9,6 MB, sha256 conferido). Conteúdo conferido: 477 arquivos, nenhum de `node_modules`, `dist` ou `.git`; os `.env` entram (necessários para restaurar); `recovery/database.dump` com dados de 81 tabelas (usuários, colaboradores, visitantes, exceções, liberações etc.) e só a estrutura de `dns_policy_events`, `access_events` e `navigation_events` (telemetria).
+- Retenção de 30 dias aplicada pelo próprio script: nada a apagar (ficam o de 30/10 e o novo). Removido o `.sha256` solto de 10/08, cujo backup já não existia.
+- Os timers (backup diário e listas de segurança) continuam por instalar pelo responsável.
+- Menu lateral (`components/ui/Sidebar.jsx`): o logotipo ficava encostado à esquerda; agora fica centralizado (41/42 px de margem com o menu aberto). O botão de fechar do celular passou para o canto direito, por cima, sem empurrar o logotipo.
