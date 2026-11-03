@@ -130,7 +130,23 @@ export default function TrafficCanvas({
       vlans.forEach((v) => { if (v.inet >= 0.01) edges.push({ a: v, b: wan, w: v.inet, col: vcol(v.id), kind: 'v', vlan: v.id }); });
       sites.forEach((t) => {
         if (!t.internal) {
-          if (t.val >= 0.01 || t.down + t.up >= 0.01) edges.push({ a: wan, b: t, w: t.val, col: T.accent, kind: 's', site: t.key });
+          // Cada VLAN que fala com o site ganha a própria ligação, na cor dela, lado a lado: o fio mantém a cor da
+          // origem (dispositivo, VLAN, link) até o destino, em vez de virar uma cor única no último trecho.
+          const parts = vlans
+            .map((v) => ({ v, w: devices.filter((d) => d.vlan === v.id).reduce((acc, d) => acc + d.flows.filter((f) => f.site === t.key).reduce((a2, f) => a2 + f.v, 0), 0) }))
+            .filter((p) => p.w >= 0.01);
+          t.vlanIds = parts.map((p) => p.v.id);
+          if (!parts.length) {
+            if (t.val >= 0.01 || t.down + t.up >= 0.01) edges.push({ a: wan, b: t, w: t.val, col: T.accent, kind: 's', site: t.key });
+            return;
+          }
+          const widths = parts.map((p) => Math.max(1, Math.min(18, p.w / 5)));
+          let cursor = -(widths.reduce((acc, x) => acc + x, 0) + (parts.length - 1)) / 2;
+          parts.forEach((p, i) => {
+            const dy = cursor + widths[i] / 2;
+            cursor += widths[i] + 1;
+            edges.push({ a: { x: wan.x, y: wan.y + dy }, b: { x: t.x, y: t.y + dy }, w: p.w, col: vcol(p.v.id), kind: 's', site: t.key, vlan: p.v.id });
+          });
           return;
         }
         // Interno: da VLAN de origem direto ao destino, sem passar pelo link.
@@ -355,7 +371,8 @@ export default function TrafficCanvas({
 
       sites.forEach((t) => {
         const on = !s || (s.t === 'site' && s.key === t.key) || (s.t === 'dev' && selDev && usesSite(selDev, t.key)) || (s.t === 'vlan' && devices.some((d) => d.vlan === s.id && usesSite(d, t.key)));
-        const col = t.internal ? vcol(t.remoteVlan) : T.accent;
+        // Site visitado por uma VLAN só tem a cor dela; destino compartilhado por várias fica na cor de destaque.
+        const col = t.internal ? vcol(t.remoteVlan) : (t.vlanIds?.length === 1 ? vcol(t.vlanIds[0]) : T.accent);
         circle(t.x, t.y, t.r, col, on, hv === `site:${t.key}`);
         const room = LWd - (t.x + t.r + 8) - 8;
         ctx.textAlign = 'left';
