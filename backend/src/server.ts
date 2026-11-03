@@ -33,6 +33,7 @@ import centralAuditRoutes, { centralAuditService } from './modules/central-audit
 import monitorRoutes from './modules/monitor/monitor-routes';
 import aiRoutes from './modules/ai/ai-routes';
 import { startHunter } from './modules/ai/ai-hunter';
+import { startKnowledge } from './modules/ai/ai-knowledge';
 import { ensureSchema as ensureAiSchema } from './modules/ai/ai-store';
 import { monitorService } from './modules/monitor/monitor-service';
 import { runtimeProxyMiddleware } from './modules/proxy/runtime-proxy';
@@ -159,7 +160,7 @@ app.listen(PORT, '0.0.0.0', () => {
     supportSchemaService.ensureSchema().catch((error) => {
         console.error('[SUPPORT] Falha ao garantir schema da central de chamados:', error);
     });
-    ensureAiSchema().then(() => startHunter()).catch((error) => {
+    ensureAiSchema().then(() => { startHunter(); startKnowledge(); }).catch((error) => {
         console.error('[IA] Falha ao preparar o módulo de IA:', error);
     });
     centralAuditService.ensureSchema().catch((error) => {

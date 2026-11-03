@@ -5,6 +5,7 @@ import { execCmd } from '../../utils/sys';
 import { monitorService } from '../monitor/monitor-service';
 import { getLinkStatus } from '../connectivity/downtime-monitor';
 import { ragService } from '../control/rag-service';
+import { searchKnowledge } from './ai-knowledge';
 import { querySource } from './ai-sources';
 
 /*
@@ -530,13 +531,72 @@ const historicoDeServico: ToolDef = {
     },
 };
 
+// Estado de AGORA de um serviço/processo/contêiner pelo nome (ou parte dele). Só leitura, sem shell: nome validado e comandos fixos.
+const runRead = (cmd: string, args: string[]) => new Promise<string>((resolve) => {
+    execFile(cmd, args, { timeout: 10000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => resolve(err && !stdout ? '' : String(stdout || '')));
+});
+
+const servicoAgora: ToolDef = {
+    name: 'servico_agora',
+    descricao: 'Estado de AGORA de um serviço systemd, processo pm2 ou contêiner Docker, procurando pelo nome ou parte dele (ex.: "cafetech", "unbound", "backend"): ativo ou não, memória usada POR ELE, desde quando, reinícios. Use para "quanta memória o projeto X usa", "o serviço Y está no ar?". Os totais de estado_do_servidor são do servidor inteiro: nunca os atribua a um projeto.',
+    parametros: '{nome: parte do nome do serviço, processo ou projeto}',
+    async run(args) {
+        const nome = String(args.nome || '').trim().toLowerCase();
+        if (!/^[a-z0-9_.@:-]{2,80}$/.test(nome)) return { total: 0, rows: [], note: 'Informe só o nome (letras, números, - _ . @), com ao menos 2 caracteres.' };
+        const rows: any[] = [];
+        const mb = (n: number) => (n > 0 ? Math.round(n / 1048576) : null);
+
+        const units = (await runRead('systemctl', ['list-units', '--type=service', '--all', '--no-legend', '--plain', '--no-pager']))
+            .split('\n').map((l) => l.trim().split(/\s+/)[0]).filter((u) => u && u.endsWith('.service') && u.toLowerCase().includes(nome)).slice(0, 8);
+        if (units.length) {
+            const raw = await runRead('systemctl', ['show', '--no-pager', '-p', 'Id,ActiveState,SubState,MainPID,MemoryCurrent,ActiveEnterTimestamp,NRestarts,Result', ...units]);
+            for (const block of raw.split('\n\n')) {
+                const v: Record<string, string> = {};
+                block.split('\n').forEach((line) => { const k = line.indexOf('='); if (k > 0) v[line.slice(0, k)] = line.slice(k + 1); });
+                if (!v.Id) continue;
+                const mem = Number(v.MemoryCurrent);
+                rows.push({ tipo: 'serviço systemd', nome: v.Id, estado: `${v.ActiveState} (${v.SubState})${v.Result && v.Result !== 'success' ? `, resultado ${v.Result}` : ''}`, memoria_mb: Number.isFinite(mem) && mem < 1e14 ? mb(mem) : null, pid: Number(v.MainPID) || null, desde: v.ActiveEnterTimestamp || null, reinicios: Number(v.NRestarts) || 0 });
+            }
+        }
+
+        const raw2 = await runRead('/usr/local/bin/pm2', ['jlist']);
+        const start = raw2.indexOf('[');
+        if (start >= 0) {
+            try {
+                for (const a of JSON.parse(raw2.slice(start))) {
+                    if (!String(a.name).toLowerCase().includes(nome) && !String(a.pm2_env?.pm_cwd || '').toLowerCase().includes(nome)) continue;
+                    rows.push({ tipo: 'processo pm2', nome: a.name, estado: a.pm2_env?.status, memoria_mb: mb(Number(a.monit?.memory)), pid: a.pid || null, cpu_pct: a.monit?.cpu, desde: a.pm2_env?.pm_uptime ? localStamp(new Date(a.pm2_env.pm_uptime).toISOString()) : null, reinicios: a.pm2_env?.restart_time, pasta: a.pm2_env?.pm_cwd });
+                }
+            } catch { /* pm2 sem JSON válido: ignora */ }
+        }
+
+        for (const line of (await runRead('docker', ['ps', '-a', '--format', '{{json .}}'])).split('\n').filter(Boolean)) {
+            try {
+                const c = JSON.parse(line);
+                if (String(c.Names).toLowerCase().includes(nome)) rows.push({ tipo: 'contêiner Docker', nome: c.Names, estado: c.Status, imagem: c.Image, portas: c.Ports || null });
+            } catch { /* linha inválida */ }
+        }
+        return { total: rows.length, rows, note: rows.length ? 'Memória é a do próprio serviço/processo (não do servidor inteiro). Um projeto pode ter vários serviços: some só se a pergunta pedir o total do projeto.' : `Nenhum serviço, processo pm2 ou contêiner com "${nome}" no nome. Tente buscar_conhecimento para achar o nome certo.` };
+    },
+};
+
 const buscarConhecimento: ToolDef = {
     name: 'buscar_conhecimento',
-    descricao: 'Procura na documentação do projeto (CODEX, resumos técnicos, manuais) como o sistema funciona e o que já foi decidido ou feito.',
-    parametros: '{pergunta: o que procurar}',
+    descricao: 'Base de conhecimento do servidor inteiro: documentação e decisões dos projetos (CODEX), scripts, configurações (Unbound, Squid, nginx, DHCP, firewall), serviços systemd, timers, portas, processos pm2, domínios, projetos (pasta, porta, banco) e tabelas do banco. Use para "como funciona", "onde fica", "qual porta/pasta/domínio", "o que já foi feito". Cada trecho traz a data da indexação (máx. 30 min); para o estado de AGORA use estado_do_servidor.',
+    parametros: '{pergunta: o que procurar (use nomes e termos técnicos), tipo?: doc|script|config|servico|timer|porta|pm2|nginx|projeto|banco|tabela|firewall|docker|sistema}',
     async run(args) {
-        const rows = await ragService.search(String(args.pergunta || ''), 5);
-        return { total: rows.length, rows, note: rows.length ? undefined : 'Nada relevante na documentação.' };
+        const tipo = String(args.tipo || '').trim();
+        let rows: any[] = [];
+        try {
+            rows = await searchKnowledge(String(args.pergunta || ''), 6, tipo ? { kinds: [tipo] } : {});
+        } catch {
+            rows = [];
+        }
+        if (!rows.length) {
+            // base ainda vazia ou fora do ar: cai na busca antiga só em documentação
+            rows = await ragService.search(String(args.pergunta || ''), 5);
+        }
+        return { total: rows.length, rows, note: rows.length ? undefined : 'Nada relevante na base de conhecimento.' };
     },
 };
 
@@ -550,7 +610,7 @@ const consultarProjeto: ToolDef = {
 };
 
 export const TOOLS: ToolDef[] = [
-    buscarAuditoria, acoesDeServicos, atividadeDeLogin, cadastros, lgpd, mudancasDePolitica, consultarIp, buscarUsuario, estadoDoServidor, historicoDeServico, buscarConhecimento, consultarProjeto,
+    buscarAuditoria, acoesDeServicos, atividadeDeLogin, cadastros, lgpd, mudancasDePolitica, consultarIp, buscarUsuario, estadoDoServidor, servicoAgora, historicoDeServico, buscarConhecimento, consultarProjeto,
 ];
 
 export const toolByName = (name: string) => TOOLS.find((tool) => tool.name === name);

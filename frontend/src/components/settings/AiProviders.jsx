@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowDown, ArrowUp, KeyRound, Radar, ShieldCheck, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Database, KeyRound, Radar, RefreshCw, Search, ShieldCheck, Trash2 } from 'lucide-react';
 import { api } from '../../services/api';
 import { Badge, Button, DataTable, Field, Notice, Panel, Switch, askConfirm, errorMessage, inputCls, toast } from '../ui/kit';
 
@@ -103,6 +103,100 @@ function ProviderCard({ item, index, total, onChanged, onMove }) {
   );
 }
 
+const KIND_LABEL = {
+  doc: 'Documentação', script: 'Scripts', config: 'Configurações', servico: 'Serviços', timer: 'Timers', porta: 'Portas', pm2: 'Processos pm2',
+  nginx: 'Sites nginx', projeto: 'Projetos', banco: 'Bancos', tabela: 'Tabelas', firewall: 'Firewall', docker: 'Docker', sistema: 'Servidor',
+};
+
+/*
+ * Base de conhecimento do servidor inteiro: o que o assistente "sabe" além do banco de auditoria. Indexada no PostgreSQL
+ * a cada 30 min (e sob demanda) a partir de documentação, configurações, serviços, portas, projetos e catálogo do banco.
+ * Segredos são apagados antes de gravar; projetos sensíveis ficam sem documentação na base.
+ */
+function KnowledgePanel() {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.get('/api/ai/admin/knowledge');
+      setInfo(res.data);
+    } catch (e) {
+      toast(errorMessage(e), 'danger');
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const reindex = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post('/api/ai/admin/knowledge/reindex');
+      const r = res.data.summary;
+      toast(`Base atualizada: ${r.total} itens, ${r.changed} novos ou alterados, ${r.removed} removidos.`, 'success');
+      await load();
+    } catch (e) {
+      toast(errorMessage(e), 'danger');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const search = async (ev) => {
+    ev.preventDefault();
+    if (q.trim().length < 3) return;
+    try {
+      const res = await api.get('/api/ai/admin/knowledge/search', { params: { q: q.trim() } });
+      setHits(res.data.hits);
+    } catch (e) {
+      toast(errorMessage(e), 'danger');
+    }
+  };
+
+  const last = info?.last_runs?.[0];
+  const errs = Object.entries(last?.errors || {});
+  return (
+    <Panel
+      title="Base de conhecimento do servidor"
+      description="O que o assistente consulta para responder sobre o servidor: documentação dos projetos, configurações, serviços, portas, timers, domínios e catálogo do banco. Atualiza a cada 30 minutos."
+      action={<Button variant="primary" icon={RefreshCw} onClick={reindex} disabled={busy || info?.indexing}>{busy || info?.indexing ? 'Indexando…' : 'Reindexar agora'}</Button>}
+    >
+      {!info ? <p className="text-sm text-on-surface/55">Carregando…</p> : (
+        <div className="space-y-3 text-[12.5px] text-on-surface/75">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-on-surface"><Database size={14} /> {info.total.toLocaleString('pt-BR')} itens</span>
+            {info.by_kind.map((k) => <Badge key={k.kind} tone="neutral">{KIND_LABEL[k.kind] || k.kind}: {k.total}</Badge>)}
+          </div>
+          {last ? (
+            <div>
+              Última indexação: <b>{when(last.finished_at || last.started_at)}</b> ({last.trigger}) · {last.changed ?? 0} alterados, {last.removed ?? 0} removidos · {last.redactions ?? 0} trechos com segredo ou dado pessoal apagados antes de gravar.
+              {errs.length ? <span className="text-danger"> · avisos: {errs.map(([k, v]) => `${k} (${v})`).join('; ')}</span> : null}
+            </div>
+          ) : null}
+          <div>Sem documentação indexada (por cautela): <span className="tabular">{(info.excluded_projects || []).map((x) => String(x).replace(/[\^$]/g, '')).join(', ')}</span>. Os fatos operacionais deles (serviço, porta, memória) continuam, porque explicam o consumo do servidor.</div>
+          <form onSubmit={search} className="flex flex-wrap items-center gap-2">
+            <input aria-label="Testar a busca da base" className={`${inputCls} max-w-md flex-1`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Teste a busca: ex. porta do cafetech, timers do sgcg" />
+            <Button type="submit" icon={Search} disabled={q.trim().length < 3}>Buscar</Button>
+          </form>
+          {hits ? (
+            hits.length ? (
+              <ul className="space-y-2">
+                {hits.map((h, i) => (
+                  <li key={`${h.fonte}-${i}`} className="rounded-lg border border-outline p-3">
+                    <div className="flex flex-wrap items-center gap-2"><Badge tone="primary">{KIND_LABEL[h.tipo] || h.tipo}</Badge><span className="tabular break-all font-medium text-on-surface">{h.fonte}</span><span className="text-on-surface/50">relevância {h.score} · indexado {when(h.atualizado_em)}</span></div>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-[12px] text-on-surface/70">{h.trecho.slice(0, 420)}{h.trecho.length > 420 ? '…' : ''}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="text-on-surface/55">Nada encontrado.</p>
+          ) : null}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function AiProviders() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -190,6 +284,8 @@ export default function AiProviders() {
           </div>
         ) : <p className="text-sm text-on-surface/55">Ainda não rodou.</p>}
       </Panel>
+
+      <KnowledgePanel />
 
       <Panel title="Modelos gratuitos" description="Do melhor para o pior dentro de cada provedor. O assistente só chama modelos desta lista.">
         <div className="mb-3 flex flex-wrap items-center gap-2">

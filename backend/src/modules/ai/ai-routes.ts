@@ -6,6 +6,7 @@ import { ragService } from '../control/rag-service';
 import { AssistantUnavailable, askAssistant } from './ai-assistant';
 import { clearKey, getKey, isAdmin, isGod, keyStatus, PROVIDER_LABEL, PROVIDERS, Provider, setKey } from './ai-env';
 import { hunt, isHunting, lastRuns } from './ai-hunter';
+import { EXCLUDED_PROJECTS, isIndexing, knowledgeStatus, reindexKnowledge, searchKnowledge } from './ai-knowledge';
 import { listSources } from './ai-sources';
 import { listProviderModels } from './ai-providers';
 import { ensureSchema, getSettings, listModelEvents, listModels, logChat, saveSettings } from './ai-store';
@@ -173,6 +174,29 @@ router.post('/admin/hunt', requireGod, async (req: AuthenticatedRequest, res) =>
     if (isHunting()) return res.status(409).json({ error: 'O caçador já está procurando.' });
     hunt('manual', getRequestActor(req).username || 'god').catch((error) => console.error('[IA-CAÇADOR] Busca manual falhou:', error?.message || error));
     return res.status(202).json({ started: true });
+});
+
+// ─── base de conhecimento do servidor (somente GOD) ─────────────────────────────────────────────
+router.get('/admin/knowledge', requireGod, async (_req, res) => {
+    return res.json({ ...(await knowledgeStatus()), excluded_projects: EXCLUDED_PROJECTS.map((re) => re.source) });
+});
+
+router.post('/admin/knowledge/reindex', requireGod, async (req: AuthenticatedRequest, res) => {
+    if (isIndexing()) return res.status(409).json({ error: 'A indexação já está em andamento.' });
+    try {
+        const summary = await reindexKnowledge('manual');
+        await audit(req, 'ai_knowledge_reindexed', { total: summary.total, changed: summary.changed, removed: summary.removed });
+        return res.json({ success: true, summary });
+    } catch (error: any) {
+        return res.status(500).json({ error: String(error?.message || error).slice(0, 300) });
+    }
+});
+
+// Testa a busca como o assistente a vê (útil para conferir o que a base sabe e se algo sensível apareceu).
+router.get('/admin/knowledge/search', requireGod, async (req, res) => {
+    const q = String(req.query.q || '').trim().slice(0, 300);
+    if (q.length < 3) return res.status(400).json({ error: 'Digite ao menos 3 caracteres.' });
+    return res.json({ hits: await searchKnowledge(q, 8) });
 });
 
 export default router;
