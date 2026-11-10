@@ -17,6 +17,23 @@ const LEASES_FILE = '/var/lib/dhcp/dhcpd.leases';
 const MAC_HISTORY_FILE = '/var/lib/dhcp/mac_ip_db.csv';
 const OUI_FILE = '/usr/share/nmap/nmap-mac-prefixes';
 const IDENTITY_FILE = '/opt/controlebeckercorp-v8/data/identity/latest.json';
+const RESERVATIONS_FILE = '/etc/dhcp/static_hosts.conf';
+const NAME_PROBES_PER_TICK = 12;
+
+// Tipo e marca pelo tráfego do próprio aparelho (serviços que só cada fabricante consulta).
+const TRAFFIC_HINTS: Array<[RegExp, string, string]> = [
+    [/(^|\.)(icloud\.com|apple\.com|mzstatic\.com|apple-dns\.net|icloud-content\.com|aaplimg\.com)$/, 'Apple', 'Aparelho Apple (iPhone, iPad ou Mac)'],
+    [/(samsung|samsungcloud|samsungapps|samsungosp|secb2b)/, 'Samsung', 'Celular Samsung'],
+    [/(xiaomi|miui|mi\.com$|mi-img\.com)/, 'Xiaomi', 'Celular Xiaomi'],
+    [/(motorola|lenovomm)/, 'Motorola', 'Celular Motorola'],
+    [/(heytap|coloros|oppomobile|realme)/, 'Oppo/Realme', 'Celular Oppo/Realme'],
+    [/(vivo\.com\.cn|vivoglobal|bbktel)/, 'vivo', 'Celular vivo'],
+    [/(hicloud|huawei|dbankcloud)/, 'Huawei', 'Celular Huawei'],
+    [/(msftconnecttest|windowsupdate|update\.microsoft|msftncsi|wns\.windows)/, 'Windows', 'Computador Windows'],
+    [/(connectivitycheck\.gstatic\.com|android\.clients\.google|play\.googleapis)/, 'Android', 'Celular Android'],
+];
+const TRAFFIC_HINT_SQL = '(icloud\\.com|apple\\.com|mzstatic|apple-dns|aaplimg|samsung|secb2b|xiaomi|miui|mi-img|motorola|lenovomm|heytap|coloros|oppomobile|realme|vivoglobal|bbktel|hicloud|huawei|dbankcloud|msftconnecttest|windowsupdate|update\\.microsoft|msftncsi|wns\\.windows|connectivitycheck\\.gstatic|android\\.clients\\.google|play\\.googleapis)';
+const GENERIC_DEVICES = new Set(['', 'Aparelho não identificado', 'Celular com MAC privado', 'Celular Android', 'Computador']);
 const COLLECT_EVERY_MS = 5 * 60 * 1000;
 const TZ = 'America/Sao_Paulo';
 
@@ -156,6 +173,21 @@ export class DeviceAuditService {
                     );
                     CREATE INDEX IF NOT EXISTS idx_device_sightings_day ON device_sightings (seen_day);
                     CREATE INDEX IF NOT EXISTS idx_device_sightings_mac ON device_sightings (mac);
+                    CREATE TABLE IF NOT EXISTS device_labels (
+                        id serial PRIMARY KEY,
+                        mac text,
+                        ip inet,
+                        person text,
+                        device text,
+                        notes text,
+                        created_by text,
+                        created_at timestamptz NOT NULL DEFAULT NOW(),
+                        updated_by text,
+                        updated_at timestamptz NOT NULL DEFAULT NOW(),
+                        active boolean NOT NULL DEFAULT TRUE
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_device_labels_mac ON device_labels (mac) WHERE active AND mac IS NOT NULL;
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_device_labels_ip ON device_labels (ip) WHERE active AND mac IS NULL;
                 `);
                 const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM device_sightings');
                 if (!rows[0]?.n) await this.backfill().catch((e) => console.error('[DEVICE AUDIT] Histórico inicial falhou:', e?.message || e));
@@ -267,8 +299,36 @@ export class DeviceAuditService {
 
     async collect() {
         await this.ensureReady();
-        const items = [...this.readLeases(), ...(await this.readArp()), ...(await this.readPortalSessions("NOW() - INTERVAL '1 day'"))];
+        const arp = await this.readArp();
+        await this.probeNames(arp).catch(() => null);
+        const items = [...this.readLeases(), ...arp, ...(await this.readPortalSessions("NOW() - INTERVAL '1 day'"))];
         return this.save(items);
+    }
+
+    // Pergunta o nome aos aparelhos online que ainda não têm nome: NetBIOS (Windows) e mDNS (iPhone, Mac, alguns Android).
+    private async probeNames(arp: Sighting[]) {
+        if (!arp.length) return;
+        const macs = arp.map((a) => a.mac);
+        const { rows } = await pool.query(
+            `SELECT DISTINCT mac FROM device_sightings WHERE mac = ANY($1) AND hostname IS NOT NULL AND last_seen > NOW() - INTERVAL '30 days'`,
+            [macs],
+        );
+        const named = new Set(rows.map((r) => r.mac));
+        const targets = arp.filter((a) => !named.has(a.mac)).slice(0, NAME_PROBES_PER_TICK);
+        await Promise.all(targets.map(async (t) => {
+            let name = '';
+            try {
+                const { stdout } = await run('nmblookup', ['-A', t.ip], { timeout: 3000 });
+                name = stdout.split('\n').map((l) => l.match(/^\s+(\S[^<]*?)\s+<00>\s+-\s+(?!<GROUP>)/)?.[1] || '').find(Boolean) || '';
+            } catch { /* sem resposta */ }
+            if (!name) {
+                try {
+                    const { stdout } = await run('avahi-resolve-address', [t.ip], { timeout: 3000 });
+                    name = (stdout.trim().split(/\s+/)[1] || '').replace(/\.local\.?$/, '');
+                } catch { /* sem resposta */ }
+            }
+            if (name) { t.hostname = name; t.source = 'nome-na-rede'; }
+        }));
     }
 
     // Primeira carga: o histórico que já existe (planilha de MAC por IP do DHCP e sessões dos portais).
@@ -332,6 +392,7 @@ export class DeviceAuditService {
         ) : { rows: [] as any[] };
         const byIp = new Map<string, any[]>();
         for (const s of sightings) byIp.set(s.ip, [...(byIp.get(s.ip) || []), s]);
+        const reservations = this.readReservations();
         const SLACK = 45 * 60 * 1000;
         const resolveMac = (ip: string, at: Date) => {
             const list = byIp.get(ip) || [];
@@ -339,7 +400,12 @@ export class DeviceAuditService {
             const inside = list.filter((s) => new Date(s.first_seen).getTime() - SLACK <= t && t <= new Date(s.last_seen).getTime() + SLACK);
             const pick = (inside.length ? inside : list.filter((s) => new Date(s.first_seen).toDateString() === at.toDateString()))
                 .sort((a, b) => Math.abs(new Date(a.last_seen).getTime() - t) - Math.abs(new Date(b.last_seen).getTime() - t))[0];
-            return pick ? normMac(pick.mac) : '';
+            if (pick) return normMac(pick.mac);
+            // IP com reserva fixa no DHCP: só aquele aparelho recebe esse IP.
+            const fixed = reservations.get(ip) || [];
+            if (fixed.length === 1) return fixed[0];
+            if (fixed.length > 1) return fixed.find((m) => list.some((s) => normMac(s.mac) === m)) || fixed[0];
+            return '';
         };
 
         type Row = { key: string; mac: string; ips: Set<string>; vlans: Set<number>; networks: Map<string, number>; blocked: number; allowedVip: number; allowedOther: number; days: Set<string>; first: Date; last: Date };
@@ -362,6 +428,29 @@ export class DeviceAuditService {
             devices.set(key, row);
         }
 
+        const hintRows = ips.length ? (await pool.query(
+            `SELECT host(client_ip) AS ip, query_name AS d, COUNT(*)::int AS n FROM dns_policy_events
+              WHERE occurred_at BETWEEN $1 AND $2 AND host(client_ip) = ANY($3) AND query_name ~ '${TRAFFIC_HINT_SQL}'
+              GROUP BY 1, 2`,
+            [from.toISOString(), to.toISOString(), ips],
+        ).catch(() => ({ rows: [] as any[] }))).rows : [];
+        const hintByIp = new Map<string, Map<string, number>>();
+        for (const h of hintRows) {
+            const hit = TRAFFIC_HINTS.find(([re]) => re.test(String(h.d)));
+            if (!hit) continue;
+            const m = hintByIp.get(h.ip) || new Map<string, number>();
+            m.set(hit[2], (m.get(hit[2]) || 0) + h.n);
+            hintByIp.set(h.ip, m);
+        }
+        // Marca do fabricante vence "Android"/"Windows" genéricos; entre marcas, a mais consultada.
+        const trafficHint = (ipList: string[]) => {
+            const total = new Map<string, number>();
+            for (const ip of ipList) for (const [k, v] of hintByIp.get(ip) || []) total.set(k, (total.get(k) || 0) + v);
+            const ranked = Array.from(total.entries()).sort((a, b) => b[1] - a[1]);
+            return (ranked.find(([k]) => k !== 'Celular Android' && k !== 'Computador Windows') || ranked[0])?.[0] || '';
+        };
+        const labels = await this.listLabels();
+
         const identity = await this.identityFor(Array.from(devices.values()).map((d) => d.mac).filter(Boolean), ips, sightings);
         const result = Array.from(devices.values()).map((d) => {
             const id = (d.mac && identity.byMac.get(d.mac)) || Array.from(d.ips).map((ip) => identity.byIp.get(ip)).find(Boolean) || {};
@@ -371,16 +460,20 @@ export class DeviceAuditService {
             const hostInfo = parseHostname(host);
             const brand = ua?.brand || brandOf(d.mac);
             const agentDevice = (id as any).device || '';
+            const manual = (d.mac && labels.byMac.get(d.mac)) || Array.from(d.ips).map((ip) => labels.byIp.get(ip)).find(Boolean) || null;
+            const hint = trafficHint(Array.from(d.ips));
             const model = ua?.model || hostInfo.model || (osFromVendor(vendor).startsWith('Android') ? 'Celular Android' : osFromVendor(vendor) === 'Windows' ? 'Computador' : '');
             const device = [brand && !model.toLowerCase().startsWith(brand.toLowerCase().split(' ')[0]) ? brand : '', model].filter(Boolean).join(' ').trim();
             const networks = Array.from(d.networks.entries()).sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
             return {
-                person: personName((id as any).person || hostInfo.owner || ''),
-                person_from_hostname: !(id as any).person && Boolean(hostInfo.owner),
+                person: personName(manual?.person || (id as any).person || hostInfo.owner || ''),
+                person_from_hostname: !manual?.person && !(id as any).person && Boolean(hostInfo.owner),
                 person_detail: (id as any).detail || '',
                 person_source: (id as any).source || (hostInfo.owner ? 'nome do aparelho' : ''),
                 vip: Boolean((id as any).vip) || d.allowedVip > 0,
-                device: agentDevice || device || (d.mac && isPrivateMac(d.mac) ? 'Celular com MAC privado' : 'Aparelho não identificado'),
+                device: manual?.device || agentDevice || (GENERIC_DEVICES.has(device) && hint ? hint : device) || hint || (d.mac && isPrivateMac(d.mac) ? 'Celular com MAC privado' : 'Aparelho não identificado'),
+                device_from_traffic: !manual?.device && !agentDevice && Boolean(hint) && GENERIC_DEVICES.has(device),
+                manual_label: manual ? { id: manual.id, by: manual.updated_by || manual.created_by, at: manual.updated_at } : null,
                 os: ua?.os || (id as any).os || osFromVendor(vendor),
                 hostname: host,
                 mac: d.mac,
@@ -415,6 +508,84 @@ export class DeviceAuditService {
             },
             devices: result,
         };
+    }
+
+    private readReservations() {
+        const map = new Map<string, string[]>();
+        try {
+            for (const m of fs.readFileSync(RESERVATIONS_FILE, 'utf8').matchAll(/hardware ethernet ([0-9a-f:]{17});\s*fixed-address (\d+\.\d+\.\d+\.\d+);/gi)) {
+                const mac = normMac(m[1]);
+                if (!mac) continue;
+                map.set(m[2], Array.from(new Set([...(map.get(m[2]) || []), mac])));
+            }
+        } catch { /* sem reservas */ }
+        return map;
+    }
+
+    async listLabels() {
+        await this.ensureReady();
+        const { rows } = await pool.query(`SELECT id, mac, host(ip) AS ip, person, device, notes, created_by, updated_by, updated_at FROM device_labels WHERE active ORDER BY updated_at DESC`);
+        const byMac = new Map<string, any>();
+        const byIp = new Map<string, any>();
+        for (const r of rows) {
+            if (r.mac) byMac.set(normMac(r.mac), r);
+            else if (r.ip) byIp.set(r.ip, r);
+        }
+        return { rows, byMac, byIp };
+    }
+
+    // Nome dado pelo administrador: "este aparelho é o celular do João". Fica na auditoria.
+    async setLabel(input: { mac?: string; ip?: string; person?: string; device?: string; notes?: string }, actor: string, actorIp = '') {
+        await this.ensureReady();
+        const mac = normMac(input.mac);
+        const ip = !mac && /^\d+\.\d+\.\d+\.\d+$/.test(String(input.ip || '')) ? String(input.ip) : null;
+        if (!mac && !ip) throw new Error('Informe o MAC ou o IP do aparelho.');
+        const person = String(input.person || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        const device = String(input.device || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (person.length < 3 && device.length < 3) throw new Error('Informe o nome do responsável ou o tipo de aparelho.');
+        const notes = String(input.notes || '').trim().slice(0, 300);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            const { rows: old } = await client.query(
+                mac ? `SELECT * FROM device_labels WHERE active AND mac = $1` : `SELECT * FROM device_labels WHERE active AND mac IS NULL AND ip = $1::inet`,
+                [mac || ip],
+            );
+            await client.query(
+                mac ? `UPDATE device_labels SET active = FALSE, updated_by = $2, updated_at = NOW() WHERE active AND mac = $1`
+                    : `UPDATE device_labels SET active = FALSE, updated_by = $2, updated_at = NOW() WHERE active AND mac IS NULL AND ip = $1::inet`,
+                [mac || ip, actor],
+            );
+            const { rows } = await client.query(
+                `INSERT INTO device_labels (mac, ip, person, device, notes, created_by, updated_by) VALUES ($1, $2::inet, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, $6) RETURNING *`,
+                [mac || null, ip, person, device, notes, actor],
+            );
+            await client.query(
+                `INSERT INTO action_audit_logs (action, requested_by, payload, result, success, ip, message, created_at)
+                 VALUES ('device-label:set', $1, $2::jsonb, $3::jsonb, TRUE, $4, $5, NOW())`,
+                [actor, JSON.stringify({ mac, ip, person, device, notes }), JSON.stringify({ id: rows[0].id, previous: old[0] || null }), actorIp || null,
+                    `Aparelho ${mac || ip} identificado como "${[device, person].filter(Boolean).join(' de ')}"`],
+            ).catch(() => null);
+            await client.query('COMMIT');
+            return rows[0];
+        } catch (e) {
+            await client.query('ROLLBACK').catch(() => null);
+            throw e;
+        } finally {
+            client.release();
+        }
+    }
+
+    async removeLabel(id: number, actor: string, actorIp = '') {
+        await this.ensureReady();
+        const { rows } = await pool.query(`UPDATE device_labels SET active = FALSE, updated_by = $2, updated_at = NOW() WHERE id = $1 AND active RETURNING *`, [id, actor]);
+        if (!rows.length) throw new Error('Identificação não encontrada.');
+        await pool.query(
+            `INSERT INTO action_audit_logs (action, requested_by, payload, result, success, ip, message, created_at)
+             VALUES ('device-label:remove', $1, $2::jsonb, '{}'::jsonb, TRUE, $3, $4, NOW())`,
+            [actor, JSON.stringify(rows[0]), actorIp || null, `Identificação manual do aparelho ${rows[0].mac || rows[0].ip} removida`],
+        ).catch(() => null);
+        return rows[0];
     }
 
     private async identityFor(macs: string[], ips: string[], sightings: any[]) {

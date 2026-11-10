@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Printer, RefreshCw, Search } from 'lucide-react';
+import { Printer, RefreshCw, Search, UserCog } from 'lucide-react';
 import { api } from '../../services/api';
-import { Badge, Button, DataTable, Field, Kpi, KpiRow, Notice, Panel, Switch, errorMessage, inputCls, toast } from '../ui/kit';
+import { Badge, Button, DataTable, Drawer, Field, Kpi, KpiRow, Notice, Panel, Switch, errorMessage, inputCls, toast } from '../ui/kit';
 
 /*
  * Redes sociais por aparelho: uma linha por aparelho ("iPhone da Lavínia Pimentel"), com IP, MAC, VLAN,
@@ -76,7 +76,7 @@ ${vipRows.length ? `<br>${vipRows.length} aparelho(s) VIP usaram redes sociais c
 </div>
 ${main.length ? `<table><thead><tr><th>#</th><th>Aparelho e responsável</th><th>IP · MAC · VLAN</th><th>Redes tentadas</th><th class="num">Tentativas</th><th>Dias</th><th>Último registro</th></tr></thead><tbody>
 ${main.map((d, i) => `<tr><td>${i + 1}</td>
-<td><div class="id">${esc(d.label)}</div><div class="sub">${esc([d.os, d.hostname ? `nome na rede: ${d.hostname}` : '', d.person_from_hostname ? 'nome tirado do próprio aparelho' : ''].filter(Boolean).join(' · ') || '—')}</div></td>
+<td><div class="id">${esc(d.label)}</div><div class="sub">${esc([d.os, d.hostname ? `nome na rede: ${d.hostname}` : '', d.person_from_hostname ? 'nome tirado do próprio aparelho' : '', d.device_from_traffic ? 'tipo deduzido pelo tráfego' : '', d.manual_label ? 'identificado manualmente' : ''].filter(Boolean).join(' · ') || '—')}</div></td>
 <td>${esc(d.ips.join(', '))}<div class="sub">${esc(d.mac || 'MAC não registrado')} · VLAN ${esc(d.vlans.join(', '))}</div></td>
 <td>${esc(d.networks.slice(0, 4).map((n) => `${n.name} (${fmtNum(n.count)})`).join(', '))}</td>
 <td class="num">${fmtNum(attempts(d))}</td>
@@ -92,6 +92,54 @@ ${minor.length ? `<p class="minor">Outros ${minor.length} aparelho(s) com menos 
   win.document.close();
 }
 
+// Gaveta para dar nome a um aparelho ("Celular Samsung" -> "Celular Samsung do João Silva"). Fica na auditoria.
+function IdentifyDrawer({ item, onClose, onSaved }) {
+  const [person, setPerson] = useState('');
+  const [device, setDevice] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!item) return;
+    setPerson(item.person || '');
+    // Mesmo nome da lista, sem o " da Fulana" do fim.
+    const shown = item.person ? item.label.replace(new RegExp(` d[ao] ${item.person.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`), '') : item.label;
+    setDevice(/não identificado|MAC privado/.test(shown) ? '' : shown.replace(/ \(iPhone, iPad ou Mac\)$/, ''));
+    setNotes('');
+    setError('');
+  }, [item]);
+  if (!item) return null;
+  const save = async () => {
+    if (person.trim().length < 3 && device.trim().length < 3) { setError('Informe o responsável ou o tipo de aparelho.'); return; }
+    setSaving(true);
+    try {
+      await api.post('/api/device-audit/labels', { mac: item.mac || undefined, ip: item.mac ? undefined : item.ips[0], person, device, notes });
+      toast('Aparelho identificado. O nome já vale para todo o histórico dele.', 'success');
+      onSaved();
+    } catch (e) {
+      setError(errorMessage(e, 'Não foi possível salvar.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Drawer
+      open
+      busy={saving}
+      onClose={onClose}
+      title="Identificar aparelho"
+      description={`${item.label} · ${item.ips.join(', ')} · ${item.mac || 'sem MAC registrado'}. O nome fica registrado na auditoria com o seu usuário.`}
+      footer={<><Button variant="ghost" onClick={onClose} disabled={saving}>Cancelar</Button><Button variant="primary" onClick={save} disabled={saving}>{saving ? 'Salvando…' : 'Salvar identificação'}</Button></>}
+    >
+      <Field id="id-person" label="Responsável" hint="Nome completo de quem usa o aparelho."><input id="id-person" className={inputCls} value={person} onChange={(e) => setPerson(e.target.value)} placeholder="ex.: Maria da Silva" /></Field>
+      <Field id="id-device" label="Aparelho" hint="Marca e modelo, se souber."><input id="id-device" className={inputCls} value={device} onChange={(e) => setDevice(e.target.value)} placeholder="ex.: iPhone, Galaxy A54, Moto G84" /></Field>
+      <Field id="id-notes" label="Como foi confirmado (opcional)"><input id="id-notes" className={inputCls} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="ex.: conferido com a chefia do setor" /></Field>
+      {!item.mac ? <Notice tone="warning">Este aparelho não tem MAC registrado: o nome fica amarrado ao IP {item.ips[0]}.</Notice> : null}
+      {error ? <Notice tone="danger">{error}</Notice> : null}
+    </Drawer>
+  );
+}
+
 export default function SocialDeviceReport() {
   const [preset, setPreset] = useState('7d');
   const [from, setFrom] = useState(daysAgo(6));
@@ -102,6 +150,7 @@ export default function SocialDeviceReport() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [identify, setIdentify] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -141,7 +190,7 @@ export default function SocialDeviceReport() {
       key: 'label', label: 'Aparelho e responsável', render: (d) => (
         <div className="min-w-[220px]">
           <div className="font-semibold text-on-surface">{d.label}{d.vip ? <span className="ml-2 align-middle"><Badge tone="primary">VIP</Badge></span> : null}</div>
-          <div className="mt-0.5 text-[12px] text-on-surface/55">{[d.os, d.hostname ? `nome na rede: ${d.hostname}` : '', d.person_from_hostname ? 'nome tirado do aparelho' : ''].filter(Boolean).join(' · ') || '—'}</div>
+          <div className="mt-0.5 text-[12px] text-on-surface/55">{[d.os, d.hostname ? `nome na rede: ${d.hostname}` : '', d.person_from_hostname ? 'nome tirado do aparelho' : '', d.device_from_traffic ? 'tipo deduzido pelo tráfego' : '', d.manual_label ? `identificado por ${d.manual_label.by}` : ''].filter(Boolean).join(' · ') || '—'}</div>
         </div>
       ),
     },
@@ -150,6 +199,7 @@ export default function SocialDeviceReport() {
     { key: 'n', label: 'Tentativas', align: 'right', render: (d) => <span className="tabular font-semibold">{fmtNum(d.vip ? d.allowed_vip : attempts(d))}</span> },
     { key: 'dias', label: 'Dias', align: 'right', render: (d) => <span className="tabular">{d.active_days}</span> },
     { key: 'last', label: 'Último registro', render: (d) => <span className="tabular text-[12.5px] text-on-surface/65">{fmtWhen(d.last_at)}</span> },
+    { key: 'id', label: '', align: 'right', render: (d) => <Button variant={d.person ? 'ghost' : 'secondary'} icon={UserCog} onClick={() => setIdentify(d)} aria-label={`Identificar ${d.label}`} title={d.person ? 'Corrigir identificação' : 'Identificar responsável'}>{d.person ? null : 'Identificar'}</Button> },
   ];
 
   return (
@@ -215,6 +265,7 @@ export default function SocialDeviceReport() {
           empty={loading ? 'Montando o relatório…' : 'Nenhum aparelho tentou acessar redes sociais neste período.'}
         />
       </Panel>
+      <IdentifyDrawer item={identify} onClose={() => setIdentify(null)} onSaved={() => { setIdentify(null); load(); }} />
     </div>
   );
 }
