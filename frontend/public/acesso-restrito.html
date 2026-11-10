@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Acesso restrito · Prefeitura Municipal de Jacarezinho</title>
+<style>
+  :root {
+    --bg: #f3f5f9; --card: #ffffff; --ink: #14213d; --muted: #4a5568; --line: #dfe4ec;
+    --brand: #003087; --brand-soft: #e8eefb; --accent: #1f7a4d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1420; --card: #141d2b; --ink: #e8edf5; --muted: #a7b1c2; --line: #243044; --brand: #8fb0ff; --brand-soft: #1a2740; --accent: #63c596; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    min-height: 100vh; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px 16px;
+  }
+  main {
+    width: 100%; max-width: 680px; background: var(--card); border: 1px solid var(--line);
+    border-top: 5px solid var(--brand); border-radius: 14px; padding: 36px 40px 30px;
+    box-shadow: 0 10px 30px rgba(15, 30, 60, .08);
+  }
+  header { display: flex; align-items: center; gap: 18px; padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+  header img { width: 64px; height: auto; flex-shrink: 0; background: #fff; border-radius: 10px; padding: 4px; }
+  .org { margin: 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .org strong { display: block; font-size: 17px; letter-spacing: .02em; color: var(--brand); }
+  h1 { margin: 28px 0 6px; font-size: 26px; line-height: 1.25; }
+  .site { display: inline-block; margin: 4px 0 18px; padding: 4px 12px; border-radius: 999px; background: var(--brand-soft); color: var(--brand); font-size: 14px; font-weight: 600; word-break: break-all; }
+  p { margin: 0 0 14px; color: var(--muted); }
+  p.lead { color: var(--ink); }
+  .note { margin: 22px 0 0; padding: 14px 16px; border-left: 4px solid var(--accent); background: var(--brand-soft); border-radius: 8px; font-size: 15px; color: var(--ink); }
+  .sign { margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--line); }
+  .sign .name { margin: 0; font-size: 17px; font-weight: 700; color: var(--ink); }
+  .sign .role { margin: 0; font-size: 14px; color: var(--muted); }
+  footer { margin-top: 26px; font-size: 12px; color: var(--muted); text-align: center; }
+  @media (max-width: 520px) {
+    main { padding: 26px 20px 22px; }
+    h1 { font-size: 22px; }
+    header img { width: 52px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="/LOGO-JACAREZINHO.png" alt="Brasão da Prefeitura Municipal de Jacarezinho">
+    <p class="org"><strong>Prefeitura Municipal de Jacarezinho</strong>Estado do Paraná</p>
+  </header>
+
+  <h1>Este acesso não está disponível na rede institucional</h1>
+  <span class="site" id="site" hidden></span>
+
+  <p class="lead">Prezado(a) servidor(a) e colaborador(a),</p>
+  <p>O Secretário Municipal de Comércio, Indústria, Serviços e Inovação determina que o acesso a redes sociais e a plataformas de entretenimento, como Instagram, Facebook e TikTok, não é permitido na rede de internet da Prefeitura. Agradecemos, desde já, a sua compreensão.</p>
+  <p>A medida tem como finalidade preservar a segurança das informações públicas, garantir a qualidade da conexão para os serviços prestados à população e assegurar o uso adequado dos recursos institucionais, em conformidade com a Lei Geral de Proteção de Dados (Lei nº 13.709/2018).</p>
+  <p>Os serviços necessários ao trabalho, como o WhatsApp e os sistemas oficiais, permanecem disponíveis normalmente.</p>
+
+  <div class="note">Caso o acesso a algum destes serviços seja indispensável às suas atribuições, solicite a liberação à sua chefia imediata, que encaminhará o pedido, devidamente justificado, à Secretaria responsável.</div>
+
+  <div class="sign">
+    <p class="name">Leandro de Azevedo Lima</p>
+    <p class="role">Secretário Municipal de Comércio, Indústria, Serviços e Inovação</p>
+    <p class="role">Prefeitura Municipal de Jacarezinho</p>
+  </div>
+
+  <footer>Sistema de Governança e Controle Governamental (SGCG)</footer>
+</main>
+<script>
+  // Mostra o endereço bloqueado quando ele vem no link (?site=instagram.com).
+  try {
+    var s = new URLSearchParams(location.search).get('site');
+    if (s) { var el = document.getElementById('site'); el.textContent = s.slice(0, 120); el.hidden = false; }
+  } catch (e) {}
+</script>
+</body>
+</html>
