@@ -40,6 +40,10 @@ const PONTORH_END_MARKER = '# END SGCG_PONTORH_OPENDNS';
 // da ByteDance são recusadas. Ficam de fora os IPs do WhatsApp (lista sgcg_whatsapp_allowed, remontada a cada
 // 3 minutos pelo scripts/update_whatsapp_allowlist.py --rebuild), os VIPs (regras acima) e as VLANs em emergência.
 const SOCIAL_IP_SET = 'sgcg_social_blocked';
+// Lista dinâmica (caches da Meta nas operadoras, endereços do TikTok fora das faixas): scripts/update_social_ipset.py.
+const SOCIAL_DYNAMIC_SET = 'sgcg_social_dynamic';
+// As duas listas juntas: a regra do firewall consulta esta.
+const SOCIAL_ALL_SET = 'sgcg_social_all';
 const WHATSAPP_IP_SET = 'sgcg_whatsapp_allowed';
 const SOCIAL_IP_COMMENT = 'sgcg-social-ip-block';
 const SOCIAL_IP_RANGES: Array<[string, string]> = [
@@ -557,6 +561,9 @@ class DnsContingencyService {
         const script = path.join(env.projectRoot, 'scripts', 'update_whatsapp_allowlist.py');
         const result = await runCommand('python3', [script, '--rebuild'], { elevated: true, allowFailure: true, timeout: 90_000 } as any);
         if (result.code !== 0) console.error('[SOCIAL IP] Falha ao atualizar a lista do WhatsApp:', String(result.stderr || result.stdout || '').slice(-300));
+        // Depois da lista do WhatsApp (a dinâmica nunca inclui IP do WhatsApp).
+        const social = await runCommand('python3', [path.join(env.projectRoot, 'scripts', 'update_social_ipset.py')], { elevated: true, allowFailure: true });
+        if (social.code !== 0) console.error('[SOCIAL IP] Falha ao atualizar a lista dinâmica:', String(social.stderr || social.stdout || '').slice(-300));
         return result.code === 0 ? 'updated' : 'failed';
     }
 
@@ -583,6 +590,10 @@ class DnsContingencyService {
         await runCommand('ipset', ['create', SOCIAL_IP_SET, 'hash:net', 'comment', '-exist'], { elevated: true, allowFailure: true });
         const restore = SOCIAL_IP_RANGES.map(([cidr, label]) => `add ${SOCIAL_IP_SET} ${cidr} comment "${label}"`).join('\n') + '\n';
         await runCommand('ipset', ['restore', '-exist'], { elevated: true, allowFailure: true, input: restore } as any);
+        await runCommand('ipset', ['create', SOCIAL_DYNAMIC_SET, 'hash:ip', 'comment', '-exist'], { elevated: true, allowFailure: true });
+        await runCommand('ipset', ['create', SOCIAL_ALL_SET, 'list:set', '-exist'], { elevated: true, allowFailure: true });
+        await runCommand('ipset', ['add', SOCIAL_ALL_SET, SOCIAL_IP_SET, '-exist'], { elevated: true, allowFailure: true });
+        await runCommand('ipset', ['add', SOCIAL_ALL_SET, SOCIAL_DYNAMIC_SET, '-exist'], { elevated: true, allowFailure: true });
 
         const emergencySubnets = new Set(emergencyVlans.map((v) => v.subnet_cidr));
         const targets = configuredVlans.filter((v) => (v as any).blocking_enabled !== false && v.interface_name && !emergencySubnets.has(v.subnet_cidr));
@@ -594,7 +605,7 @@ class DnsContingencyService {
         for (const vlan of targets) {
             for (const [proto, reject] of [['tcp', 'tcp-reset'], ['udp', 'icmp-port-unreachable']]) {
                 const args = ['-i', String(vlan.interface_name), '-o', env.wanInterface, '-p', proto, '-m', proto, '--dport', '443',
-                    '-m', 'set', '--match-set', SOCIAL_IP_SET, 'dst', '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst',
+                    '-m', 'set', '--match-set', SOCIAL_ALL_SET, 'dst', '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst',
                     '-m', 'comment', '--comment', SOCIAL_IP_COMMENT, '-j', 'REJECT', '--reject-with', reject];
                 wanted.add(`${vlan.interface_name}|${proto}`);
                 if (await this.ensureOrderedIptablesRule('filter', 'FORWARD', args, position)) applied += 1;
@@ -606,7 +617,7 @@ class DnsContingencyService {
             if (!line.startsWith('-A FORWARD ') || !line.includes(SOCIAL_IP_COMMENT)) continue;
             const iface = line.match(/-i (\S+)/)?.[1] || '';
             const proto = line.match(/-p (tcp|udp)/)?.[1] || '';
-            if (wanted.has(`${iface}|${proto}`)) continue;
+            if (wanted.has(`${iface}|${proto}`) && line.includes(SOCIAL_ALL_SET)) continue;
             const args = line.replace(/^-A FORWARD /, '').trim().split(/\s+/);
             const r = await runCommand('iptables', ['-D', 'FORWARD', ...args], { elevated: true, allowFailure: true });
             if (r.code === 0) removed += 1;
