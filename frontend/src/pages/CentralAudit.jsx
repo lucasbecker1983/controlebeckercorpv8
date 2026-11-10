@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, DatabaseZap, RefreshCw, Search, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, DatabaseZap, ListTree, RefreshCw, Search, ShieldAlert, Smartphone } from 'lucide-react';
 import { api } from '../services/api';
-import { Badge, Button, DataTable, Field, Kpi, KpiRow, Notice, PageHeader, Panel, errorMessage, fmtDateTime, inputCls } from '../components/ui/kit';
+import { Badge, Button, DataTable, Field, Kpi, KpiRow, Notice, PageHeader, Panel, Tabs, errorMessage, fmtDateTime, inputCls, useUrlTab } from '../components/ui/kit';
+import SocialDeviceReport from '../components/audit/SocialDeviceReport';
 
 /*
  * Centro de Auditoria: uma linha do tempo única com os eventos de autenticação, rede, LGPD, chamados,
@@ -55,7 +56,7 @@ const buildParams = (filters) => {
   return params.toString();
 };
 
-export default function CentralAudit() {
+function AuditTimeline() {
   const [filters, setFilters] = useState(INITIAL_FILTERS);
   const [categories, setCategories] = useState([]);
   const [sources, setSources] = useState([]);
@@ -120,12 +121,6 @@ export default function CentralAudit() {
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        title="Centro de Auditoria"
-        description="Linha do tempo única de autenticação, rede, LGPD, chamados, hotspot, colaboradores e ações administrativas. Cada fonte guarda o registro original."
-        actions={<Button icon={RefreshCw} onClick={load} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</Button>}
-      />
-
       {error ? <Notice tone="danger" title="Falha ao carregar">{error}</Notice> : null}
 
       <KpiRow>
@@ -135,7 +130,7 @@ export default function CentralAudit() {
         <Kpi icon={ShieldAlert} label="Falhas" value={count(summary?.failures)} tone={summary?.failures ? 'danger' : 'neutral'} />
       </KpiRow>
 
-      <Panel title="Filtros" actions={hasFilters ? <Button variant="ghost" onClick={() => setFilters(INITIAL_FILTERS)}>Limpar filtros</Button> : null}>
+      <Panel title="Filtros" actions={<>{hasFilters ? <Button variant="ghost" onClick={() => setFilters(INITIAL_FILTERS)}>Limpar filtros</Button> : null}<Button icon={RefreshCw} onClick={load} disabled={loading}>{loading ? 'Atualizando…' : 'Atualizar'}</Button></>}>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field id="audit-search" label="Busca">
             <div className="relative">
@@ -190,6 +185,25 @@ export default function CentralAudit() {
           ? <p className="px-4 py-6 text-center text-sm text-on-surface/55">Carregando auditorias…</p>
           : <DataTable columns={columns} rows={events} rowKey={(item) => `${item.source}-${item.id}`} empty="Nenhum evento neste filtro. Amplie o período ou limpe os filtros." />}
       </Panel>
+    </div>
+  );
+}
+
+const TABS = [
+  { key: 'aparelhos', label: 'Redes sociais por aparelho', icon: Smartphone },
+  { key: 'linha-do-tempo', label: 'Linha do tempo', icon: ListTree },
+];
+
+export default function CentralAudit() {
+  const [tab, setTab] = useUrlTab(TABS, 'aparelhos');
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Centro de Auditoria"
+        description="Quem tentou acessar o que está proibido, com o aparelho identificado, e a linha do tempo completa de autenticação, rede, LGPD, chamados, portais e ações administrativas."
+      />
+      <Tabs tabs={TABS} value={tab} onChange={setTab} />
+      {tab === 'aparelhos' ? <SocialDeviceReport /> : <AuditTimeline />}
     </div>
   );
 }

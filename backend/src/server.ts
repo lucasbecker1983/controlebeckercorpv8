@@ -30,6 +30,8 @@ import hotspotRoutes, { hotspotSchemaService } from './modules/hotspot/hotspot-r
 import collaboratorsRoutes, { collaboratorsSchemaService } from './modules/collaborators/collaborators-routes';
 import supportRoutes, { supportSchemaService } from './modules/support/support-routes';
 import centralAuditRoutes, { centralAuditService } from './modules/central-audit/central-audit-routes';
+import deviceAuditRoutes from './modules/device-audit/device-audit-routes';
+import { deviceAuditService } from './modules/device-audit/device-audit-service';
 import monitorRoutes from './modules/monitor/monitor-routes';
 import aiRoutes from './modules/ai/ai-routes';
 import { startHunter } from './modules/ai/ai-hunter';
@@ -128,6 +130,7 @@ app.use('/api/hotspot', hotspotRoutes);
 app.use('/api/collaborators', collaboratorsRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/central-audit', centralAuditRoutes);
+app.use('/api/device-audit', deviceAuditRoutes);
 app.use('/api/monitor', monitorRoutes);
 app.use('/api/ai', aiRoutes);
 
@@ -137,6 +140,9 @@ app.use("/api/vlans", vlanScheduleRoutes);
 app.get('/api/ping', (req, res) => res.json({ msg: 'Pong HTTP (Core 6778)' }));
 
 // Motor HTTP Puro e Leve (Terminação SSL via Nginx)
+// Guarda a cada 5 minutos qual aparelho estava em cada IP (base da auditoria por aparelho).
+deviceAuditService.ensureReady().then(() => deviceAuditService.start()).catch((e) => console.error('[DEVICE AUDIT] Falha ao iniciar:', e?.message || e));
+
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`>>> BACKEND CORE ONLINE: ${PORT} (HTTP Interno)`);
     authSecurityService.ensureSchema().catch((error) => {
