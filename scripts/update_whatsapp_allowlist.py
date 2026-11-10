@@ -90,25 +90,8 @@ WHATSAPP_DOMAINS = [
     "webtp.whatsapp.net",
     "whatsapp.com",
     "whatsapp.net",
-    # Dependências Meta usadas pelo WhatsApp Web/sessão. Sem esses hosts,
-    # o bloqueio amplo de facebook.com pode quebrar login, push e mídia.
-    "api.facebook.com",
-    "b-graph.facebook.com",
-    "chat-e2ee-mini.facebook.com",
-    "connect.facebook.net",
-    "dgw-mini.c10r.facebook.com",
-    "edge-mqtt.facebook.com",
-    "edge-mqtt-fallback.facebook.com",
-    "ep7.facebook.com",
-    "gateway.facebook.com",
-    "graph.facebook.com",
-    "graph-fallback.facebook.com",
-    "mqtt.fallback.c10r.facebook.com",
-    "mqtt.c10r.facebook.com",
-    "star.c10r.facebook.com",
-    "star.fallback.c10r.facebook.com",
-    "z-m-gateway.facebook.com",
-    "z-p42-chat-e2ee-ig.facebook.com",
+    # Os endereços do Facebook (api/gateway/graph/star.c10r/mqtt/z-p42-chat-e2ee-ig...) saíram daqui em 10/11/2026:
+    # eles são do Facebook, do Messenger e do direct do Instagram, e liberavam esses apps pela lista do WhatsApp.
 ]
 
 WHATSAPP_DOMAINS.extend([f"e{i}.whatsapp.net" for i in range(1, 17)])
@@ -118,7 +101,7 @@ def resolve(domain: str) -> list[str]:
     ips: list[str] = []
     for resolver in DNS_RESOLVERS:
         result = subprocess.run(
-            ["dig", f"@{resolver}", domain, "A", "+short"],
+            ["dig", f"@{resolver}", domain, "A", "+short", "+time=2", "+tries=1"],
             capture_output=True, text=True
         )
         for line in result.stdout.splitlines():
@@ -166,7 +149,7 @@ def recent_whatsapp_domains() -> list[str]:
         cur.execute("""
             SELECT DISTINCT lower(query_name)
             FROM dns_policy_events
-            WHERE occurred_at > now() - interval '7 days'
+            WHERE occurred_at > now() - interval '2 days'
               AND query_name ILIKE '%whatsapp%'
               AND query_name NOT LIKE '\\_%'
             ORDER BY lower(query_name)
@@ -261,6 +244,47 @@ def ensure_whatsapp_call_rules():
     ensure_forward_rule("udp", WHATSAPP_UDP_PORTS, "SGCG WHATSAPP CALL UDP ALLOW")
 
 
+STATE_FILE = "/var/lib/sgcg/whatsapp_ips.json"
+KEEP_DAYS = 7
+
+
+def rebuild():
+    """Remonta a lista só com IPs do WhatsApp vistos nos últimos 7 dias (troca atômica, sem instante vazio)."""
+    import json, time
+    now = int(time.time())
+    try:
+        state = json.load(open(STATE_FILE))
+    except Exception:
+        state = {}
+    domains = sorted(set(WHATSAPP_DOMAINS + recent_whatsapp_domains()))
+    fresh = 0
+    for domain in domains:
+        for ip in resolve(domain):
+            if ip not in state:
+                fresh += 1
+            state[ip] = now
+    state = {ip: ts for ip, ts in state.items() if now - int(ts) <= KEEP_DAYS * 86400}
+    if not state:
+        print("  [AVISO] Nenhum IP do WhatsApp resolvido; lista atual mantida.")
+        return
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    json.dump(state, open(STATE_FILE + ".tmp", "w"))
+    os.replace(STATE_FILE + ".tmp", STATE_FILE)
+    tmp = IPSET_NAME + "_tmp"
+    subprocess.run(["ipset", "create", IPSET_NAME, "hash:ip", "comment"], capture_output=True)
+    subprocess.run(["ipset", "destroy", tmp], capture_output=True)
+    subprocess.run(["ipset", "create", tmp, "hash:ip", "comment"], check=True)
+    restore = "".join(f"add {tmp} {ip} comment whatsapp\n" for ip in sorted(state))
+    subprocess.run(["ipset", "restore", "-exist"], input=restore, text=True, check=True)
+    subprocess.run(["ipset", "swap", tmp, IPSET_NAME], check=True)
+    subprocess.run(["ipset", "destroy", tmp], capture_output=True)
+    subprocess.run(["ipset", "save"], stdout=open("/etc/ipset.conf", "w"))
+    ensure_whatsapp_allow_rule()
+    ensure_whatsapp_return_rule()
+    ensure_whatsapp_call_rules()
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Lista do WhatsApp: {len(state)} IPs ({fresh} novos), {len(domains)} domínios.")
+
+
 def main():
     if os.geteuid() != 0:
         print("Erro: precisa de root.")
@@ -322,4 +346,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if os.geteuid() != 0:
+        print("Erro: precisa de root.")
+        sys.exit(1)
+    if "--rebuild" in sys.argv:
+        rebuild()
+    else:
+        main()

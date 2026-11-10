@@ -34,6 +34,23 @@ const EARLY_BEGIN_MARKER = '# BEGIN BECKERCORP_EARLY_FORWARD';
 const EARLY_END_MARKER = '# END BECKERCORP_EARLY_FORWARD';
 const PONTORH_BEGIN_MARKER = '# BEGIN SGCG_PONTORH_OPENDNS';
 const PONTORH_END_MARKER = '# END SGCG_PONTORH_OPENDNS';
+
+// Bloqueio por IP das redes sociais. Os apps do Facebook, Instagram e TikTok ignoram o DNS bloqueado e conectam
+// direto em IPs gravados neles; por isso, nas VLANs com filtro, conexões na porta 443 para as faixas da Meta e
+// da ByteDance são recusadas. Ficam de fora os IPs do WhatsApp (lista sgcg_whatsapp_allowed, remontada a cada
+// 3 minutos pelo scripts/update_whatsapp_allowlist.py --rebuild), os VIPs (regras acima) e as VLANs em emergência.
+const SOCIAL_IP_SET = 'sgcg_social_blocked';
+const WHATSAPP_IP_SET = 'sgcg_whatsapp_allowed';
+const SOCIAL_IP_COMMENT = 'sgcg-social-ip-block';
+const SOCIAL_IP_RANGES: Array<[string, string]> = [
+    ['157.240.0.0/16', 'Meta'], ['31.13.64.0/18', 'Meta'], ['57.144.0.0/14', 'Meta'], ['179.60.192.0/22', 'Meta'],
+    ['185.60.216.0/22', 'Meta'], ['185.89.216.0/22', 'Meta'], ['163.70.128.0/17', 'Meta'], ['129.134.0.0/17', 'Meta'],
+    ['102.132.96.0/20', 'Meta'], ['66.220.144.0/20', 'Meta'], ['69.63.176.0/20', 'Meta'], ['69.171.224.0/19', 'Meta'],
+    ['173.252.64.0/18', 'Meta'], ['204.15.20.0/22', 'Meta'], ['45.64.40.0/22', 'Meta'], ['103.4.96.0/22', 'Meta'],
+    ['71.18.0.0/16', 'ByteDance/TikTok'], ['139.177.224.0/19', 'ByteDance/TikTok'], ['147.160.176.0/20', 'ByteDance/TikTok'],
+];
+const WHATSAPP_REFRESH_MS = 3 * 60 * 1000;
+let lastWhatsappRefreshAt = 0;
 const DOH_BLOCK_SERVERS = [
     '1.1.1.1',
     '1.0.0.1',
@@ -533,6 +550,70 @@ class DnsContingencyService {
         return 'applied';
     }
 
+    // Lista do WhatsApp atualizada antes do bloqueio: o bloqueio poupa tudo o que estiver nela.
+    async refreshWhatsappIpSet(force = false) {
+        if (!force && Date.now() - lastWhatsappRefreshAt < WHATSAPP_REFRESH_MS) return 'fresh';
+        lastWhatsappRefreshAt = Date.now();
+        const script = path.join(env.projectRoot, 'scripts', 'update_whatsapp_allowlist.py');
+        const result = await runCommand('python3', [script, '--rebuild'], { elevated: true, allowFailure: true, timeout: 90_000 } as any);
+        if (result.code !== 0) console.error('[SOCIAL IP] Falha ao atualizar a lista do WhatsApp:', String(result.stderr || result.stdout || '').slice(-300));
+        return result.code === 0 ? 'updated' : 'failed';
+    }
+
+    async applyRuntimeSocialIpBlock(configuredVlans: VlanRow[], emergencyVlans: VlanRow[] = []) {
+        const saved = String((await runCommand('iptables-save', ['-t', 'filter'], { elevated: true, allowFailure: true })).stdout || '');
+        const removeAll = async () => {
+            let removed = 0;
+            for (const line of saved.split('\n')) {
+                if (!line.startsWith('-A FORWARD ') || !line.includes(SOCIAL_IP_COMMENT)) continue;
+                const args = line.replace(/^-A FORWARD /, '').trim().split(/\s+/);
+                const r = await runCommand('iptables', ['-D', 'FORWARD', ...args], { elevated: true, allowFailure: true });
+                if (r.code === 0) removed += 1;
+            }
+            return removed;
+        };
+        if (!env.socialIpBlockEnabled) return { mode: 'disabled', removed: await removeAll() };
+
+        const whatsapp = await this.refreshWhatsappIpSet();
+        const waCount = await runCommand('ipset', ['list', WHATSAPP_IP_SET, '-terse'], { elevated: true, allowFailure: true });
+        const waEntries = Number(String(waCount.stdout || '').match(/Number of entries:\s*(\d+)/)?.[1] || 0);
+        // Sem a lista do WhatsApp o bloqueio derrubaria o WhatsApp: nesse caso as regras saem até a lista voltar.
+        if (waEntries < 5) return { mode: 'suspended-no-whatsapp-list', whatsapp, removed: await removeAll() };
+
+        await runCommand('ipset', ['create', SOCIAL_IP_SET, 'hash:net', 'comment', '-exist'], { elevated: true, allowFailure: true });
+        const restore = SOCIAL_IP_RANGES.map(([cidr, label]) => `add ${SOCIAL_IP_SET} ${cidr} comment "${label}"`).join('\n') + '\n';
+        await runCommand('ipset', ['restore', '-exist'], { elevated: true, allowFailure: true, input: restore } as any);
+
+        const emergencySubnets = new Set(emergencyVlans.map((v) => v.subnet_cidr));
+        const targets = configuredVlans.filter((v) => (v as any).blocking_enabled !== false && v.interface_name && !emergencySubnets.has(v.subnet_cidr));
+        const position = (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-total-vlan-block'))
+            + (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-vip-bypass'))
+            + (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-emergency-bypass')) + 1;
+        const wanted = new Set<string>();
+        let applied = 0;
+        for (const vlan of targets) {
+            for (const [proto, reject] of [['tcp', 'tcp-reset'], ['udp', 'icmp-port-unreachable']]) {
+                const args = ['-i', String(vlan.interface_name), '-o', env.wanInterface, '-p', proto, '-m', proto, '--dport', '443',
+                    '-m', 'set', '--match-set', SOCIAL_IP_SET, 'dst', '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst',
+                    '-m', 'comment', '--comment', SOCIAL_IP_COMMENT, '-j', 'REJECT', '--reject-with', reject];
+                wanted.add(`${vlan.interface_name}|${proto}`);
+                if (await this.ensureOrderedIptablesRule('filter', 'FORWARD', args, position)) applied += 1;
+            }
+        }
+        // Remove regras de VLANs que saíram do filtro ou entraram em emergência.
+        let removed = 0;
+        for (const line of saved.split('\n')) {
+            if (!line.startsWith('-A FORWARD ') || !line.includes(SOCIAL_IP_COMMENT)) continue;
+            const iface = line.match(/-i (\S+)/)?.[1] || '';
+            const proto = line.match(/-p (tcp|udp)/)?.[1] || '';
+            if (wanted.has(`${iface}|${proto}`)) continue;
+            const args = line.replace(/^-A FORWARD /, '').trim().split(/\s+/);
+            const r = await runCommand('iptables', ['-D', 'FORWARD', ...args], { elevated: true, allowFailure: true });
+            if (r.code === 0) removed += 1;
+        }
+        return { mode: 'active', whatsapp, whatsapp_ips: waEntries, vlans: targets.map((v) => v.vlan_id), applied, removed };
+    }
+
     async applyRuntimeVipBypassRules(vipBypassRows: VipBypassRow[], emergencyVlans: VlanRow[] = []) {
         if (this.runtimeVipApplyPromise) return this.runtimeVipApplyPromise;
 
@@ -881,6 +962,7 @@ class DnsContingencyService {
             }
             const pontorh = await this.applyRuntimePontorhOpenDnsRules(configuredVlans);
             const vipRuntime = await this.applyRuntimeVipBypassRules(vipBypassRows, emergencyVlans);
+            const socialIp = await this.applyRuntimeSocialIpBlock(configuredVlans, emergencyVlans).catch((error) => ({ error: String(error?.message || error) }));
             const dedupe = await this.dedupeNatRuntimeRules();
             if (dedupe.removed > 0) {
                 await this.recordAudit({
@@ -891,7 +973,7 @@ class DnsContingencyService {
                     success: true,
                 }).catch(() => undefined);
             }
-            return { original, candidate, config_changed: configChanged, runtime: { pontorh, vip: vipRuntime, dedupe } };
+            return { original, candidate, config_changed: configChanged, runtime: { pontorh, vip: vipRuntime, social_ip: socialIp, dedupe } };
         } catch (error) {
             if (configChanged) {
                 fs.writeFileSync(this.blockFile, original);
