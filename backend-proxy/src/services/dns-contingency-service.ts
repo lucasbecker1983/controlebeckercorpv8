@@ -53,6 +53,18 @@ const SOCIAL_IP_RANGES: Array<[string, string]> = [
     ['173.252.64.0/18', 'Meta'], ['204.15.20.0/22', 'Meta'], ['45.64.40.0/22', 'Meta'], ['103.4.96.0/22', 'Meta'],
     ['71.18.0.0/16', 'ByteDance/TikTok'], ['139.177.224.0/19', 'ByteDance/TikTok'], ['147.160.176.0/20', 'ByteDance/TikTok'],
 ];
+// Bloqueio pelo nome do site (SNI): o celular manda o nome em texto aberto ao abrir a conexão segura. Pega o TikTok
+// e o Instagram quando eles usam CDNs compartilhadas (Akamai, Google, Fastly), que não podem ser bloqueadas por IP.
+// Só os pacotes de abertura (primeiro byte do conteúdo TCP = 0x16) passam pela busca, para não pesar no resto.
+const SOCIAL_SNI_CHAIN = 'SGCG_SOCIAL_SNI';
+const SOCIAL_SNI_COMMENT = 'sgcg-social-sni';
+const SOCIAL_QUIC_COMMENT = 'sgcg-social-quic';
+const TLS_HANDSHAKE_U32 = '0>>22&0x3C@12>>26&0x3C@0>>24=0x16';
+const SOCIAL_SNI_NAMES = [
+    'tiktokcdn', 'tiktokv.', 'tiktok.com', 'ibyteimg', 'byteoversea', 'ibytedtos', 'bytefcdn', 'ttwstatic', 'musical.ly',
+    'snssdk', 'ttdns2', 'instagram.com', 'cdninstagram', 'fbcdn.net', 'facebook.com', 'facebook.net', 'fbsbx.com',
+    'messenger.com', 'kwai', 'kuaishou',
+];
 const WHATSAPP_REFRESH_MS = 3 * 60 * 1000;
 let lastWhatsappRefreshAt = 0;
 const DOH_BLOCK_SERVERS = [
@@ -572,7 +584,7 @@ class DnsContingencyService {
         const removeAll = async () => {
             let removed = 0;
             for (const line of saved.split('\n')) {
-                if (!line.startsWith('-A FORWARD ') || !line.includes(SOCIAL_IP_COMMENT)) continue;
+                if (!line.startsWith('-A FORWARD ') || !/sgcg-social-(ip-block|sni|quic)/.test(line)) continue;
                 const args = line.replace(/^-A FORWARD /, '').trim().split(/\s+/);
                 const r = await runCommand('iptables', ['-D', 'FORWARD', ...args], { elevated: true, allowFailure: true });
                 if (r.code === 0) removed += 1;
@@ -595,6 +607,16 @@ class DnsContingencyService {
         await runCommand('ipset', ['add', SOCIAL_ALL_SET, SOCIAL_IP_SET, '-exist'], { elevated: true, allowFailure: true });
         await runCommand('ipset', ['add', SOCIAL_ALL_SET, SOCIAL_DYNAMIC_SET, '-exist'], { elevated: true, allowFailure: true });
 
+        // Cadeia com a lista de nomes: refeita só quando muda.
+        await runCommand('iptables', ['-N', SOCIAL_SNI_CHAIN], { elevated: true, allowFailure: true });
+        const chainNow = String((await runCommand('iptables', ['-S', SOCIAL_SNI_CHAIN], { elevated: true, allowFailure: true })).stdout || '');
+        if (SOCIAL_SNI_NAMES.some((n) => !chainNow.includes(`"${n}"`) && !chainNow.includes(` ${n} `)) || (chainNow.match(/^-A /gm) || []).length !== SOCIAL_SNI_NAMES.length) {
+            await runCommand('iptables', ['-F', SOCIAL_SNI_CHAIN], { elevated: true, allowFailure: true });
+            for (const name of SOCIAL_SNI_NAMES) {
+                await runCommand('iptables', ['-A', SOCIAL_SNI_CHAIN, '-p', 'tcp', '-m', 'string', '--algo', 'bm', '--string', name, '-j', 'REJECT', '--reject-with', 'tcp-reset'], { elevated: true, allowFailure: true });
+            }
+        }
+
         const emergencySubnets = new Set(emergencyVlans.map((v) => v.subnet_cidr));
         const targets = configuredVlans.filter((v) => (v as any).blocking_enabled !== false && v.interface_name && !emergencySubnets.has(v.subnet_cidr));
         const position = (await this.countRuntimeRulesWithComment('filter', 'FORWARD', 'sgcg-total-vlan-block'))
@@ -603,21 +625,32 @@ class DnsContingencyService {
         const wanted = new Set<string>();
         let applied = 0;
         for (const vlan of targets) {
-            for (const [proto, reject] of [['tcp', 'tcp-reset'], ['udp', 'icmp-port-unreachable']]) {
-                const args = ['-i', String(vlan.interface_name), '-o', env.wanInterface, '-p', proto, '-m', proto, '--dport', '443',
-                    '-m', 'set', '--match-set', SOCIAL_ALL_SET, 'dst', '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst',
-                    '-m', 'comment', '--comment', SOCIAL_IP_COMMENT, '-j', 'REJECT', '--reject-with', reject];
-                wanted.add(`${vlan.interface_name}|${proto}`);
+            const iface = String(vlan.interface_name);
+            const rules: string[][] = [
+                // IP das listas (faixas da Meta/ByteDance e caches nas operadoras), exceto WhatsApp.
+                ['-i', iface, '-o', env.wanInterface, '-p', 'tcp', '-m', 'tcp', '--dport', '443', '-m', 'set', '--match-set', SOCIAL_ALL_SET, 'dst',
+                    '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst', '-m', 'comment', '--comment', SOCIAL_IP_COMMENT, '-j', 'REJECT', '--reject-with', 'tcp-reset'],
+                // Nome do site na abertura da conexão (qualquer IP).
+                ['-i', iface, '-o', env.wanInterface, '-p', 'tcp', '-m', 'tcp', '--dport', '443', '-m', 'u32', '--u32', TLS_HANDSHAKE_U32,
+                    '-m', 'comment', '--comment', SOCIAL_SNI_COMMENT, '-j', SOCIAL_SNI_CHAIN],
+                // QUIC (UDP 443) esconde o nome: recusado fora do WhatsApp; apps e navegadores voltam para o TCP.
+                ['-i', iface, '-o', env.wanInterface, '-p', 'udp', '-m', 'udp', '--dport', '443', '-m', 'set', '!', '--match-set', WHATSAPP_IP_SET, 'dst',
+                    '-m', 'comment', '--comment', SOCIAL_QUIC_COMMENT, '-j', 'REJECT', '--reject-with', 'icmp-port-unreachable'],
+            ];
+            for (const args of rules) {
+                wanted.add(`${iface}|${args.join(' ').match(/--comment (\S+)/)?.[1]}`);
                 if (await this.ensureOrderedIptablesRule('filter', 'FORWARD', args, position)) applied += 1;
             }
         }
         // Remove regras de VLANs que saíram do filtro ou entraram em emergência.
         let removed = 0;
         for (const line of saved.split('\n')) {
-            if (!line.startsWith('-A FORWARD ') || !line.includes(SOCIAL_IP_COMMENT)) continue;
+            if (!line.startsWith('-A FORWARD ') || !/sgcg-social-(ip-block|sni|quic)/.test(line)) continue;
             const iface = line.match(/-i (\S+)/)?.[1] || '';
-            const proto = line.match(/-p (tcp|udp)/)?.[1] || '';
-            if (wanted.has(`${iface}|${proto}`) && line.includes(SOCIAL_ALL_SET)) continue;
+            const tag = line.match(/--comment (\S+)/)?.[1] || '';
+            // Regra antiga de UDP só para as listas (trocada pela regra do QUIC) e regras de VLANs fora do filtro saem.
+            const oldUdp = tag === SOCIAL_IP_COMMENT && /-p udp/.test(line);
+            if (!oldUdp && wanted.has(`${iface}|${tag}`) && (tag !== SOCIAL_IP_COMMENT || line.includes(SOCIAL_ALL_SET))) continue;
             const args = line.replace(/^-A FORWARD /, '').trim().split(/\s+/);
             const r = await runCommand('iptables', ['-D', 'FORWARD', ...args], { elevated: true, allowFailure: true });
             if (r.code === 0) removed += 1;
